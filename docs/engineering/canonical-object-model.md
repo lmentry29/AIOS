@@ -1,8 +1,6 @@
 # AIOS Canonical Object Model (COM) — v1
 
-**Status: Proposed.** This is the first implementation-readiness artifact produced after AIOS Architecture Version 1 Certification (see `V1-FINAL-CERTIFICATION-REPORT.md`). It is derived entirely from the seven accepted ADRs/amendments and the certified corpus; it introduces no new architectural principle. Per the founder's standing instruction, it is authored autonomously as a "logical consequence of the accepted architecture" and does not require sign-off before use — flag disagreements as they surface rather than blocking on review.
-
-Recommended action once reviewed: ratify as **ADR-0007 — Canonical Object Model**, per `V1-FINAL-CERTIFICATION-REPORT.md` §5.
+**Status: Accepted / Ratified.** (Corrected 2026-07-10, senior architecture review — this header still read "Proposed" after ADR-0007 had already ratified this document; that was stale doc-status drift in the flagship implementation-readiness artifact, exactly the failure mode this project's reconciliation work exists to prevent.) This was the first implementation-readiness artifact produced after AIOS Architecture Version 1 Certification (see `docs/process/v1-final-certification-report.md`). It is derived entirely from the seven accepted ADRs/amendments and the certified corpus; it introduces no new architectural principle. Ratified by **ADR-0007 — Canonical Object Model** (`docs/adr/ADR-0007-canonical-object-model.md`) — that ADR is now the formal decision record; this document remains the detailed design reference underneath it. Implementation-level details not yet exercised against real code remain provisional until the vertical slice validates them, per the usual "wait for evidence" caveat — that provisionality applies to specific unresolved items named throughout (Plugin fields, access model, relationship-type vocabulary), not to the document's overall status.
 
 ---
 

@@ -9,13 +9,15 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate:schemas": "node scripts/generate-schemas.mjs"
   },
   "dependencies": {
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "zod-to-json-schema": "^3.24.1"
   }
 }

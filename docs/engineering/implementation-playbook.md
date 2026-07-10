@@ -28,7 +28,7 @@ The strategy that follows from that fact: **do not build all nine packages again
 unvalidated specs.** Build the smallest slice that exercises the real dependency chain
 end-to-end, compare what you actually built against what the docs said, log every
 divergence, and only then proceed to the remaining packages — informed by evidence instead
-of more documentation. This is §4 below, and it is the single most important section in
+of more documentation. This is §5 below, and it is the single most important section in
 this playbook. Everything else (build order, milestones, task allocation) is organized
 around getting to that slice quickly and using it honestly.
 
@@ -63,17 +63,53 @@ Topological build order (per `docs/engineering/implementation-roadmap.md` §2):
 chain required for the simplest end-to-end scenario (a Task moves from Created to
 Completed under an Agent, dispatched by the Orchestration Kernel). `containers`, `tools`,
 `learning`, and `founder` are reachable off this spine but not required for the first
-vertical slice (§4).
+vertical slice (§5).
 
 **Open question this build order does not resolve:** whether Task/Mission/Objective are
 stored via `@aios/objects` or via a dedicated backing store `@aios/work-hierarchy` owns
 directly (`docs/engineering/runtime-interfaces.md` §5). The corpus assumed Option B
 (separate storage) throughout but flagged this as revisitable. **Resolve this with the
-vertical slice, not by reasoning about it further** — see §4.
+vertical slice, not by reasoning about it further** — see §5.
 
 ---
 
-## 3. AI task allocation — Claude vs. Ollama vs. Human
+## 3. Versioning and compatibility policy for `@aios/core`
+
+**Added 2026-07-10, per an independent senior-architecture-review finding.** Changesets is
+wired up mechanically (`.changeset/config.json`, `release.yml`) but nothing previously
+stated what happens when `@aios/core`'s Zod schemas change in a way that breaks a
+downstream package. That's a policy question, not an implementation question — it's fully
+answerable today, and it gets more expensive to answer the more of `objects`,
+`work-hierarchy`, `containers`, `agents`, `tools`, `learning`, `orchestration`, and
+`founder` exist and depend on `core` transitively. Writing it now, while only `core` exists,
+costs one paragraph. Retrofitting it after five packages have been built against an implicit
+(nonexistent) contract costs an audit of every existing usage for violations.
+
+**Policy:**
+
+- `@aios/core`'s Zod schema exports follow semver *as a contract*, even before `core` itself
+  reaches `1.0.0`: a **patch** release adds nothing observable; a **minor** release adds an
+  optional field, a new entity subtype, or a new relationship type (additive, non-breaking
+  for existing consumers); a **major** release (or, pre-1.0, any `0.x.0` minor bump per the
+  `0.x` convention where minor-is-breaking is standard) removes a field, changes a field's
+  type, tightens a validation constraint that previously-valid data could fail, or changes
+  `lifecycle_state`/`lifecycle_substate` transition rules.
+- Every schema-affecting Changeset must state, in the changeset body, which downstream
+  packages (`docs/engineering/runtime-interfaces.md` §4's dependency graph) are affected and
+  whether the change is additive or breaking — this is a one-line discipline, not a new
+  process, and it's what makes `pnpm changeset` output actually useful instead of a rubber
+  stamp.
+- A breaking change to `core` requires the PR to also update every downstream package's
+  usage in the same PR, or to explicitly document why a downstream package is left
+  temporarily broken with a tracking note — never a silent breakage discovered later by a
+  failing build in an unrelated package.
+- This policy itself is engineering process, not architecture — it doesn't need an ADR and
+  can be revised here directly as implementation reveals better practice, per this
+  playbook's own change-tier (§1, `docs/engineering/` is the living-reference tier).
+
+---
+
+## 4. AI task allocation — Claude vs. Ollama vs. Human
 
 Full per-package table and reasoning: `docs/process/ai-development-plan.md`. General
 policy it applies: `docs/process/ai-development-workflow.md`. Not restated here in full;
@@ -112,7 +148,7 @@ implementation:
 
 ---
 
-## 4. Vertical slice (do this first, before anything else in §2's build order)
+## 5. Vertical slice (do this first, before anything else in §2's build order)
 
 **This supersedes "build packages in dependency order" as the actual first step.** Per
 `docs/engineering/implementation-roadmap.md` §4:
@@ -131,16 +167,16 @@ implementation:
    `state-machines.md` (Tiers 1–4). Log every place reality diverged from the spec —
    including, specifically, how the Task/Object storage boundary actually resolved.
 
-The divergence log from step 5 is the input to §7 (Milestone 1's Definition of Done) and
+The divergence log from step 5 is the input to §8 (Milestone 1's Definition of Done) and
 to whichever founder decision the Task/Object storage question turns out to need. It is
 more valuable than proceeding straight to the remaining packages — it's the fastest way to
-find out whether that boundary and the Plugin thinness (§3 above) are the only two soft
+find out whether that boundary and the Plugin thinness (§4 above) are the only two soft
 spots in the specification corpus, or whether there are others a document-only process
 couldn't have found.
 
 ---
 
-## 5. Testing strategy
+## 6. Testing strategy
 
 - **Unit tests** are colocated per-package (`packages/*/tests/`) — owned by the package,
   move/delete with it. Not centralized.
@@ -166,13 +202,13 @@ couldn't have found.
 
 ---
 
-## 6. Milestones
+## 7. Milestones
 
 Per `docs/archive/prior-manifests/implementation-handoff.md` §10 (superseded for repo
 structure, still correct on this point) and `docs/engineering/implementation-roadmap.md`
 §6:
 
-1. **Vertical Slice Validated** — the five-step sequence in §4 is built and running, and
+1. **Vertical Slice Validated** — the five-step sequence in §5 is built and running, and
    the divergence log either confirms Tiers 1–4 as built or identifies specific, named
    corrections. Deliberately not "Package `core` complete" or "Package `objects`
    complete" — a package being internally complete doesn't test whether packages
@@ -193,10 +229,10 @@ structure, still correct on this point) and `docs/engineering/implementation-roa
 
 ---
 
-## 7. Definition of Done per phase
+## 8. Definition of Done per phase
 
 **Vertical slice (Milestone 1):**
-- All four packages in §4 build, typecheck, and pass their own unit tests via
+- All four packages in §5 build, typecheck, and pass their own unit tests via
   `turbo lint typecheck test build`.
 - One Mission → one Objective → one Task → one Agent execution, start to finish, has an
   integration test in `tests/integration/` exercising it — not just unit tests in
@@ -236,10 +272,10 @@ structure, still correct on this point) and `docs/engineering/implementation-roa
 
 ---
 
-## 8. Validation checkpoints
+## 9. Validation checkpoints
 
 - **After the vertical slice, before building anything else:** the divergence review in
-  §6 Milestone 2. Do not let this become optional under schedule pressure — it's the one
+  §7 Milestone 2. Do not let this become optional under schedule pressure — it's the one
   point in the whole plan where the corpus's central risk (doc-before-code) gets tested
   against reality instead of asserted away.
 - **Every PR touching `packages/core/src/schema/**`:** `schema-check.yml` (automatic).
@@ -251,11 +287,11 @@ structure, still correct on this point) and `docs/engineering/implementation-roa
 - **Before Milestone 3 (Critical Path Complete):** confirm the Task/Object storage
   boundary resolution from Milestone 1 held up under `orchestration`'s coordination logic,
   not just under `agents`' simpler single-Task case — coordination bugs are exactly the
-  "high blast radius" category §3 routes to Claude, and this is where they'd surface.
+  "high blast radius" category §4 routes to Claude, and this is where they'd surface.
 
 ---
 
-## 9. Canonical source documents (this playbook consolidates, does not replace)
+## 10. Canonical source documents (this playbook consolidates, does not replace)
 
 | Topic | Source of truth |
 |---|---|
