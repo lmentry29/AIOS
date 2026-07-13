@@ -18,6 +18,7 @@ All six ADRs were amended 2026-07-09 to incorporate explicit founder decisions (
 | [ADR-0008](ADR-0008-canonical-implementation-language.md) | Canonical Implementation Language | Accepted (2026-07-10) | Establishes TypeScript/Node.js as canonical |
 | [ADR-0009](ADR-0009-repository-and-workspace-organization.md) | Repository and Workspace Organization | Accepted (2026-07-10) | Ratifies `docs/process/repository-design-specification.md`'s structure |
 | [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) | Objective as a Canonical Object Subtype | **Accepted** (2026-07-13) | Amends ADR-0007 as to Objective. Closes the Mission/Objective conflict flagged in `docs/process/divergence-log.md` |
+| [ADR-0011](ADR-0011-project-canonical-object-subtype.md) | Project as a Canonical Object Subtype | **Accepted** (2026-07-13) | Amends ADR-0007 and ADR-0004 Amendment A as to Project. Program, Release, and the six other container types remain non-entities. **Narrows** the Organizational Containers conflict in `docs/process/divergence-log.md`; does not close it |
 
 ## Still open after this batch — HISTORICAL, ALL ITEMS BELOW ARE NOW RESOLVED
 
