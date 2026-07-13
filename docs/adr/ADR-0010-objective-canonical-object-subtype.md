@@ -1,7 +1,7 @@
 # ADR-0010 — Mission Remains a Non-Entity; Objective Becomes a Canonical Object Subtype
 
 ## Status
-**Proposed** (2026-07-12) — amends ADR-0007 (Canonical Object Model). Confirms ADR-0007's five-entity-type boundary and ADR-0004 Amendment A's Work Hierarchy split, and resolves the Objective gap neither specified.
+**Accepted** (2026-07-13) — amends ADR-0007 (Canonical Object Model). Confirms ADR-0007's five-entity-type boundary and ADR-0004 Amendment A's Work Hierarchy split, and resolves the Objective gap neither specified.
 
 ## Context
 

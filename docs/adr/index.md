@@ -17,7 +17,7 @@ All six ADRs were amended 2026-07-09 to incorporate explicit founder decisions (
 | [ADR-0007](ADR-0007-canonical-object-model.md) | Canonical Object Model | Accepted (2026-07-10) — **amended 2026-07-12 by ADR-0010, as to Objective only** | Ratifies `docs/engineering/canonical-object-model.md`; closes V1 certification's one blocking gap |
 | [ADR-0008](ADR-0008-canonical-implementation-language.md) | Canonical Implementation Language | Accepted (2026-07-10) | Establishes TypeScript/Node.js as canonical |
 | [ADR-0009](ADR-0009-repository-and-workspace-organization.md) | Repository and Workspace Organization | Accepted (2026-07-10) | Ratifies `docs/process/repository-design-specification.md`'s structure |
-| [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) | Objective as a Canonical Object Subtype | Proposed (2026-07-12) | Amends ADR-0007 as to Objective. Closes the Mission/Objective conflict flagged in `docs/process/divergence-log.md` |
+| [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) | Objective as a Canonical Object Subtype | **Accepted** (2026-07-13) | Amends ADR-0007 as to Objective. Closes the Mission/Objective conflict flagged in `docs/process/divergence-log.md` |
 
 ## Still open after this batch — HISTORICAL, ALL ITEMS BELOW ARE NOW RESOLVED
 
