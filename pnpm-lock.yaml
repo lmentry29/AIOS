@@ -106,6 +106,9 @@ importers:
       '@aios/core':
         specifier: workspace:*
         version: link:../core
+      zod:
+        specifier: 3.24.1
+        version: 3.24.1
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -1123,6 +1126,9 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
+  zod@3.24.1:
+    resolution: {integrity: sha512-muH7gBL9sI1nciMZV67X5fTKKBLtwpZ5VBp1vsOQzj1MhrBZ4wlVCm3gedKZWLp0Oyel8sIGfeiz54Su+OVT+A==}
+
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
@@ -1990,5 +1996,7 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@3.25.76):
     dependencies:
       zod: 3.25.76
+
+  zod@3.24.1: {}
 
   zod@3.25.76: {}
