@@ -4,13 +4,47 @@ import type {
   Relationship,
   RelationshipDirection,
 } from '@aios/core';
-import { CanonicalEntity as CanonicalEntitySchema, OBJECTIVE_DEFINITION_FIELDS } from '@aios/core';
+import {
+  CanonicalEntity as CanonicalEntitySchema,
+  OBJECTIVE_DEFINITION_FIELDS,
+  PROJECT_IMMUTABLE_FIELDS,
+} from '@aios/core';
 import {
   EntityIdConflictError,
   EntityNotFoundError,
   ImmutableEntityError,
   ImmutableObjectiveFieldError,
+  ImmutableProjectFieldError,
 } from './errors.js';
+
+/**
+ * Subtypes whose fields are immutable after creation, and what to throw when a write
+ * tries to change one.
+ *
+ * ONE table, ONE code path (assertImmutableFieldsUnchanged below) — deliberately not a
+ * per-subtype method. Objective (COM §5.3) came first; Project (§5.4) is the second and
+ * generalized it rather than pasting a near-copy. A third subtype adds a row here and
+ * nothing else.
+ *
+ * Note this is a *different* rule from Memory Object immutability (§5.1, enforced in
+ * assertMutable): that one locks the whole entity once lifecycle_state reaches
+ * 'completed'. These lock specific fields from creation onward, at every lifecycle
+ * state. Both are write-time rules because neither constrains *shape* — Zod cannot
+ * express either.
+ */
+const IMMUTABLE_FIELDS_BY_SUBTYPE: Record<
+  string,
+  { readonly fields: readonly string[]; readonly error: (id: string, f: string[]) => Error }
+> = {
+  objective: {
+    fields: OBJECTIVE_DEFINITION_FIELDS,
+    error: (id, f) => new ImmutableObjectiveFieldError(id, f),
+  },
+  project: {
+    fields: PROJECT_IMMUTABLE_FIELDS,
+    error: (id, f) => new ImmutableProjectFieldError(id, f),
+  },
+};
 
 /**
  * Minimal structural type for "something with a Zod-compatible .parse()".
@@ -92,7 +126,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
-    this.assertObjectiveDefinitionUnchanged(current, patch);
+    this.assertImmutableFieldsUnchanged(current, patch);
 
     const updated = this.schema.parse({
       ...current,
@@ -192,33 +226,42 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   }
 
   /**
-   * Enforces Objective definition immutability (COM §5.3, ADR-0010) — the second
-   * write-time rule this store carries, alongside Memory Object immutability above.
-   * Both live here for the same reason: they constrain *transitions*, not shape, so
-   * Zod cannot express either.
+   * Enforces per-subtype field immutability, driven by IMMUTABLE_FIELDS_BY_SUBTYPE:
+   * Objective's definition fields (COM §5.3, ADR-0010) and Project's `project_dna`
+   * (COM §5.4, ADR-0011). One code path for both — a third subtype adds a table row,
+   * not another method.
    *
    * Only called from update(). transitionLifecycle() and addRelationship() are
-   * deliberately exempt: an Objective's status advancing, and its 'depends_on' edges
-   * being recorded, are not changes to its definition — and both those paths write
-   * append-only fields (§11). This is what lets Ch.4's "Objectives remain immutable"
-   * and its "Current Status" field both be true simultaneously.
+   * deliberately EXEMPT, and that exemption is load-bearing:
    *
-   * Compares values rather than mere key-presence, so re-submitting a definition field
+   *  - An Objective's status advancing, and its 'depends_on' edges being recorded, are
+   *    not changes to its definition. This is what lets Part VI Ch.4's "Objectives
+   *    remain immutable" and its "Current Status" field both be true at once.
+   *  - A Project's lifecycle_state / project_status / project_phase transitions are not
+   *    changes to its DNA. Transitions are what a Project is *for* — only project_dna
+   *    is constitutional (Part XI Ch.4).
+   *
+   * Both exempt paths write append-only fields (§11), so nothing is lost.
+   *
+   * Compares values rather than mere key-presence, so re-submitting an immutable field
    * with an identical value is a no-op rather than a spurious failure.
    */
-  private assertObjectiveDefinitionUnchanged(current: T, patch: EntityPatch<T>): void {
-    if (current.entity_subtype !== 'objective') return;
+  private assertImmutableFieldsUnchanged(current: T, patch: EntityPatch<T>): void {
+    const rule = current.entity_subtype
+      ? IMMUTABLE_FIELDS_BY_SUBTYPE[current.entity_subtype]
+      : undefined;
+    if (!rule) return;
 
     const record = current as unknown as Record<string, unknown>;
     const patched = patch as unknown as Record<string, unknown>;
 
-    const changed = OBJECTIVE_DEFINITION_FIELDS.filter(
+    const changed = rule.fields.filter(
       (field) =>
         field in patched && JSON.stringify(patched[field]) !== JSON.stringify(record[field])
     );
 
     if (changed.length > 0) {
-      throw new ImmutableObjectiveFieldError(current.entity_id, changed);
+      throw rule.error(current.entity_id, changed);
     }
   }
 }

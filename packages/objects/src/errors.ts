@@ -44,6 +44,31 @@ export class ImmutableObjectiveFieldError extends Error {
 }
 
 /**
+ * Thrown when update() attempts to change a Project's `project_dna`. Per COM §5.4 and
+ * ADR-0011, sourced from Part XI Ch.4: Project DNA is the project's "immutable
+ * characteristics" and its "constitutional document."
+ *
+ * Like Objective (§5.3), this bites from creation, not only once completed. Unlike
+ * Objective, it covers a single field — everything else on a Project, including all
+ * three status axes, is mutable. Transitions are what a Project is for:
+ * `lifecycle_state`, `project_status`, and `project_phase` moves are NOT DNA mutations
+ * and remain permitted.
+ *
+ * Ch.4 does add "Significant modifications require governance review," implying DNA is
+ * amendable under governance rather than absolutely frozen. No governance model is
+ * ratified (COM §6 item 1), so strict immutability is the conservative reading: it
+ * cannot be wrongly mutated, and a future governance model can relax it.
+ */
+export class ImmutableProjectFieldError extends Error {
+  constructor(entityId: string, fields: readonly string[]) {
+    super(
+      `Cannot modify field(s) [${fields.join(', ')}] on Project "${entityId}" — Project DNA is immutable after creation (COM §5.4, ADR-0011; Part XI Ch.4 calls it the project's "constitutional document"). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+    );
+    this.name = 'ImmutableProjectFieldError';
+  }
+}
+
+/**
  * Thrown when a mutation is attempted against a Memory Object whose
  * lifecycle_state is 'completed'. Per COM §5.1, Memory Objects are
  * immutable after publication — evolution requires a new entity_id with
