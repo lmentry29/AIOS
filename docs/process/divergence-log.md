@@ -245,27 +245,53 @@ because silent deviation is what makes a divergence log untrustworthy
    the merge the corpus declined to perform. The axis stays in the package
    that owns it.
 
-## Untested boundary — integration suite is not wired
+## Untested boundary — integration suite — RESOLVED (2026-07-13)
 
-`tests/integration/` is empty, and it cannot currently hold a working test:
-`pnpm-workspace.yaml` declares only `packages/*`, so nothing under `tests/`
-is a workspace package and nothing there can resolve `@aios/*` imports.
-`vitest.workspace.ts` defines `integration` and `conformance` projects that
-would run, but have nothing runnable in them.
+> **Status: FIXED.** `pnpm-workspace.yaml` now globs `tests/*`, so
+> `tests/integration` is a workspace package (`@aios/integration-tests`) and
+> can resolve `@aios/*` imports. 24 boundary tests now cover
+> core → objects, objects → work-hierarchy, and work-hierarchy → agents.
+> Turbo picks the package up automatically, so `ci.yml`'s existing
+> `turbo lint typecheck test build` runs the suite with no workflow change
+> (39 tasks, up from 36). Original problem statement preserved below.
 
-This means **no package currently meets implementation-playbook.md §8's
-per-package Definition of Done**, which requires "an integration test
-covering its boundary with whatever it depends on, not just isolated unit
-coverage" — including the four vertical-slice packages, whose
-Mission → Objective → Task → Agent integration test §8 also requires and
-which was blocked by conflict #1 anyway. Unit coverage across
-core/objects/work-hierarchy/agents/tools/learning is real; cross-package
-coverage is zero.
+**Original problem.** `tests/integration/` was empty and *could not hold a
+working test*: `pnpm-workspace.yaml` declared only `packages/*`, so nothing
+under `tests/` was a workspace package and nothing there could resolve
+`@aios/*` imports. `vitest.workspace.ts` defined `integration` and
+`conformance` projects with nothing runnable in them.
 
-Fixing it is mechanical (add `tests/*` to the workspace, give
-`tests/integration` a `package.json` declaring the `@aios/*` packages it
-imports) but it changes root workspace configuration, so it is flagged here
-rather than done as a drive-by inside a package commit.
+That meant no package met implementation-playbook.md §8's per-package
+Definition of Done, which requires "an integration test covering its
+boundary with whatever it depends on, not just isolated unit coverage."
+Unit coverage was real; cross-package coverage was zero.
+
+### Still outstanding after this fix
+
+1. **The full Mission → Objective → Task → Agent chain (§8's Milestone 1
+   DoD) is still NOT covered**, and cannot be: Objective has no schema in
+   code. ADR-0010 makes it a Canonical Object subtype but is still
+   **Proposed** and unimplemented, so there is nothing to construct. The
+   Task's `work_hierarchy_parent.entity_id` at level `'objective'` remains
+   a typed UUID with no backing record. `work-hierarchy-agents.test.ts`
+   says so in a header comment rather than faking it with a stub Objective.
+   Closing this needs ADR-0010 accepted and `objective.ts` written.
+
+2. **`tests/conformance/` is still empty**, and `conformance.yml` runs
+   `pnpm vitest run --project conformance` against it. Per playbook §6 that
+   suite should not be written before the vertical slice exists — it now
+   does, so this is unblocked but unwritten.
+
+3. **The suite's value is boundary *coverage*, not bug-catching power that
+   unit tests lack.** Honest note from validating it: reintroducing the
+   COM §10 field-stripping defect (constructing `TaskStore` with the base
+   schema instead of `TaskEntity`) fails 4 integration tests — but it also
+   fails `@aios/work-hierarchy`'s and `@aios/agents`' own unit tests. The
+   defect this suite is uniquely positioned to catch is the divergence-log
+   bug-1 class: a barrel that stops re-exporting, which builds and
+   typechecks clean and only breaks on cross-package import. That case is
+   now pinned in both `core-objects.test.ts` and `@aios/core`'s own
+   entry-point test.
 
 ## Other notes
 

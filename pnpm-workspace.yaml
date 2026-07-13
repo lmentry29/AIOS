@@ -1,5 +1,11 @@
 packages:
   - "packages/*"
+  # tests/integration and tests/conformance are workspace packages so they can
+  # resolve @aios/* imports. implementation-playbook.md §6 keeps them centralized
+  # rather than per-package, precisely because they test ACROSS package boundaries
+  # and no single package should own that. Without this glob nothing under tests/
+  # can import a workspace package at all, and the suites cannot exist.
+  - "tests/*"
 allowBuilds:
   '@biomejs/biome': true
   esbuild: true

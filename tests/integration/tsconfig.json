@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  // tsconfig.base.json's `exclude` resolves relative to the base file at the repo
+  // root, so its "tests" entry excludes this entire directory. Override it, or tsc
+  // finds no inputs here at all.
+  "exclude": ["node_modules"],
+  "include": ["**/*.ts"]
+}
