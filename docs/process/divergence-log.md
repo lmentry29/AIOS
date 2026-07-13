@@ -262,6 +262,33 @@ Object's `importance` (COM §5.1) — the same shape, so the model gains no new
 severity axis. Flagged rather than silently chosen. If a real priority or
 risk taxonomy is later sourced, these members are what to revisit.
 
+## Spec gap found implementing @aios/containers (2026-07-13)
+
+**`runtime-interfaces.md` §3/§4's dependency graph is stale for `containers`.**
+Both say `containers` depends on **core only** — §3's list reads
+"containers/ — depends on: core", and §4's graph has a `core --> containers`
+edge with no `objects --> containers` edge.
+
+`@aios/containers` now depends on `@aios/objects`, because ADR-0011 and
+COM §5.4 ratify `ObjectStore<ProjectEntity>` as Project's storage ("the
+existing generic store... No new persistence machinery is required"), and
+Part XI Ch.8's "Project Registry" is that store.
+
+**This is not a violation — the graph predates the decision.** It was drawn
+when containers had no schema and no store at all, because no container type
+had a field-level model. ADR-0011 changed that for Project. Authority order
+(AGENTS.md rules 1–2) puts the ADR-gated COM above `runtime-interfaces.md`,
+which is living reference under normal PR review.
+
+No cycle is introduced: `containers` is a leaf, and nothing depends on it.
+
+**Action:** `runtime-interfaces.md` §3 and §4 should be updated to add the
+`objects → containers` edge. Not done here — it is outside the scope of the
+package commit, and is flagged rather than changed as a drive-by. (This is the
+second stale edge in that graph; see the `@aios/tools` entry above, where the
+*playbook* was the stale one and runtime-interfaces was correct. Here it is the
+reverse.)
+
 ## Untested boundary — integration suite — RESOLVED (2026-07-13)
 
 > **Status: FIXED.** `pnpm-workspace.yaml` now globs `tests/*`, so
