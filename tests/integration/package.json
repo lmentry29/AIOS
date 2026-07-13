@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aios/agents": "workspace:*",
+    "@aios/containers": "workspace:*",
     "@aios/core": "workspace:*",
     "@aios/objects": "workspace:*",
     "@aios/work-hierarchy": "workspace:*"

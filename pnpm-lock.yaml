@@ -182,6 +182,9 @@ importers:
       '@aios/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@aios/containers':
+        specifier: workspace:*
+        version: link:../../packages/containers
       '@aios/core':
         specifier: workspace:*
         version: link:../../packages/core

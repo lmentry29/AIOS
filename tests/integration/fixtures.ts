@@ -4,6 +4,7 @@ import type {
   CanonicalEntity,
   MemoryObjectEntity,
   ObjectiveEntity,
+  ProjectEntity,
   TaskEntity,
 } from '@aios/core';
 
@@ -95,6 +96,38 @@ export function makeObjective(overrides: Record<string, unknown> = {}): Objectiv
     acceptance_criteria: ['founder signs off on the measured result'],
     ...overrides,
   }) as unknown as ObjectiveEntity;
+}
+
+/**
+ * A Project — a Canonical Object subtype (`entity_subtype: 'project'`), per ADR-0011
+ * and COM §5.4. An Organizational Container, NOT a Work Hierarchy level: it never
+ * carries `work_hierarchy_parent`.
+ */
+export function makeProject(overrides: Record<string, unknown> = {}): ProjectEntity {
+  return base({
+    entity_type: 'canonical_object',
+    entity_subtype: 'project',
+    name: 'AIOS',
+    purpose: 'make the architecture executable',
+    // Prose, not references (ADR-0011 §5).
+    mission: 'an AI-native engineering organization',
+    vision: 'software that plans and builds itself',
+    project_dna: {
+      mission: 'an AI-native engineering organization',
+      core_principles: ['no unilateral resolution'],
+      target_users: ['the founder'],
+      architectural_philosophy: 'doc-first',
+      quality_expectations: ['green before commit'],
+      long_term_objectives: ['autonomy'],
+      non_goals: ['a general agent framework'],
+      governance_constraints: ['ADR-gated'],
+    },
+    project_status: 'active_development',
+    project_phase: 'implementation',
+    project_status_history: [],
+    lifecycle_state: 'active',
+    ...overrides,
+  }) as unknown as ProjectEntity;
 }
 
 export function makeCanonicalObject(overrides: Record<string, unknown> = {}): CanonicalEntity {
