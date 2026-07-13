@@ -26,7 +26,7 @@ export type LifecycleState = z.infer<typeof LifecycleState>;
 
 // §9: entity_id / actor identity scheme — UUIDv4 or "human:<founder_id>",
 // never reused/reassigned, never identified by `name` alone.
-const ActorRef = z.string().refine(
+export const ActorRef = z.string().refine(
   (val) => z.string().uuid().safeParse(val).success || /^human:.+$/.test(val),
   { message: 'actor must be a UUID (entity_id) or "human:<founder_id>"' }
 );

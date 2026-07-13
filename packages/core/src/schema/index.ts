@@ -7,3 +7,4 @@ export * from './canonical-object.js';
 export * from './memory-object.js';
 export * from './artifact.js';
 export * from './objective.js';
+export * from './project.js';

@@ -1,11 +1,66 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "base",
+  "title": "project",
   "definitions": {
-    "ActorRef": {
-      "type": "string"
+    "ProjectDna": {
+      "additionalProperties": false,
+      "properties": {
+        "architectural_philosophy": {
+          "type": "string"
+        },
+        "core_principles": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "governance_constraints": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "long_term_objectives": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mission": {
+          "type": "string"
+        },
+        "non_goals": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "quality_expectations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target_users": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "mission",
+        "architectural_philosophy"
+      ],
+      "type": "object"
     },
-    "CanonicalEntity": {
+    "ProjectEntity": {
       "additionalProperties": false,
       "properties": {
         "access_policy": {
@@ -31,16 +86,11 @@
           "type": "string"
         },
         "entity_subtype": {
+          "const": "project",
           "type": "string"
         },
         "entity_type": {
-          "enum": [
-            "agent",
-            "task",
-            "workflow",
-            "plugin",
-            "canonical_object"
-          ],
+          "const": "canonical_object",
           "type": "string"
         },
         "lifecycle_history": {
@@ -94,6 +144,9 @@
         "lifecycle_substate": {
           "type": "string"
         },
+        "mission": {
+          "type": "string"
+        },
         "modified_at": {
           "format": "date-time",
           "type": "string"
@@ -143,6 +196,133 @@
           ],
           "type": "string"
         },
+        "project_dna": {
+          "additionalProperties": false,
+          "properties": {
+            "architectural_philosophy": {
+              "type": "string"
+            },
+            "core_principles": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "governance_constraints": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "long_term_objectives": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "mission": {
+              "type": "string"
+            },
+            "non_goals": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "quality_expectations": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "target_users": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "mission",
+            "architectural_philosophy"
+          ],
+          "type": "object"
+        },
+        "project_phase": {
+          "enum": [
+            "concept",
+            "research",
+            "architecture",
+            "planning",
+            "implementation",
+            "validation",
+            "deployment",
+            "operation",
+            "evolution",
+            "retirement",
+            "archive"
+          ],
+          "type": "string"
+        },
+        "project_status": {
+          "enum": [
+            "initializing",
+            "planning",
+            "active_development",
+            "maintenance",
+            "paused",
+            "blocked",
+            "migrating",
+            "archived",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "project_status_history": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "entered_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "initializing",
+                  "planning",
+                  "active_development",
+                  "maintenance",
+                  "paused",
+                  "blocked",
+                  "migrating",
+                  "archived",
+                  "retired"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "entered_at",
+              "actor"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "purpose": {
+          "type": "string"
+        },
         "relationships": {
           "default": [],
           "items": {
@@ -187,6 +367,9 @@
           "exclusiveMinimum": 0,
           "type": "integer"
         },
+        "vision": {
+          "type": "string"
+        },
         "work_hierarchy_parent": {
           "additionalProperties": false,
           "properties": {
@@ -213,6 +396,7 @@
       "required": [
         "entity_id",
         "entity_type",
+        "entity_subtype",
         "name",
         "lifecycle_state",
         "lifecycle_history",
@@ -221,35 +405,47 @@
         "modified_at",
         "version",
         "owner_id",
-        "owner_type"
+        "owner_type",
+        "purpose",
+        "mission",
+        "vision",
+        "project_dna",
+        "project_status",
+        "project_phase"
       ],
       "type": "object"
     },
-    "ContainerType": {
+    "ProjectPhase": {
       "enum": [
-        "project",
-        "program",
-        "release",
-        "milestone",
-        "epic",
-        "feature",
-        "roadmap",
-        "vision",
-        "workspace"
+        "concept",
+        "research",
+        "architecture",
+        "planning",
+        "implementation",
+        "validation",
+        "deployment",
+        "operation",
+        "evolution",
+        "retirement",
+        "archive"
       ],
       "type": "string"
     },
-    "EntityType": {
+    "ProjectStatus": {
       "enum": [
-        "agent",
-        "task",
-        "workflow",
-        "plugin",
-        "canonical_object"
+        "initializing",
+        "planning",
+        "active_development",
+        "maintenance",
+        "paused",
+        "blocked",
+        "migrating",
+        "archived",
+        "retired"
       ],
       "type": "string"
     },
-    "LifecycleHistoryEntry": {
+    "ProjectStatusHistoryEntry": {
       "additionalProperties": false,
       "properties": {
         "actor": {
@@ -259,158 +455,25 @@
           "format": "date-time",
           "type": "string"
         },
-        "state": {
+        "status": {
           "enum": [
-            "created",
-            "validated",
-            "active",
-            "monitored",
-            "suspended",
-            "completed",
-            "archived"
+            "initializing",
+            "planning",
+            "active_development",
+            "maintenance",
+            "paused",
+            "blocked",
+            "migrating",
+            "archived",
+            "retired"
           ],
-          "type": "string"
-        },
-        "substate": {
           "type": "string"
         }
       },
       "required": [
-        "state",
+        "status",
         "entered_at",
         "actor"
-      ],
-      "type": "object"
-    },
-    "LifecycleState": {
-      "enum": [
-        "created",
-        "validated",
-        "active",
-        "monitored",
-        "suspended",
-        "completed",
-        "archived"
-      ],
-      "type": "string"
-    },
-    "OrganizationalContainerRef": {
-      "additionalProperties": false,
-      "properties": {
-        "container_type": {
-          "enum": [
-            "project",
-            "program",
-            "release",
-            "milestone",
-            "epic",
-            "feature",
-            "roadmap",
-            "vision",
-            "workspace"
-          ],
-          "type": "string"
-        },
-        "entity_id": {
-          "format": "uuid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entity_id",
-        "container_type"
-      ],
-      "type": "object"
-    },
-    "OwnerType": {
-      "enum": [
-        "agent",
-        "human"
-      ],
-      "type": "string"
-    },
-    "Relationship": {
-      "additionalProperties": false,
-      "properties": {
-        "direction": {
-          "enum": [
-            "outbound",
-            "inbound"
-          ],
-          "type": "string"
-        },
-        "relationship_type": {
-          "type": "string"
-        },
-        "target_entity_id": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "target_entity_type": {
-          "enum": [
-            "agent",
-            "task",
-            "workflow",
-            "plugin",
-            "canonical_object"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "target_entity_id",
-        "target_entity_type",
-        "relationship_type",
-        "direction"
-      ],
-      "type": "object"
-    },
-    "RelationshipDirection": {
-      "enum": [
-        "outbound",
-        "inbound"
-      ],
-      "type": "string"
-    },
-    "RelationshipType": {
-      "enum": [
-        "supersedes",
-        "superseded_by",
-        "assigned_to",
-        "depends_on",
-        "blocks",
-        "derived_from",
-        "contains"
-      ],
-      "type": "string"
-    },
-    "WorkHierarchyLevel": {
-      "enum": [
-        "mission",
-        "objective",
-        "task"
-      ],
-      "type": "string"
-    },
-    "WorkHierarchyParent": {
-      "additionalProperties": false,
-      "properties": {
-        "entity_id": {
-          "format": "uuid",
-          "type": "string"
-        },
-        "level": {
-          "enum": [
-            "mission",
-            "objective",
-            "task"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "entity_id",
-        "level"
       ],
       "type": "object"
     }
