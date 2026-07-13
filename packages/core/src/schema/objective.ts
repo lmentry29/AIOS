@@ -44,7 +44,8 @@ export type ObjectiveRiskProfile = z.infer<typeof ObjectiveRiskProfile>;
  * Enforcement is a write-time rule in the persistence layer (@aios/objects), not
  * something Zod's static shape validation can express — the same situation as Memory
  * Object immutability (§5.1), and it reuses that mechanism rather than inventing a
- * second one. See ObjectiveDefinitionFields in @aios/objects.
+ * second one. See ObjectStore.assertObjectiveDefinitionUnchanged, which consumes this
+ * list, and ImmutableObjectiveFieldError, which it throws.
  */
 export const OBJECTIVE_DEFINITION_FIELDS = [
   'purpose',
