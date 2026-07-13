@@ -37,13 +37,20 @@ The certified architecture establishes *that* AIOS has a unified entity lifecycl
                                                   Layer)              │
                                                                       ├── Memory Object (§5.1)
                                                                       ├── Artifact (§5.2)
+                                                                      ├── Objective (§5.3)
                                                                       └── [other Canonical
                                                                            Object types, open]
 ```
 
 **§2a — Task and Action are not both top-level lifecycle entities.** ADR-0003 lists "Tasks" (plural, matching the Work Hierarchy's Task level) as lifecycle-bearing but does not separately list Action. Resolution: **Task** is the lifecycle-bearing entity (Created→...→Archived per ADR-0003); **Action** is modeled as a sub-state/step within a Task's Active stage, consistent with Appendix A's definition ("Actions are indivisible from the perspective of the Planning Engine" — i.e., Actions are not independently tracked through the full lifecycle, they execute within a Task's Active stage). This is a schema-level clarification, not a new architectural claim — ADR-0004 already establishes Task consists of Actions; this just states which of the two carries lifecycle state.
 
-**Mission, Objective, and Organizational Containers (Project, Program, Release, etc.) are not entities in this model — they are reference/container fields.** Per ADR-0004 Amendment A, they organize and scope entities but are not themselves lifecycle-bearing execution units in the ADR-0003 sense. They appear below as foreign-key-style fields on the entities that reference them (§3.4), not as rows in the entity taxonomy diagram above.
+**§2b — Mission and Organizational Containers are not entities in this model — they are reference/container fields.** Per ADR-0004 Amendment A, they organize and scope entities but are not themselves lifecycle-bearing execution units in the ADR-0003 sense. They appear below as foreign-key-style fields on the entities that reference them (§3.4), not as rows in the entity taxonomy diagram above.
+
+**§2c — Objective is the exception, per ADR-0010 (amending ADR-0007).** This section previously grouped Objective with Mission and Organizational Containers as a non-entity reference field. That is **no longer the case**. An Objective is persisted as a **Canonical Object subtype** (`entity_subtype: 'objective'`, §4.5, §5.3): a real record with identity, persistence, and an ADR-0003 lifecycle. `work_hierarchy_parent.entity_id` at level `'objective'` (§3.4) therefore **dereferences to an actual Canonical Object record** — it is not a dangling reference.
+
+This introduces **no sixth entity type**. ADR-0007's boundary is intact: Objective is a subtype of the existing Canonical Object type via the open, additive `entity_subtype` mechanism (§12), exactly as Memory Object and Artifact are — not a new peer of Agent/Task/Workflow/Plugin/Canonical Object.
+
+Mission and Objective are deliberately **asymmetric** here. The reason is evidentiary, not architectural: *AIOS Specification Project* Part VI Ch.4 specifies a field-level model for Objective, and the corpus specifies nothing comparable for Mission. Promoting Mission would mean inventing its fields. `work_hierarchy_parent` at level `'mission'` accordingly remains a typed reference with no backing record — a knowingly-retained gap (ADR-0010 §3), not an oversight. Should a Mission field-level model later be sourced, it can take this same path without amending the taxonomy.
 
 ---
 
@@ -175,6 +182,7 @@ Extends the base schema. Governed by the **Object Lifecycle Loop** (ADR-0002): v
 
 - `memory_object` — see §5.1
 - `artifact` — see §5.2
+- `objective` — see §5.3 (added by ADR-0010; the Work Hierarchy's Objective level, per ADR-0004)
 - others: open, pending further specification as implementation proceeds
 
 ---
@@ -208,6 +216,39 @@ The most fully-specified Canonical Object subtype, sourced directly from *AIOS S
 ### 5.2 Artifact
 
 Per the Glossary's Artifact entry ("any persistent output... becomes organizational knowledge after publication"). Modeled as a thin Canonical Object subtype — `entity_subtype: artifact`, `artifact_kind` enum(`documentation`, `source_code`, `architecture_diagram`, `research_report`, `adr`, `benchmark`, `test_report`) per the Glossary's own example list. No further field-level detail exists in the certified corpus; not expanded further here to avoid inventing unsourced structure.
+
+### 5.3 Objective
+
+Added by **ADR-0010** (amending ADR-0007). The Work Hierarchy's Objective level (ADR-0004: Mission → Objective → Task → Action), modeled as a Canonical Object subtype — `entity_subtype: objective` — rather than as a sixth entity type or a non-entity reference field. Source: *AIOS Specification Project* Part VI Ch.4 ("Objective Model"), reconciled here into the ratified model for the first time.
+
+**Field unification (§12).** Ch.4 lists thirteen fields. Five are semantically identical to base-schema fields and are therefore **not redeclared** — redeclaring them is exactly the re-fragmentation §12 forbids:
+
+| Ch.4 field | Unifies into |
+|---|---|
+| Objective ID | `entity_id` (§3.1) |
+| Owner | `owner_id` + `owner_type` (§7) |
+| Creation Timestamp | `created_at` (§3.3) |
+| Current Status | `lifecycle_state` (§3.2); Object Lifecycle Loop substates per §4.5 |
+| Dependencies | `relationships[]` entries with `relationship_type: depends_on` (§8) |
+
+The remaining eight are genuinely new and constitute the subtype's payload:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `purpose` | string | Yes | Distinct from base `description` — *why the Objective exists*, per Ch.4. |
+| `desired_outcome` | string | Yes | |
+| `constraints` | string[] | No, `[]` | |
+| `success_criteria` | string[] | Yes | Non-empty — an Objective with none is not gradeable. |
+| `priority` | enum | Yes | |
+| `risk_profile` | enum | Yes | |
+| `known_unknowns` | string[] | No, `[]` | |
+| `acceptance_criteria` | string[] | Yes | Non-empty. Retained separately from `success_criteria` because Ch.4 lists both; the distinction is thin and flagged for possible follow-on cleanup (ADR-0010, Consequences 3). |
+
+**Immutability.** Ch.4 states *"Objectives remain immutable."* This reuses the Memory Object mechanism (§5.1) rather than inventing a second one: the eight definition fields above are immutable after creation, and revision creates a **new `entity_id`** with an incremented `version` and a `supersedes` relationship pointing back at the prior Objective. `lifecycle_state` transitions are **not** definition mutations and remain permitted — `lifecycle_history` is append-only (§11), so status advances without the definition ever changing. This is the reading under which both halves of Ch.4's text ("remain immutable" *and* "Current Status") hold simultaneously.
+
+As with Memory Object, this constraint is **not expressible in Zod's static shape validation** — it is a write-time rule the persistence layer (§11) must enforce, alongside the Memory Object immutability check already implemented in `@aios/objects`.
+
+**Storage.** `ObjectStore<ObjectiveEntity>` — the existing generic store parameterized by the Objective schema, exactly as `TaskStore` is `ObjectStore<TaskEntity>`. No new persistence machinery is required.
 
 ---
 

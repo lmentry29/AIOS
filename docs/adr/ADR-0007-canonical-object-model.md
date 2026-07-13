@@ -1,7 +1,15 @@
 # ADR-0007 — Canonical Object Model
 
 ## Status
-**Accepted** (2026-07-10)
+**Accepted** (2026-07-10) — **amended 2026-07-12 by [ADR-0010](ADR-0010-objective-canonical-object-subtype.md), as to Objective only.**
+
+> **Read the Decision section below with this amendment in mind.** ADR-0010 supersedes one clause of it: Objective is **no longer** a non-entity reference/container field. It is persisted as a **Canonical Object subtype** (`entity_subtype: 'objective'`), with identity, persistence, and an ADR-0003 lifecycle.
+>
+> This ADR's load-bearing boundary — **"No sixth entity type is introduced"** — is **not** superseded and is expressly reaffirmed by ADR-0010: Objective is a subtype of the existing Canonical Object type via the open, additive `entity_subtype` mechanism (COM §12), exactly as Memory Object and Artifact are. The taxonomy remains five entity types.
+>
+> Everything this ADR says about **Mission** and **Organizational Containers** remains true and unamended — they are still non-entity reference/container fields.
+>
+> The Decision text below is left **verbatim as the historical record** of what was ratified on 2026-07-10, per this ADR's own Consequences section ("amended, not silently superseded"). Do not read it as current status without this note.
 
 ## Context
 ADR-0001 through ADR-0006 establish *that* AIOS has a ten-layer stack, three execution loops, a unified entity lifecycle, a Work Hierarchy distinct from Organizational Containers, resolved naming, and a cross-cutting Founder Intelligence capability. None of them establish what fields exist on an entity, what an entity is made of, or how entities reference each other — the gap between certified architecture and a database schema, an API contract, or a runtime type.
