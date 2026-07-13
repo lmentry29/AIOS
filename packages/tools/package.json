@@ -9,12 +9,13 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@aios/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
