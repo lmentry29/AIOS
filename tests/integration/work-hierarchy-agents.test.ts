@@ -12,13 +12,13 @@ import { makeAgent, makeTask } from './fixtures.js';
  * mandate exists to exercise, and it is the closest thing the repo has to an
  * end-to-end path today.
  *
- * NOT COVERED, deliberately: the Mission → Objective → Task → Agent chain that
- * implementation-playbook.md §8 asks for in full. Objective has no schema in code
- * yet — ADR-0010 (which makes it a Canonical Object subtype) is still Proposed and
- * unimplemented, so there is nothing to construct. The Task's
- * work_hierarchy_parent.entity_id at level 'objective' remains a typed UUID with no
- * backing record. That gap is real and is left visible here rather than faked with a
- * stub Objective. See docs/process/divergence-log.md conflict #1.
+ * Scope: this file covers the work-hierarchy ↔ agents EDGE in isolation, with a Task
+ * whose Objective parent is an unresolved id — which is all this boundary itself
+ * requires. The full Mission → Objective → Task → Agent chain that
+ * implementation-playbook.md §8 asks for now lives in ./full-chain.test.ts; it became
+ * possible once ADR-0010 was accepted and packages/core/src/schema/objective.ts gave
+ * Objective a real schema. (This header previously said that chain could not be
+ * tested. It can now.)
  */
 
 function setup() {

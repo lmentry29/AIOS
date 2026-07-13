@@ -4,8 +4,13 @@ import type {
   Relationship,
   RelationshipDirection,
 } from '@aios/core';
-import { CanonicalEntity as CanonicalEntitySchema } from '@aios/core';
-import { EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from './errors.js';
+import { CanonicalEntity as CanonicalEntitySchema, OBJECTIVE_DEFINITION_FIELDS } from '@aios/core';
+import {
+  EntityIdConflictError,
+  EntityNotFoundError,
+  ImmutableEntityError,
+  ImmutableObjectiveFieldError,
+} from './errors.js';
 
 /**
  * Minimal structural type for "something with a Zod-compatible .parse()".
@@ -87,6 +92,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    this.assertObjectiveDefinitionUnchanged(current, patch);
 
     const updated = this.schema.parse({
       ...current,
@@ -182,6 +188,37 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   private assertMutable(entity: T): void {
     if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
       throw new ImmutableEntityError(entity.entity_id);
+    }
+  }
+
+  /**
+   * Enforces Objective definition immutability (COM §5.3, ADR-0010) — the second
+   * write-time rule this store carries, alongside Memory Object immutability above.
+   * Both live here for the same reason: they constrain *transitions*, not shape, so
+   * Zod cannot express either.
+   *
+   * Only called from update(). transitionLifecycle() and addRelationship() are
+   * deliberately exempt: an Objective's status advancing, and its 'depends_on' edges
+   * being recorded, are not changes to its definition — and both those paths write
+   * append-only fields (§11). This is what lets Ch.4's "Objectives remain immutable"
+   * and its "Current Status" field both be true simultaneously.
+   *
+   * Compares values rather than mere key-presence, so re-submitting a definition field
+   * with an identical value is a no-op rather than a spurious failure.
+   */
+  private assertObjectiveDefinitionUnchanged(current: T, patch: EntityPatch<T>): void {
+    if (current.entity_subtype !== 'objective') return;
+
+    const record = current as unknown as Record<string, unknown>;
+    const patched = patch as unknown as Record<string, unknown>;
+
+    const changed = OBJECTIVE_DEFINITION_FIELDS.filter(
+      (field) =>
+        field in patched && JSON.stringify(patched[field]) !== JSON.stringify(record[field])
+    );
+
+    if (changed.length > 0) {
+      throw new ImmutableObjectiveFieldError(current.entity_id, changed);
     }
   }
 }

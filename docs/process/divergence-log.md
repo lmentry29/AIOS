@@ -245,6 +245,23 @@ because silent deviation is what makes a divergence log untrustworthy
    the merge the corpus declined to perform. The axis stays in the package
    that owns it.
 
+## Spec gap found implementing objective.ts (2026-07-13)
+
+**`priority` and `risk_profile` are ratified as enums with no members
+specified anywhere.** *AIOS Specification Project* Part VI Ch.4 names
+"Priority" and "Risk Profile" in the Objective field list and stops there —
+it enumerates no values. ADR-0010 §5.3 and COM §5.3 both carry the field
+forward as `enum`, Required, and likewise name no members. Part XI Ch.11's
+"Priority categories" is about the Work Hierarchy / Container split, not a
+severity scale, so it is not a source for these either.
+
+The field *types* are settled by an accepted ADR; only the *members* are
+unsourced. Rather than invent a new vocabulary, both reuse the
+`low | medium | high | critical` scale this repo already ratified for Memory
+Object's `importance` (COM §5.1) — the same shape, so the model gains no new
+severity axis. Flagged rather than silently chosen. If a real priority or
+risk taxonomy is later sourced, these members are what to revisit.
+
 ## Untested boundary — integration suite — RESOLVED (2026-07-13)
 
 > **Status: FIXED.** `pnpm-workspace.yaml` now globs `tests/*`, so
@@ -268,14 +285,15 @@ Unit coverage was real; cross-package coverage was zero.
 
 ### Still outstanding after this fix
 
-1. **The full Mission → Objective → Task → Agent chain (§8's Milestone 1
-   DoD) is still NOT covered**, and cannot be: Objective has no schema in
-   code. ADR-0010 makes it a Canonical Object subtype but is still
-   **Proposed** and unimplemented, so there is nothing to construct. The
-   Task's `work_hierarchy_parent.entity_id` at level `'objective'` remains
-   a typed UUID with no backing record. `work-hierarchy-agents.test.ts`
-   says so in a header comment rather than faking it with a stub Objective.
-   Closing this needs ADR-0010 accepted and `objective.ts` written.
+1. ~~**The full Mission → Objective → Task → Agent chain (§8's Milestone 1
+   DoD) is still NOT covered**~~ — **RESOLVED 2026-07-13.** ADR-0010 was
+   accepted, `packages/core/src/schema/objective.ts` implements it, and
+   `tests/integration/full-chain.test.ts` now exercises the chain
+   end-to-end. `Task.work_hierarchy_parent.entity_id` at level
+   `'objective'` dereferences to a real, persisted Objective record. **The
+   Mission link remains dangling by design** (ADR-0010 §3) and the chain is
+   therefore genuinely asymmetric — the test asserts both halves so the gap
+   stays visible rather than being papered over with a stub Mission.
 
 2. **`tests/conformance/` is still empty**, and `conformance.yml` runs
    `pnpm vitest run --project conformance` against it. Per playbook §6 that

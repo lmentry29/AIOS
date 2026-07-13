@@ -3,6 +3,7 @@ import type {
   AgentEntity,
   CanonicalEntity,
   MemoryObjectEntity,
+  ObjectiveEntity,
   TaskEntity,
 } from '@aios/core';
 
@@ -73,6 +74,27 @@ export function makeMemoryObject(overrides: Record<string, unknown> = {}): Memor
     source_references: [],
     ...overrides,
   }) as unknown as MemoryObjectEntity;
+}
+
+/**
+ * An Objective — a Canonical Object subtype (`entity_subtype: 'objective'`), per
+ * ADR-0010 / COM §5.3. All eight definition fields are populated.
+ */
+export function makeObjective(overrides: Record<string, unknown> = {}): ObjectiveEntity {
+  return base({
+    entity_type: 'canonical_object',
+    entity_subtype: 'objective',
+    name: 'reduce p95 build time',
+    purpose: 'CI feedback is too slow to be useful',
+    desired_outcome: 'p95 build under 3 minutes',
+    constraints: ['no new CI vendors'],
+    success_criteria: ['p95 < 180s over a 7-day window'],
+    priority: 'high',
+    risk_profile: 'medium',
+    known_unknowns: ['whether the cache is the bottleneck'],
+    acceptance_criteria: ['founder signs off on the measured result'],
+    ...overrides,
+  }) as unknown as ObjectiveEntity;
 }
 
 export function makeCanonicalObject(overrides: Record<string, unknown> = {}): CanonicalEntity {

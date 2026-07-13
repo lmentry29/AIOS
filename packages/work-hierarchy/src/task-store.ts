@@ -15,20 +15,20 @@ import { ObjectStore, type EntityPatch } from '@aios/objects';
  * every write instead of being silently stripped, as documented in
  * @aios/objects' own COM §10 evidence test.
  *
- * MISSION AND OBJECTIVE ARE NOT IMPLEMENTED HERE. See
- * docs/process/divergence-log.md for the full explanation. In short:
- * the ratified Canonical Object Model (COM §2) states Mission and
- * Objective are not entities in this model — reference fields only.
- * The raw corpus (AIOS Specification Project, Part VI Ch.4, "Objective
- * Model") specifies a full field-level Objective schema that was never
- * reconciled into the ratified COM. This is a genuine, unresolved
- * architectural conflict between two documents that both claim
- * authority, discovered during this implementation step. Per the
- * project's standing rule to stop and flag such conflicts rather than
- * route around them silently, no MissionEntity or ObjectiveEntity
- * schema is invented here. work_hierarchy_parent.entity_id for level
- * 'mission' or 'objective' remains a valid, typed UUID reference with
- * no backing store or schema — the gap made concrete rather than hidden.
+ * OBJECTIVE IS NOW IMPLEMENTED — see ./objective-store.js. ADR-0010
+ * (Accepted 2026-07-13) resolved the conflict this comment previously
+ * flagged: an Objective is a Canonical Object subtype
+ * (entity_subtype: 'objective', COM §5.3), so
+ * work_hierarchy_parent.entity_id at level 'objective' now dereferences
+ * to a real, persisted record rather than dangling.
+ *
+ * MISSION IS STILL NOT AN ENTITY, deliberately (ADR-0010 §3). The
+ * corpus specifies no field-level model for Mission — unlike Objective,
+ * which had Part VI Ch.4's field list — so promoting it would mean
+ * inventing its fields, which is the unilateral resolution the
+ * project's standing rule forbids. work_hierarchy_parent at level
+ * 'mission' remains a valid, typed UUID reference with no backing store
+ * or schema: a knowingly-retained gap, made concrete rather than hidden.
  */
 export class TaskStore {
   private readonly store: ObjectStore<TaskEntityType>;
