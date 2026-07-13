@@ -38,19 +38,32 @@ The certified architecture establishes *that* AIOS has a unified entity lifecycl
                                                                       ├── Memory Object (§5.1)
                                                                       ├── Artifact (§5.2)
                                                                       ├── Objective (§5.3)
+                                                                      ├── Project (§5.4)
                                                                       └── [other Canonical
                                                                            Object types, open]
 ```
 
 **§2a — Task and Action are not both top-level lifecycle entities.** ADR-0003 lists "Tasks" (plural, matching the Work Hierarchy's Task level) as lifecycle-bearing but does not separately list Action. Resolution: **Task** is the lifecycle-bearing entity (Created→...→Archived per ADR-0003); **Action** is modeled as a sub-state/step within a Task's Active stage, consistent with Appendix A's definition ("Actions are indivisible from the perspective of the Planning Engine" — i.e., Actions are not independently tracked through the full lifecycle, they execute within a Task's Active stage). This is a schema-level clarification, not a new architectural claim — ADR-0004 already establishes Task consists of Actions; this just states which of the two carries lifecycle state.
 
-**§2b — Mission and Organizational Containers are not entities in this model — they are reference/container fields.** Per ADR-0004 Amendment A, they organize and scope entities but are not themselves lifecycle-bearing execution units in the ADR-0003 sense. They appear below as foreign-key-style fields on the entities that reference them (§3.4), not as rows in the entity taxonomy diagram above.
+**§2b — Mission and most Organizational Containers are not entities in this model — they are reference/container fields.** Per ADR-0004 Amendment A, they organize and scope entities but are not themselves lifecycle-bearing execution units in the ADR-0003 sense. They appear below as foreign-key-style fields on the entities that reference them (§3.4), not as rows in the entity taxonomy diagram above.
+
+This holds for Mission, and for the container types `program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, and `workspace`. **It no longer holds for `project` — see §2d.** It also no longer holds for Objective, which was never a container — see §2c.
 
 **§2c — Objective is the exception, per ADR-0010 (amending ADR-0007).** This section previously grouped Objective with Mission and Organizational Containers as a non-entity reference field. That is **no longer the case**. An Objective is persisted as a **Canonical Object subtype** (`entity_subtype: 'objective'`, §4.5, §5.3): a real record with identity, persistence, and an ADR-0003 lifecycle. `work_hierarchy_parent.entity_id` at level `'objective'` (§3.4) therefore **dereferences to an actual Canonical Object record** — it is not a dangling reference.
 
 This introduces **no sixth entity type**. ADR-0007's boundary is intact: Objective is a subtype of the existing Canonical Object type via the open, additive `entity_subtype` mechanism (§12), exactly as Memory Object and Artifact are — not a new peer of Agent/Task/Workflow/Plugin/Canonical Object.
 
 Mission and Objective are deliberately **asymmetric** here. The reason is evidentiary, not architectural: *AIOS Specification Project* Part VI Ch.4 specifies a field-level model for Objective, and the corpus specifies nothing comparable for Mission. Promoting Mission would mean inventing its fields. `work_hierarchy_parent` at level `'mission'` accordingly remains a typed reference with no backing record — a knowingly-retained gap (ADR-0010 §3), not an oversight. Should a Mission field-level model later be sourced, it can take this same path without amending the taxonomy.
+
+**§2d — Project is the exception among Organizational Containers, per ADR-0011 (amending ADR-0007 and ADR-0004 Amendment A).** §2b previously grouped Project with every other container as a non-entity reference field. That is **no longer the case**. A Project is persisted as a **Canonical Object subtype** (`entity_subtype: 'project'`, §4.5, §5.4): a real record with identity, persistence, and an ADR-0003 lifecycle.
+
+**`organizational_containers[].entity_id` (§3.4) therefore dereferences to a real record when `container_type` is `'project'` — and only then.** This partial dereferenceability is a known wart, accepted deliberately (ADR-0011, Consequence 2): consumers of `organizational_containers` **must branch on `container_type`** and must not assume any container id is resolvable. The other eight container types still resolve to nothing.
+
+As with Objective, this introduces **no sixth entity type**. ADR-0007's boundary is intact: Project is a subtype of the existing Canonical Object type via the open, additive `entity_subtype` mechanism (§12), exactly as Memory Object, Artifact, and Objective are.
+
+**Project remains a container. It does not become a Work Hierarchy level.** ADR-0004 Amendment A's split stands exactly as ratified — only Project's *backing* changes, from a bare id to a real record. A Project **must not** carry `work_hierarchy_parent` (§3.4); it is not a rung of Mission → Objective → Task → Action. Merging the two concepts is the defect that Amendment A corrected in four separate places, and promoting Project must not reintroduce it.
+
+Project and the other container types are **asymmetric**, for the same evidentiary reason Mission and Objective are: *AIOS Specification Project* Part XI (*Project Operating System*) specifies Project across ~580 lines — Ch.3 (Identity), Ch.4 (DNA), Ch.6 (Lifecycle), Ch.7 (State), Ch.8 (Registry) — and the corpus specifies **nothing** field-level for Program, Release, Milestone, Epic, Feature, Roadmap, Vision, or Workspace. Promoting any of them would mean inventing their fields. They remain bare references; should a field-level model for any later be sourced, it can take this same path without amending the taxonomy.
 
 ---
 
@@ -92,7 +105,7 @@ This is the field group that directly implements ADR-0004 Amendment A's split. *
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `work_hierarchy_parent` | reference + level enum(`mission`, `objective`, `task`) | Conditional | Present on Task and (optionally) Workflow entities that execute *within* the Work Hierarchy. An Agent or Plugin instance is not itself a Work Hierarchy member and omits this field — it *acts on* Tasks rather than occupying a position in the hierarchy. |
-| `organizational_containers` | array of reference + container_type enum(`project`, `program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, `workspace`) | No | Zero or more. Per ADR-0004 Amendment A, containers "hold, group, or schedule" — this is deliberately an array (an entity can be scoped inside more than one container simultaneously, e.g. a Task inside both a Project and a Milestone), whereas `work_hierarchy_parent` is deliberately singular (Work Hierarchy position is a strict tree, not a graph). |
+| `organizational_containers` | array of reference + container_type enum(`project`, `program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, `workspace`) | No | Zero or more. Per ADR-0004 Amendment A, containers "hold, group, or schedule" — this is deliberately an array (an entity can be scoped inside more than one container simultaneously, e.g. a Task inside both a Project and a Milestone), whereas `work_hierarchy_parent` is deliberately singular (Work Hierarchy position is a strict tree, not a graph). **⚠ Only `container_type: 'project'` dereferences to a real record** (§2d, §5.4) — the other eight resolve to nothing. **Consumers MUST branch on `container_type` and MUST NOT assume any container `entity_id` is resolvable.** This partial dereferenceability is a known wart, accepted deliberately (ADR-0011, Consequence 2), because the alternative is inventing eight field models the corpus does not specify. |
 
 ### 3.5 Access and audit
 
@@ -183,6 +196,7 @@ Extends the base schema. Governed by the **Object Lifecycle Loop** (ADR-0002): v
 - `memory_object` — see §5.1
 - `artifact` — see §5.2
 - `objective` — see §5.3 (added by ADR-0010; the Work Hierarchy's Objective level, per ADR-0004)
+- `project` — see §5.4 (added by ADR-0011; an Organizational Container, **not** a Work Hierarchy level, per ADR-0004 Amendment A)
 - others: open, pending further specification as implementation proceeds
 
 ---
@@ -249,6 +263,74 @@ The remaining eight are genuinely new and constitute the subtype's payload:
 As with Memory Object, this constraint is **not expressible in Zod's static shape validation** — it is a write-time rule the persistence layer (§11) must enforce, alongside the Memory Object immutability check already implemented in `@aios/objects`.
 
 **Storage.** `ObjectStore<ObjectiveEntity>` — the existing generic store parameterized by the Objective schema, exactly as `TaskStore` is `ObjectStore<TaskEntity>`. No new persistence machinery is required.
+
+### 5.4 Project
+
+Added by **ADR-0011** (amending ADR-0007 and ADR-0004 Amendment A). An Organizational Container (§3.4) — **not** a Work Hierarchy level — modeled as a Canonical Object subtype, `entity_subtype: project`, rather than as a sixth entity type or a bare reference. Source: *AIOS Specification Project* Part XI (*Project Operating System*), Ch.3 (Identity), Ch.4 (DNA), Ch.6 (Lifecycle), Ch.7 (State), Ch.8 (Registry) — reconciled into the ratified model for the first time.
+
+Project is the **only** container type with a schema. The other eight (`program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, `workspace`) have no field-level source anywhere in the corpus and remain bare references (§2d).
+
+**A Project must not carry `work_hierarchy_parent`.** It is a container, not a rung of Mission → Objective → Task → Action. See §2d.
+
+**Field unification (§12).** Ch.3's "Project Identity" lists eleven fields. Five are semantically identical to base-schema fields and are therefore **not redeclared** — redeclaring them is the re-fragmentation §12 forbids. Two more map onto the new status axes below:
+
+| Ch.3 field | Unifies into |
+|---|---|
+| Project Identifier | `entity_id` (§3.1) |
+| Name | `name` (§3.1) |
+| Owner | `owner_id` + `owner_type` (§7) |
+| Creation Date | `created_at` (§3.3) |
+| Organizational Scope | `organizational_containers[]` (§3.4) — *container* nesting (a Project inside a Program), never `work_hierarchy_parent` |
+| Status | `project_status` (below) — Ch.7's model |
+| Lifecycle State | `project_phase` (below) — Ch.6's model. **Not** base `lifecycle_state`. |
+
+**Three orthogonal status axes.** This is the subtype's defining characteristic and the thing most likely to be broken by a well-meaning later change:
+
+| Axis | Field | Source | Answers |
+|---|---|---|---|
+| Runtime lifecycle | `lifecycle_state` (§3.2) | ADR-0003 | *What is the state of this record in the system?* |
+| Operational state | `project_status` | Part XI Ch.7 | *What is this project doing right now?* |
+| Developmental phase | `project_phase` | Part XI Ch.6 | *How mature is this project's development?* |
+
+Ch.3 names **both** "Status" and "Lifecycle State" because Part XI defines two distinct models — Ch.7 ("Project **State**") and Ch.6 ("Project **Lifecycle**"). Neither is ADR-0003's record lifecycle, which Part XI never describes. The three axes are what the corpus already says, not a layer added on top of it.
+
+**The three vocabularies collide in five places, and shared terminology does not mean shared meaning:**
+
+| Term | `lifecycle_state` | `project_status` | `project_phase` |
+|---|---|---|---|
+| archive/archived | `archived` — lifecycle terminus | `archived` — operationally shelved | `archive` — final developmental stage |
+| planning | — | `planning` — doing planning work | `planning` — stage after Architecture |
+| retire/retired | — | `retired` — operationally retired | `retirement` — stage before Archive |
+| active | `active` — Active lifecycle stage | `active_development` — actively building | — |
+| validate/validation | `validated` — passed lifecycle validation | — | `validation` — stage after Implementation |
+
+**No axis may be derived from, defaulted from, aliased to, or validated against another.** No shared enum, no shared union, no cross-axis string comparison, no combined history array with an axis discriminator. This is the same class of defect as merging `work_hierarchy_parent` with `organizational_containers` (§3.4): concepts that look mergeable and are not.
+
+The canonical proof case, **required as a named test fixture (`SHELVED_PROJECT`, ADR-0011 Consequence 4)**: `project_status: 'archived'` + `lifecycle_state: 'active'` + `project_phase: 'operation'` — a shelved project whose record is still live and whose phase says it already shipped. Every value is different and true; none can be inferred from the others. An aliasing implementation fails on this case and only on this case.
+
+**Fields.**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `purpose` | string | Yes | |
+| `mission` | string | Yes | **Prose** — a mission *statement*. NOT a reference to a Work Hierarchy Mission. |
+| `vision` | string | Yes | **Prose** — a vision *statement*. NOT a reference to a `vision` container. |
+| `project_dna` | `ProjectDna` value object | Yes | Ch.4's eight sub-fields. Immutable — see below. |
+| `project_status` | enum | Yes | `initializing`, `planning`, `active_development`, `maintenance`, `paused`, `blocked`, `migrating`, `archived`, `retired` |
+| `project_phase` | enum | Yes | `concept`, `research`, `architecture`, `planning`, `implementation`, `validation`, `deployment`, `operation`, `evolution`, `retirement`, `archive`. **Not monotonic** — Ch.6: "Projects may revisit earlier stages." A backward transition is legal. |
+| `project_status_history` | array of `{ status, entered_at, actor }` | Yes, `[]` | **Append-only** (§11, and the same rule as `lifecycle_history`). Required by Ch.7: "State transitions are explicit and auditable." There is deliberately **no** `project_phase_history` — Ch.6 states no auditability requirement, and inventing one would be unsourced (ADR-0011, Consequence 6). |
+
+`mission` and `vision` are prose, not references, and this is load-bearing rather than pedantic: modeling `Project.mission` as a Work-Hierarchy reference would hang a Work Hierarchy level onto an Organizational Container — the exact merge ADR-0004 Amendment A corrected in four places.
+
+**`ProjectDna` (Ch.4)** — a nested **value object**: no independent identity, persistence, or lifecycle. Sub-fields: `mission`, `core_principles[]`, `target_users[]`, `architectural_philosophy`, `quality_expectations[]`, `long_term_objectives[]`, `non_goals[]`, `governance_constraints[]`.
+
+**Immutability.** Ch.4 calls Project DNA the project's "immutable characteristics" and its "constitutional document." This reuses the Memory Object mechanism (§5.1) and the Objective mechanism (§5.3) rather than inventing a third: `project_dna` is immutable after creation, and revision creates a **new `entity_id`** with an incremented `version` and a `supersedes` relationship to the prior Project. Transitions of `lifecycle_state`, `project_status`, and `project_phase` are **not** DNA mutations and remain permitted.
+
+Ch.4 does add "Significant modifications require governance review," implying DNA is amendable *under governance* rather than absolutely frozen. No governance model is ratified (§6 item 1), so strict immutability is the conservative reading: it cannot be wrongly mutated, and a future governance model can relax it.
+
+As with Memory Object and Objective, this is **not expressible in Zod's static shape validation** — it is a write-time rule the persistence layer (§11) must enforce.
+
+**Storage.** `ObjectStore<ProjectEntity>` — the existing generic store parameterized by the Project schema, exactly as `TaskStore` is `ObjectStore<TaskEntity>`. No new persistence machinery is required. Part XI Ch.8's "Project Registry" is this store, in the corpus's own words.
 
 ---
 
