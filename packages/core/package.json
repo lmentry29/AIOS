@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
     "test": "vitest run",
-    "generate:schemas": "node scripts/generate-schemas.mjs"
+    "generate:schemas": "pnpm run build && node scripts/generate-schemas.mjs"
   },
   "dependencies": {
     "zod": "^3.24.1"

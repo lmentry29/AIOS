@@ -1,0 +1,236 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "workflow",
+  "definitions": {
+    "WorkflowEntity": {
+      "additionalProperties": false,
+      "properties": {
+        "access_policy": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "audit_trail_ref": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "entity_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "entity_subtype": {
+          "type": "string"
+        },
+        "entity_type": {
+          "const": "workflow",
+          "type": "string"
+        },
+        "governing_loop": {
+          "const": "system_execution_loop",
+          "type": "string"
+        },
+        "lifecycle_history": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "entered_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "created",
+                  "validated",
+                  "active",
+                  "monitored",
+                  "suspended",
+                  "completed",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              "substate": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "entered_at",
+              "actor"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "lifecycle_state": {
+          "enum": [
+            "created",
+            "validated",
+            "active",
+            "monitored",
+            "suspended",
+            "completed",
+            "archived"
+          ],
+          "type": "string"
+        },
+        "lifecycle_substate": {
+          "type": "string"
+        },
+        "modified_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "organizational_containers": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "container_type": {
+                "enum": [
+                  "project",
+                  "program",
+                  "release",
+                  "milestone",
+                  "epic",
+                  "feature",
+                  "roadmap",
+                  "vision",
+                  "workspace"
+                ],
+                "type": "string"
+              },
+              "entity_id": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_id",
+              "container_type"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "owner_type": {
+          "enum": [
+            "agent",
+            "human"
+          ],
+          "type": "string"
+        },
+        "relationships": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "enum": [
+                  "outbound",
+                  "inbound"
+                ],
+                "type": "string"
+              },
+              "relationship_type": {
+                "type": "string"
+              },
+              "target_entity_id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "target_entity_type": {
+                "enum": [
+                  "agent",
+                  "task",
+                  "workflow",
+                  "plugin",
+                  "canonical_object"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "target_entity_id",
+              "target_entity_type",
+              "relationship_type",
+              "direction"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "version": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "work_hierarchy_parent": {
+          "additionalProperties": false,
+          "properties": {
+            "entity_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "level": {
+              "enum": [
+                "mission",
+                "objective",
+                "task"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "entity_id",
+            "level"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "entity_id",
+        "entity_type",
+        "name",
+        "lifecycle_state",
+        "lifecycle_history",
+        "created_at",
+        "created_by",
+        "modified_at",
+        "version",
+        "owner_id",
+        "owner_type",
+        "steps",
+        "governing_loop"
+      ],
+      "type": "object"
+    }
+  }
+}
