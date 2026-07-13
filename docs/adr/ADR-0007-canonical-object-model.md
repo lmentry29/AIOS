@@ -1,13 +1,20 @@
 # ADR-0007 — Canonical Object Model
 
 ## Status
-**Accepted** (2026-07-10) — **amended 2026-07-12 by [ADR-0010](ADR-0010-objective-canonical-object-subtype.md), as to Objective only.**
+**Accepted** (2026-07-10) — **amended twice, both on 2026-07-13**: by [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) as to **Objective**, and by [ADR-0011](ADR-0011-project-canonical-object-subtype.md) as to **Project**.
 
-> **Read the Decision section below with this amendment in mind.** ADR-0010 supersedes one clause of it: Objective is **no longer** a non-entity reference/container field. It is persisted as a **Canonical Object subtype** (`entity_subtype: 'objective'`), with identity, persistence, and an ADR-0003 lifecycle.
+> **Read the Decision section below with both amendments in mind.** This ADR's Decision states: *"No sixth entity type is introduced. Mission, Objective, and Organizational Containers are reference/container fields, not entities."* **The second sentence is now partly superseded. The first is not.**
 >
-> This ADR's load-bearing boundary — **"No sixth entity type is introduced"** — is **not** superseded and is expressly reaffirmed by ADR-0010: Objective is a subtype of the existing Canonical Object type via the open, additive `entity_subtype` mechanism (COM §12), exactly as Memory Object and Artifact are. The taxonomy remains five entity types.
+> **What is superseded:**
+> - **Objective** (ADR-0010) is no longer a non-entity reference field. It is a **Canonical Object subtype** (`entity_subtype: 'objective'`), with identity, persistence, and an ADR-0003 lifecycle.
+> - **Project** (ADR-0011) is no longer a non-entity container field. It is a **Canonical Object subtype** (`entity_subtype: 'project'`), on the same basis. Project nonetheless **remains an Organizational Container** — it does not become a Work Hierarchy level, and must not carry `work_hierarchy_parent`.
 >
-> Everything this ADR says about **Mission** and **Organizational Containers** remains true and unamended — they are still non-entity reference/container fields.
+> **What is NOT superseded, and is expressly reaffirmed by both amendments:**
+> - **"No sixth entity type is introduced."** This is the load-bearing boundary and it is intact. Objective and Project are subtypes of the existing **Canonical Object** type via the open, additive `entity_subtype` mechanism (COM §12), exactly as Memory Object and Artifact are. The taxonomy remains **five** entity types.
+> - **Mission** remains a non-entity reference field. The corpus specifies no field-level model for it, so promoting it would mean inventing its fields.
+> - **The other eight Organizational Container types** — `program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, `workspace` — remain non-entity container fields, for the same evidentiary reason.
+>
+> Both promotions are **evidence-led, not symmetry-led**: Objective and Project each have a field-level specification in the corpus (Part VI Ch.4; Part XI). Mission and the other eight containers do not.
 >
 > The Decision text below is left **verbatim as the historical record** of what was ratified on 2026-07-10, per this ADR's own Consequences section ("amended, not silently superseded"). Do not read it as current status without this note.
 

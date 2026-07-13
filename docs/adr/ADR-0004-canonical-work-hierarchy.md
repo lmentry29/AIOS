@@ -1,7 +1,17 @@
 # ADR-0004 — Canonical Work Hierarchy
 
 ## Status
-**Accepted** (2026-07-09) — **amended 2026-07-09** to add the Work Hierarchy vs. Organizational Containers distinction (Amendment A), resolving a deeper conflict found during corpus reconciliation than the original Decision covered.
+**Accepted** (2026-07-09) — **amended 2026-07-09** to add the Work Hierarchy vs. Organizational Containers distinction (Amendment A), resolving a deeper conflict found during corpus reconciliation than the original Decision covered. **Amendment A further amended 2026-07-13 by [ADR-0011](ADR-0011-project-canonical-object-subtype.md), as to Project only.**
+
+> **The Work Hierarchy / Organizational Container split is NOT amended. It stands exactly as ratified.** Read this note before assuming otherwise — the split is the single most-corrected thing in this corpus (four separate fix locations, `docs/process/reconciliation-changelog.md`), and ADR-0011 was written specifically not to reopen it.
+>
+> **What ADR-0011 changed:** a **Project** is now a persisted, lifecycle-bearing record — a **Canonical Object subtype** (`entity_subtype: 'project'`) — rather than a bare id. Amendment A's claim that containers "are not themselves lifecycle-bearing execution units in the ADR-0003 sense" no longer holds for Project. Only its *backing* changed: from a reference to a real record.
+>
+> **What ADR-0011 did NOT change:** **Project remains an Organizational Container.** It does **not** become a rung of Mission → Objective → Task → Action, and a Project **must not** carry `work_hierarchy_parent`. Containers still "hold, group, or schedule"; the Work Hierarchy is still a strict tree of Mission → Objective → Task → Action. Merging the two remains the defect this Amendment exists to prevent (AGENTS.md rule 4).
+>
+> The other eight container types (`program`, `release`, `milestone`, `epic`, `feature`, `roadmap`, `vision`, `workspace`) remain non-entity container fields — the corpus specifies no field-level model for any of them.
+>
+> Separately, [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) (2026-07-13) made **Objective** a Canonical Object subtype. That does not amend this ADR: Objective's *position* in the Work Hierarchy, which is what this ADR ratifies, is unchanged. **Mission** remains a non-entity reference field with no backing record.
 
 ## Context
 At least three non-identical decomposition hierarchies for units of work exist across the corpus: Appendix A (Glossary), Part X Ch.10, Part VII Ch.9, and Part XI Ch.12 of *AIOS Specification Project.md* (Roadmap item 7). Appendix A itself states a precedence rule making the Glossary the tiebreaker for terminology conflicts, but the other three sections have not been reconciled against it.
