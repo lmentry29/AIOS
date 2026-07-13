@@ -8,17 +8,25 @@ import { CanonicalEntity as CanonicalEntitySchema } from '@aios/core';
 import { EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from './errors.js';
 
 /**
- * Fields a caller may patch via update(). Deliberately excludes
- * lifecycle_history and relationships (COM §3.2, §8, §11: both are
- * append-only — they grow only through transitionLifecycle() and
- * addRelationship(), never via direct overwrite), and excludes
- * entity_id, entity_type, created_at, created_by (immutable provenance,
- * COM §3.1/§3.3), version and modified_at (bumped automatically, not
- * caller-supplied, per COM §11's atomic-write rule).
+ * Minimal structural type for "something with a Zod-compatible .parse()".
+ * Deliberately narrower than z.ZodType<T>: that type's Input parameter
+ * defaults to equal T (Output) when only one type argument is given,
+ * which incorrectly demands a schema's input type equal its output type
+ * exactly. Any schema with a .default() field (e.g. TaskEntity inherits
+ * organizational_containers: z.array(...).default([]) from
+ * CanonicalEntity) has an input type where that field is optional and
+ * an output type where it's required — so z.ZodType<T> rejects exactly
+ * the schemas this store needs to accept. ObjectStore only ever calls
+ * .parse() on the schema, so this narrower structural type is both
+ * correct and sufficient.
  */
-export type EntityPatch = Partial<
+interface ParsingSchema<T> {
+  parse(data: unknown): T;
+}
+
+export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
   Omit<
-    CanonicalEntity,
+    T,
     | 'entity_id'
     | 'entity_type'
     | 'created_at'
@@ -31,67 +39,56 @@ export type EntityPatch = Partial<
 >;
 
 /**
- * In-memory Canonical Entity store.
+ * In-memory Canonical Entity store, generic over T and parameterized by
+ * the Zod schema used to validate every write. Defaults to the base
+ * CanonicalEntity schema for backward compatibility.
  *
- * Generic over the full CanonicalEntity base type rather than narrowed to
- * canonical_object — this is deliberate. COM §10 leaves open whether
- * Task/Mission/Objective persist via @aios/objects or a dedicated
- * @aios/work-hierarchy store, and that question is meant to be resolved
- * by implementation evidence, not decided in advance. This store's job
- * right now is to be a plain, general-purpose Canonical Entity persistence
- * mechanism and let the vertical slice's next step (inserting a
- * Task-shaped entity) generate that evidence.
+ * This generalization is the resolution of COM §10's open question for
+ * Task: a store constructed with only the base schema silently drops
+ * type-specific fields on write (Zod strips unrecognized keys by
+ * default — see @aios/objects' own test suite for the documented
+ * evidence). Constructing an ObjectStore with a specific entity schema
+ * (e.g. TaskEntity) fixes that at the root, while still reusing this
+ * class's identity rules (COM §9: entity_id never reused), atomic
+ * writes (COM §11: version/modified_at bumped together), append-only
+ * history (COM §3.2/§8), and Memory Object immutability (COM §5.1)
+ * rather than duplicating any of that logic per-package.
  */
-export class ObjectStore {
-  private readonly records = new Map<string, CanonicalEntity>();
+export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
+  private readonly records = new Map<string, T>();
+  private readonly schema: ParsingSchema<T>;
 
-  /**
-   * Persist a new entity. Rejects if entity_id already exists in the
-   * store under any lifecycle_state, including archived — per COM §9,
-   * entity_id is never reused or reassigned. Validates the full entity
-   * against the CanonicalEntity base schema before storing; callers
-   * passing a type-specific extension (AgentEntity, TaskEntity, etc.)
-   * satisfy this by construction since those schemas extend the base.
-   */
-  create(entity: CanonicalEntity): CanonicalEntity {
-    const parsed = CanonicalEntitySchema.parse(entity);
+  constructor(schema: ParsingSchema<T> = CanonicalEntitySchema as unknown as ParsingSchema<T>) {
+    this.schema = schema;
+  }
 
+  create(entity: T): T {
+    const parsed = this.schema.parse(entity);
     if (this.records.has(parsed.entity_id)) {
       throw new EntityIdConflictError(parsed.entity_id);
     }
-
     this.records.set(parsed.entity_id, parsed);
     return parsed;
   }
 
-  /** Retrieve an entity by entity_id, or undefined if none exists. */
-  get(entityId: string): CanonicalEntity | undefined {
+  get(entityId: string): T | undefined {
     return this.records.get(entityId);
   }
 
-  /** List all entities currently in the store, optionally filtered by entity_type. */
-  list(filter?: { entityType?: CanonicalEntity['entity_type'] }): CanonicalEntity[] {
+  list(filter?: { entityType?: CanonicalEntity['entity_type'] }): T[] {
     const all = Array.from(this.records.values());
     if (!filter?.entityType) return all;
     return all.filter((e) => e.entity_type === filter.entityType);
   }
 
-  /**
-   * Apply a patch to an existing entity. Every write updates modified_at
-   * and increments version atomically alongside the field change (COM
-   * §3.3, §11) — there is no code path that changes data without also
-   * bumping provenance. Enforces Memory Object immutability (COM §5.1):
-   * a memory_object entity_subtype whose current lifecycle_state is
-   * 'completed' rejects all further mutation.
-   */
-  update(entityId: string, patch: EntityPatch): CanonicalEntity {
+  update(entityId: string, patch: EntityPatch<T>): T {
     const current = this.records.get(entityId);
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
 
-    const updated: CanonicalEntity = CanonicalEntitySchema.parse({
+    const updated = this.schema.parse({
       ...current,
       ...patch,
       version: current.version + 1,
@@ -102,24 +99,19 @@ export class ObjectStore {
     return updated;
   }
 
-  /**
-   * Transition an entity's lifecycle_state, appending a new entry to
-   * lifecycle_history (append-only, COM §3.2) rather than replacing it.
-   * Also bumps version/modified_at atomically with the transition (§11).
-   */
   transitionLifecycle(
     entityId: string,
     newState: LifecycleState,
     actor: string,
     substate?: string
-  ): CanonicalEntity {
+  ): T {
     const current = this.records.get(entityId);
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
 
-    const updated: CanonicalEntity = CanonicalEntitySchema.parse({
+    const updated = this.schema.parse({
       ...current,
       lifecycle_state: newState,
       lifecycle_substate: substate,
@@ -140,19 +132,14 @@ export class ObjectStore {
     return updated;
   }
 
-  /**
-   * Append a relationship entry (append-only, COM §8/§11 — every
-   * relationship is stored once, never duplicated across both entities).
-   * Bumps version/modified_at atomically.
-   */
-  addRelationship(entityId: string, relationship: Relationship): CanonicalEntity {
+  addRelationship(entityId: string, relationship: Relationship): T {
     const current = this.records.get(entityId);
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
 
-    const updated: CanonicalEntity = CanonicalEntitySchema.parse({
+    const updated = this.schema.parse({
       ...current,
       relationships: [...current.relationships, relationship],
       version: current.version + 1,
@@ -163,22 +150,13 @@ export class ObjectStore {
     return updated;
   }
 
-  /**
-   * Convenience for constructing the inbound/outbound pair implied by a
-   * relationship between two entities — the target's side is stored on
-   * the target itself as a separate Relationship entry with direction
-   * flipped, consistent with COM §8's "stored once, interpreted
-   * bidirectionally via direction" model (which describes the field
-   * shape, not automatic dual-writing — this helper makes the
-   * dual-write explicit and opt-in rather than implicit).
-   */
   linkRelationship(
     sourceId: string,
     targetId: string,
     targetEntityType: CanonicalEntity['entity_type'],
     relationshipType: string,
     direction: RelationshipDirection = 'outbound'
-  ): { source: CanonicalEntity; target: CanonicalEntity } {
+  ): { source: T; target: T } {
     const target = this.records.get(targetId);
     if (!target) {
       throw new EntityNotFoundError(targetId);
@@ -201,7 +179,7 @@ export class ObjectStore {
     return { source, target: updatedTarget };
   }
 
-  private assertMutable(entity: CanonicalEntity): void {
+  private assertMutable(entity: T): void {
     if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
       throw new ImmutableEntityError(entity.entity_id);
     }
