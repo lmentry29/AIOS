@@ -5,9 +5,10 @@ engineering organization — autonomous Agents executing Missions/Objectives/Tas
 of a human founder, coordinated across a ten-layer architecture, with institutional memory
 that survives model and tool changes.
 
-This repository is the canonical implementation. It is currently **pre-implementation**:
-architecture and engineering-readiness planning are complete and certified; no package
-contains runtime logic yet.
+This repository is the canonical implementation. Architecture and engineering-readiness
+planning are complete and certified, and implementation is **underway**: seven of the nine
+packages carry real runtime logic (`core`, `objects`, `work-hierarchy`, `containers`,
+`agents`, `tools`, `learning`). `orchestration` and `founder` are scaffolded but unbuilt.
 
 ## Start here
 
@@ -16,7 +17,7 @@ contains runtime logic yet.
   is the primary entry point — strategy, build order, milestones, AI task allocation, and
   Definition of Done per phase, all in one place.
 - **Why does the architecture look the way it does?** [`docs/adr/index.md`](docs/adr/index.md)
-  — nine Architecture Decision Records, each resolving a specific documented conflict.
+  — eleven Architecture Decision Records, each resolving a specific documented conflict.
 
 ## Repository layout
 
@@ -39,8 +40,11 @@ tests/              Cross-package integration and conformance tests
 
 - Architecture Version 1: **Certified** (`docs/process/v1-final-certification-report.md`).
 - Engineering readiness: **Ready with minor, named risks** (`docs/archive/engineering-readiness-report.md`).
-- Implementation: **not started.** The recommended first step is the vertical slice defined
-  in `docs/engineering/implementation-playbook.md`, not a full build of all nine packages.
+- Implementation: **underway.** The mandated vertical slice
+  (`core` → `objects` → `work-hierarchy` → `agents`) is complete, and `containers`, `tools`,
+  and `learning` have been built on top of it. `orchestration` and `founder` remain.
+  Findings, spec gaps, and unresolved architectural conflicts from each package are recorded
+  in `docs/process/divergence-log.md` — read it before starting the next one.
 
 ## Toolchain
 
