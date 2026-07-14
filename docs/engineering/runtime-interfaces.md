@@ -137,7 +137,13 @@ aios/
 │                             #   that would silently pre-decide §5's open question as Option A. This document's
 │                             #   own working assumption is Option B (Task has its own backing store, separate
 │                             #   from Object Store). See §5 for the actual open question and its resolution status.
-├── containers/               # Container Service — depends on: core
+├── containers/               # Container Service — depends on: core, objects
+│                             #   — NOTE (corrected 2026-07-13): the objects edge was added by ADR-0011,
+│                             #   which makes Project a Canonical Object subtype (COM §5.4) stored via
+│                             #   ObjectStore<ProjectEntity>. This graph originally said "core" only, drawn
+│                             #   when NO container type had a schema or a store. Project is still the only
+│                             #   implemented container type — the other eight have no field-level spec in
+│                             #   the corpus, so ContainerService (§2.5) remains unimplementable. See §5.
 ├── tools/                    # Tool Abstraction Service — depends on: core
 ├── learning/                  # Learning Service — depends on: core, objects
 └── founder/                   # Founder Interface — depends on: objects, learning (never depended ON by others, per ADR-0006 cross-cutting, not foundational)
@@ -157,6 +163,7 @@ graph TD
     core --> tools[tools]
     core --> agents[agents]
     objects --> workhier
+    objects --> containers
     objects --> learning[learning]
     workhier --> agents
     agents --> orchestration[orchestration]
