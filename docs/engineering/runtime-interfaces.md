@@ -94,9 +94,19 @@ interface ToolAbstractionService {
   install(plugin: Omit<Plugin, "entity_id" | "lifecycle_history">): Promise<Plugin>;
   enable(pluginId: string): Promise<void>;
   disable(pluginId: string): Promise<void>;
-  invoke(pluginId: string, operation: string, args: unknown): Promise<unknown>; // low-confidence surface, see COM §4.4 — expect this to change once Plugin gets its own dedicated spec pass
+  invoke(pluginId: string, operation: string, args: unknown): Promise<unknown>; // DEFERRED — not implemented, not deleted. See below.
 }
 ```
+
+**`invoke()` is DEFERRED (founder decision, 2026-07-13) — deliberately unimplemented, and deliberately still in the contract.** It must resolve a plugin id to executable code, and nothing in the certified corpus can do that: `Plugin.wraps_adapter` (COM §4.4) points at an **Adapter** concept with no schema, no store, and no registry anywhere in the model. Implementing it therefore requires *inventing* a Plugin/Adapter execution model — an architectural decision, on top of the lowest-confidence entity in the corpus (COM §4.4, AGENTS.md rule 7).
+
+`@aios/tools` accordingly ships `install` / `enable` / `disable` — the part of this contract that is fully specified and invents nothing — and leaves the gap visible.
+
+**Reopening trigger: the first real adapter integration.** That adapter is the one real implementation this contract must be validated against before it is written, per AGENTS.md rule 7. Until then this method is a stated requirement with no ratified means of satisfying it, which is a different thing from a mistake — it is not to be deleted, and it is not to be filled in speculatively.
+
+Full reasoning, and what the decision explicitly does *not* settle: `docs/process/invoke-adapter-deferral.md`.
+
+**Deferral settles the execution model only — this signature's *shape* is a separate open question.** `invoke(pluginId, operation, args)` is pluginId-centric, while ratified Part XIII Ch.3/7/9 specifies capability-mediated tool selection ("Departments request capabilities from the registry rather than selecting tools directly"). Whether that contradiction is a rule-1 ADR trigger has not been evaluated. Tracked as `docs/process/divergence-log.md` **unresolved architectural conflict #4**; gated on the `@aios/orchestration` / `@aios/founder` evidence-gathering pass, and not to be resolved speculatively before it.
 
 ### 2.7 Learning Service
 

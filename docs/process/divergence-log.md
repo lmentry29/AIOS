@@ -157,7 +157,26 @@ founder call, not an implementation one.
 parallelizable with no interdependencies among them, so skipping
 containers blocks nothing downstream except containers itself.
 
-## Unresolved architectural conflict #3 — Plugin/Adapter execution model (NOT fixed — flagged, blocks `invoke()`)
+## Unresolved architectural conflict #3 — Plugin/Adapter execution model — DEFERRED by founder decision (2026-07-14)
+
+> **Status: DEFERRED — resolved as a deferral, not an implementation.**
+> Founder confirmed no adapter integration is planned this cycle, so there is
+> no real implementation to validate a speculative contract against — exactly
+> the condition AGENTS.md rule 7 describes. `invoke()` stays unimplemented and
+> stays in the contract, marked deferred in `runtime-interfaces.md` §2.6.
+> **Reopening trigger: the first real adapter integration.**
+> Full reasoning, and an explicit list of what the decision does *not* settle
+> (no Adapter schema, no invocation precondition, no Capability Registry
+> scope), is in [`invoke-adapter-deferral.md`](invoke-adapter-deferral.md).
+> No ADR: nothing ratified changed — no schema, no field, no entity.
+>
+> **This closes the execution-model question ONLY.** Whether `invoke()` is even
+> the right *shape* is a separate, still-open question — see **conflict #4**
+> below. Deferring #3 does not resolve #4, and #4 must not be folded back into
+> this entry.
+>
+> The original conflict is preserved verbatim below, because the deferral only
+> makes sense against it.
 
 **`runtime-interfaces.md` §2.6 specifies `invoke(pluginId, operation, args)`,
 and nothing in the certified corpus could make it do anything.**
