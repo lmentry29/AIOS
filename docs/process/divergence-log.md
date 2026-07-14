@@ -445,3 +445,13 @@ unresolved conflict above, until Mission/Objective's status gets a
 founder-level decision, since `@aios/containers` and any future
 Mission/Objective work would build directly on top of whatever that
 decision turns out to be.
+
+> **SUPERSEDED (2026-07-14) — the gate above is spent, not live.** It applied
+> only to the original core → objects → work-hierarchy → agents slice, and it
+> has since been satisfied on both counts: the log was reviewed, and
+> Mission/Objective got its founder-level decision (ADR-0010, which closed
+> conflict #1). `@aios/containers`, `@aios/tools`, and `@aios/learning` are
+> built and logged in the entries above (2026-07-12 and 2026-07-13). Only
+> `@aios/orchestration` and `@aios/founder` remain unbuilt. Read the paragraph
+> above as the record of a checkpoint that was held and then cleared — not as a
+> hold that is still in force.
