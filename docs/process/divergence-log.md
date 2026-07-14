@@ -192,6 +192,73 @@ field the model defines and the runtime ignores. The honest option may be
 that `invoke()` stays unimplemented until one real adapter exists to validate
 it against, per AGENTS.md rule 7.
 
+## Unresolved architectural conflict #4 — `invoke()`'s signature vs. Part XIII's capability model (NOT fixed — flagged, NOT yet evaluated against AGENTS.md rule 1)
+
+**Found 2026-07-14, while gathering the founder decision on conflict #3.
+It is a different conflict from #3 and must not be folded into it.**
+#3 asks *"what could `invoke()` execute?"* — that one is now deferred.
+**#4 asks a question deferral does not touch: is `invoke()` the right shape
+at all?**
+
+- `docs/engineering/runtime-interfaces.md` §2.6 specifies
+  `invoke(pluginId: string, operation: string, args: unknown)`. This is
+  **pluginId-centric**: the caller names the specific tool it wants and the
+  operation to run on it.
+- The **ratified** corpus specifies the opposite. *AIOS Specification
+  Project* Part XIII (*Tooling Ecosystem*) is **capability-mediated**
+  throughout:
+  - **Ch.3 (Tool Abstraction Principle)** — the chain is Department →
+    Capability Request → Tool Abstraction Layer → Tool Adapter → External
+    Tool. "No department communicates directly with vendor-specific
+    implementations."
+  - **Ch.7 (Capability Registry)** — "Departments request capabilities from
+    the registry **rather than selecting tools directly**."
+  - **Ch.9 (Tool Selection)** — "Multiple tools may satisfy the same
+    capability." Selection is a *runtime* decision over policy, reliability,
+    cost, health, and historical effectiveness.
+
+  Under Part XIII, a caller asks for a **capability** and the layer selects
+  the tool. Under §2.6, the caller has **already selected the tool** and
+  selection never happens. §2.6 skips the registry and the selection step
+  entirely.
+
+**Why this is a rule-1 trigger and not a style quibble.** `runtime-interfaces.md`
+is `docs/engineering/` and carries **Status: Proposed**. Part XIII is
+`docs/architecture/` and is **ratified**. AGENTS.md rule 2 is explicit that
+`docs/engineering/` is living reference needing no ADR *"unless your change
+would contradict `docs/architecture/`, in which case see rule 1"* — and rule 1
+is the ADR requirement. An engineering-tier contract that inverts the ratified
+architecture's control flow is exactly that case.
+
+**This has NOT been evaluated against rule 1.** That evaluation is the open
+item. Nobody has yet determined whether §2.6 genuinely contradicts Part XIII
+(and so needs an ADR to reshape or to ratify the divergence), or whether the
+two can be reconciled — e.g. if the Tool Abstraction Service is understood as
+the layer's *internal* surface, sitting **below** a capability-mediated one
+that would call it. Both readings are live. Neither is adopted here.
+
+**Resolution is GATED on the `@aios/orchestration` / `@aios/founder`
+evidence-gathering pass.** That is the read that determines whether
+capability-mediated routing is *actually needed* by a real caller, or whether
+it is architecture the corpus describes and nothing consumes. Deciding before
+that evidence exists would be speculation — and would repeat the mistake #3
+was deferred to avoid. **Do not resolve this speculatively beforehand.**
+
+Note the dependency chain, which is why this cannot be settled in isolation: a
+capability-mediated `invoke()` would need the **Capability Registry** (Part XIII
+Ch.5/7/9), which is unbuilt, and the **Capability Model** — which COM §6 item 3
+lists as an open placeholder pending a formal capability taxonomy, the same
+unratified status as `access_policy` (AGENTS.md rule 6). Per founder direction
+(2026-07-14), the Capability Registry's roadmap status is **unscoped**, to be
+resolved as part of that same evidence-gathering pass.
+
+**Consequence:** none today, and that is the point — nothing is blocked. No
+caller exists. `@aios/tools` is a leaf: no workspace package depends on it,
+§4's dependency graph has a `core --> tools` edge and **no outgoing edge from
+`tools` at all**, and nothing anywhere calls `invoke()`. The conflict is
+recorded now, while the evidence is fresh, so that whoever runs the
+orchestration/founder pass inherits the question instead of rediscovering it.
+
 ## Spec gaps found building @aios/tools and @aios/learning (2026-07-12)
 
 Unlike the three conflicts above, each of these has a defensible resolution
