@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { TaskEntity as TaskEntityType } from '@aios/core';
 import { ObjectStore } from '../src/store.js';
 import { EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from '../src/errors.js';
