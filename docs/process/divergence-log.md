@@ -431,9 +431,17 @@ Unit coverage was real; cross-package coverage was zero.
   an earlier @aios/objects test edit) passed lint cleanly. Not a defect
   introduced by this slice, but worth knowing: lint passing here is a
   weaker guarantee than it would be with that rule enabled.
-- The turbo warning "no output files found for task #test" is
+- ~~The turbo warning "no output files found for task #test" is
   pre-existing `turbo.json` configuration (no declared `outputs` for
-  the test task), unrelated to any change in this slice.
+  the test task), unrelated to any change in this slice.~~ **RESOLVED
+  (2026-07-14).** The cause was subtler than "no declared outputs": the
+  test task *did* declare `outputs: ["coverage/**"]`, but the suite runs
+  `vitest run` without `--coverage` and no coverage config exists, so that
+  directory is never produced and turbo warned on every run. Fixed by
+  declaring `outputs: []` — the honest statement that this task emits no
+  files — rather than by adding coverage tooling (a feature, out of scope
+  for a config-correction pass). If coverage is wired up later, restore
+  `["coverage/**"]` at the same time.
 
 ## Checkpoint status
 
