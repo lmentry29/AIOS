@@ -102,7 +102,23 @@ should Objective become a sixth ratified entity type (using Part VI
 Ch.4's field list as a starting point), and if so, does Mission get
 one too or stay a pure reference field one level up?
 
-## Unresolved architectural conflict #2 — Organizational Containers (NOT fixed — flagged, blocks @aios/containers)
+## Unresolved architectural conflict #2 — Organizational Containers (NARROWED by ADR-0011, not closed — blocks @aios/containers for 8 of 9 container types)
+
+> **Status: NARROWED, not closed.** ADR-0011 §7 resolved this conflict for
+> `project` only — promoted to a Canonical Object subtype, evidence-led,
+> because Part XI specifies it in depth. It explicitly declined to promote
+> the other eight: *"Program and Release remain non-entities. No placeholder
+> subtypes... Same for the remaining container types: `milestone`, `epic`,
+> `feature`, `roadmap`, `vision`, `workspace`. They stay bare references."*
+> Commit [`b7455f3`](https://github.com/lmentry29/AIOS/commit/b7455f3ce058fa967725b9e768fb17360867bbce),
+> which implemented `ProjectStore`, states this directly: *"Divergence-log
+> conflict #2 is NARROWED by ADR-0011, not closed."* This entry's status
+> line was not updated at the time; this correction closes that gap. The
+> conflict remains genuinely open for the other 8 types — no field-level
+> spec exists for any of them in the corpus, and ADR-0011 leaves promotion
+> possible only if sourced material later appears, via a fresh ADR. This is
+> a status correction, not a resolution: the original conflict text below
+> still describes a live gap for those 8 types and is otherwise unchanged.
 
 **Found 2026-07-12, on the first attempt to build `@aios/containers`.
 It is the same class of conflict as #1, and it blocks that package
