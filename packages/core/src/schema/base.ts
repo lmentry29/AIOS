@@ -129,6 +129,12 @@ export const CanonicalEntity = z.object({
   // Conditional per type — base leaves optional; §4 extensions tighten
   // per entity type (e.g. Task requires work_hierarchy_parent at 'objective').
   work_hierarchy_parent: WorkHierarchyParent.optional(),
+  // Only PARTIALLY dereferenceable: container_type: 'project' resolves via
+  // ProjectStore, the other 8 types (program, release, milestone, epic, feature,
+  // roadmap, vision, workspace) are bare references with no schema or store
+  // (ADR-0011, Consequence 2). Consumers MUST branch on container_type and MUST
+  // NOT assume any entity_id here is resolvable. Authoritative source:
+  // docs/engineering/canonical-object-model.md:60.
   organizational_containers: z.array(OrganizationalContainerRef).default([]),
 
   // 3.5 Access and audit
