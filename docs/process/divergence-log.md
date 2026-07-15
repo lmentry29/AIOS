@@ -348,7 +348,16 @@ Object's `importance` (COM §5.1) — the same shape, so the model gains no new
 severity axis. Flagged rather than silently chosen. If a real priority or
 risk taxonomy is later sourced, these members are what to revisit.
 
-## Spec gap found implementing @aios/containers (2026-07-13)
+## Spec gap found implementing @aios/containers (2026-07-13) — RESOLVED (2026-07-14)
+
+> **Status: RESOLVED.** Closed by commit
+> [`04cbe88`](https://github.com/lmentry29/AIOS/commit/04cbe88ac3e1298e840896172930d450658d13fd),
+> which adds the `objects → containers` edge to both `runtime-interfaces.md`
+> §3's package list and §4's dependency graph. This transcribes the
+> already-ratified ADR-0011 decision into the living-reference doc; it makes
+> no new decision and introduces no cycle. The original gap is preserved
+> verbatim below as the record of what was found and why it was flagged
+> rather than fixed as a drive-by.
 
 **`runtime-interfaces.md` §3/§4's dependency graph is stale for `containers`.**
 Both say `containers` depends on **core only** — §3's list reads
