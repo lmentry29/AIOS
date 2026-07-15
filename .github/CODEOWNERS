@@ -1,5 +1,2 @@
-# NOTE: @founder is a placeholder — substitute the repository owner's real GitHub handle
-# for this gating to actually take effect. See docs/process/repository-design-specification.md §1.5.
-
-/docs/adr/            @founder
-/docs/architecture/   @founder
+/docs/adr/            @lmentry29
+/docs/architecture/   @lmentry29
