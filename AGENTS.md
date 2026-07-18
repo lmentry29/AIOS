@@ -60,3 +60,11 @@ Full map, reading order, and terminology quick-reference:
 [`docs/engineering/developer-reference.md`](docs/engineering/developer-reference.md).
 Implementation strategy, build order, and AI task allocation:
 [`docs/engineering/implementation-playbook.md`](docs/engineering/implementation-playbook.md).
+
+## Local-model delegation
+
+For any package classified **Ollama Suitable** in
+`docs/process/ai-development-plan.md` §1, delegate implementation to the
+`qwen-coder` subagent rather than writing it directly. Packages classified
+**Claude Recommended** or **Human Review Required** are never delegated —
+implement those directly or escalate, per that table.
