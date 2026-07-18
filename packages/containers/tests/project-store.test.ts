@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { ProjectEntity } from '@aios/core';
-import { EntityIdConflictError, ImmutableProjectFieldError } from '@aios/objects';
+import {
+  EntityIdConflictError,
+  EntityNotFoundError,
+  ImmutableProjectFieldError,
+} from '@aios/objects';
 import { ProjectStore } from '../src/project-store.js';
 
 const FOUNDER = 'human:founder';
@@ -186,6 +190,50 @@ describe('ProjectStore — SHELVED_PROJECT round-trips through persistence', () 
     expect(shelved.project_status).toBe('archived');
     expect(shelved.lifecycle_state).toBe('active');
     expect(shelved.project_phase).toBe('operation');
+  });
+});
+
+describe('ProjectStore — deleteProject (soft delete via lifecycle)', () => {
+  it('transitions lifecycle_state to archived and appends to lifecycle_history', () => {
+    const store = new ProjectStore();
+    const created = store.createProject(makeProject());
+
+    const deleted = store.deleteProject(created.entity_id, FOUNDER);
+    expect(deleted.lifecycle_state).toBe('archived');
+
+    // Verify persistence, not just the return value.
+    const fetched = store.getProject(created.entity_id);
+    expect(fetched?.lifecycle_state).toBe('archived');
+    expect(fetched?.lifecycle_history).toHaveLength(1);
+    expect(fetched?.lifecycle_history[0]).toMatchObject({
+      state: 'archived',
+      actor: FOUNDER,
+    });
+  });
+
+  it('does not free entity_id for reuse — COM §9 identity rules still apply', () => {
+    const store = new ProjectStore();
+    const project = makeProject();
+    store.createProject(project);
+    store.deleteProject(project.entity_id, FOUNDER);
+
+    expect(() => store.createProject(project)).toThrow(EntityIdConflictError);
+  });
+
+  it('throws EntityNotFoundError when the project does not exist', () => {
+    const store = new ProjectStore();
+
+    expect(() => store.deleteProject(randomUUID(), FOUNDER)).toThrow(EntityNotFoundError);
+  });
+
+  it('does not touch project_status or project_phase (no aliasing)', () => {
+    const store = new ProjectStore();
+    const created = store.createProject(makeProject());
+
+    const deleted = store.deleteProject(created.entity_id, FOUNDER);
+
+    expect(deleted.project_status).toBe('active_development');
+    expect(deleted.project_phase).toBe('implementation');
   });
 });
 

@@ -137,4 +137,22 @@ export class ProjectStore {
   ): ProjectEntityType {
     return this.store.transitionLifecycle(projectId, newState, actor, substate);
   }
+
+  /**
+   * "Delete" for a Project. There is no hard-delete in this architecture (COM: entity_id
+   * is never reused/reassigned even after archival; lifecycle_history is append-only) —
+   * this is the soft-delete: transition to the terminal 'archived' lifecycle_state via the
+   * existing transitionLifecycle machinery, so the transition is recorded in
+   * lifecycle_history rather than the record disappearing.
+   *
+   * Distinct from setProjectStatus(projectId, 'archived', actor): that sets the
+   * OPERATIONAL project_status axis (Ch.7). This sets the RECORD's ADR-0003 lifecycle
+   * axis. A project can be lifecycle 'archived' while project_status is something else,
+   * or vice versa (see SHELVED_PROJECT fixture in the test suite) — the two axes are
+   * deliberately independent, per the no-aliasing rule already enforced elsewhere in this
+   * file.
+   */
+  deleteProject(projectId: string, actor: string): ProjectEntityType {
+    return this.transitionProjectLifecycle(projectId, 'archived', actor);
+  }
 }

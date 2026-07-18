@@ -1,3 +1,5 @@
+- [qwen JSDoc thin / internal shapes guessed](feedback_jsdoc_and_shapes.md) — review pass must add ADR/COM citations and verify store shapes before writing to disk
+
 # AI Development Plan — Per-Package Allocation
 
 Applies `AI-Development-Workflow.md`'s general risk-based policy (Claude for high-blast-radius, Ollama for lower-risk) concretely to the nine packages in `AIOS-Implementation-Roadmap.md`. Grounded in your actual machine (`obsidian-plus-plus-setup-log.md`): MacBook Air M5, 16GB unified memory, fanless — 7B–13B models at Q4 quantization comfortably fit, 30B+ is not viable locally. Providers currently connected: OpenCode Free (via 9router), Gemini/AI Studio, Claude Fable 5 (via Claude Code directly, not 9router). Optimizing for local-first per your standing instruction, without letting that push high-risk work onto a model that can't be trusted with it.
