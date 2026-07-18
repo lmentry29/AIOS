@@ -88,6 +88,40 @@ describe('ProjectStore (ADR-0011, COM §5.4)', () => {
   });
 });
 
+describe('ProjectStore — listArchivedProjects (lifecycle_state axis, not project_status)', () => {
+  it('returns only projects whose lifecycle_state is archived', () => {
+    const store = new ProjectStore();
+    const live = store.createProject(makeProject({ name: 'live' }));
+    const archived = store.createProject(makeProject({ name: 'archived-me' }));
+    store.deleteProject(archived.entity_id, FOUNDER);
+
+    const listed = store.listArchivedProjects();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.entity_id).toBe(archived.entity_id);
+    expect(listed.some((p) => p.entity_id === live.entity_id)).toBe(false);
+  });
+
+  it('does not match on project_status "archived" alone — no aliasing (SHELVED_PROJECT)', () => {
+    const store = new ProjectStore();
+    store.createProject(
+      makeProject({
+        name: 'SHELVED_PROJECT',
+        project_status: 'archived',
+        lifecycle_state: 'active',
+      }),
+    );
+
+    expect(store.listArchivedProjects()).toHaveLength(0);
+  });
+
+  it('returns an empty array when no projects are archived', () => {
+    const store = new ProjectStore();
+    store.createProject(makeProject());
+
+    expect(store.listArchivedProjects()).toEqual([]);
+  });
+});
+
 describe('ProjectStore — project_status and its audit trail (Ch.7)', () => {
   it('sets status and appends to project_status_history', () => {
     const store = new ProjectStore();

@@ -69,6 +69,17 @@ export class ProjectStore {
   }
 
   /**
+   * Lists Projects whose RECORD lifecycle (ADR-0003) is 'archived' — i.e. those reached
+   * via deleteProject/transitionProjectLifecycle. Filters on the same lifecycle_state
+   * axis deleteProject writes, not on project_status (Ch.7); a project can be
+   * lifecycle 'archived' while project_status is something else, or vice versa (see the
+   * SHELVED_PROJECT fixture and the no-aliasing note on deleteProject below).
+   */
+  listArchivedProjects(): ProjectEntityType[] {
+    return this.listProjects().filter((p) => p.lifecycle_state === 'archived');
+  }
+
+  /**
    * Updates non-immutable fields. Any attempt to change `project_dna` throws
    * ImmutableProjectFieldError from the persistence layer (COM §5.4; Part XI Ch.4 calls
    * DNA the project's "constitutional document").
