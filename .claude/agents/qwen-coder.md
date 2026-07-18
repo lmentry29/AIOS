@@ -25,10 +25,27 @@ against docs/process/ai-development-plan.md §1:
   CRUD portion of work-hierarchy/tests: proceed to Step 1.
 - If genuinely ambiguous which row applies: STOP and ask rather than guess.
 
-## Step 1 — Delegate and review
+## Step 1 — Prepare the prompt BEFORE calling the local model
 
-1. Call the local model for a first draft:
-   ollama run qwen2.5-coder:7b "<task context and instructions>"
+Do this work yourself first, so qwen's first draft is more likely correct
+and your own review pass is cheaper:
+
+1. Grep the target file for its existing JSDoc convention on sibling
+   methods (COM/ADR citation, named invariant, cross-reference to
+   axis-adjacent methods). Paste 1-2 real examples from the file into the
+   prompt you give qwen, and tell it to match that exact citation density —
+   not "write good docs," the literal pattern from the file.
+2. If the task touches any internal record/history shape (e.g.
+   lifecycle_history entries, store internals), grep the actual shape from
+   its source definition and paste the literal field names into the prompt.
+   Never let qwen (or yourself) infer a shape from the method name or a
+   similar-looking field elsewhere — confirmed failure mode, see
+   feedback_jsdoc_and_shapes.md.
+
+## Step 2 — Delegate and review
+
+1. Call the local model with the prepared prompt from Step 1:
+   ollama run qwen2.5-coder:7b "<task context + grepped conventions + grepped shapes>"
    (Use qwen2.5-coder:14b only if explicitly told more headroom is available
    for this session.)
 2. Read the draft output critically. Check it against:
@@ -37,10 +54,12 @@ against docs/process/ai-development-plan.md §1:
    - Typecheck and lint (pnpm typecheck, pnpm lint via Biome)
 3. Fix anything wrong yourself - don't pass the draft through unmodified.
 4. Only write files to disk after your own review passes.
-5. Update your agent memory with recurring mistakes the local model makes on
-   this codebase, so you catch them faster next time.
+5. If a NEW failure mode shows up (not one already in this file's memory),
+   add a feedback note. If it's a KNOWN failure mode from memory, that means
+   Step 1 didn't apply it correctly - fix your Step 1 prompt-prep, don't
+   just log the same mistake again.
 
-## Step 2 — Commit attribution
+## Step 3 — Commit attribution
 
 Per AGENTS.md rule 9, any commit built from this subagent's delegated draft
 must carry the trailer:
