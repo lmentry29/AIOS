@@ -194,6 +194,19 @@ containers blocks nothing downstream except containers itself.
 > The original conflict is preserved verbatim below, because the deferral only
 > makes sense against it.
 
+> **Reassessed 2026-07-14, per ADR-0012 — still open and deferred, NOT
+> superseded.** ADR-0012 (Proposed) decides *who selects a provider* (AIOS,
+> via a Capability Registry, extending Part XIII Ch.7 to end-users) — it does
+> not decide *how a resolved provider actually executes*. `Plugin.wraps_adapter`
+> still has no schema, store, or registry. This conflict's question now sits
+> one layer beneath ADR-0012's capability-mediation layer: after the Capability
+> Registry resolves which Plugin/Adapter satisfies a request, something still
+> has to invoke it, and that mechanism remains unspecified. The planned
+> `MockJobSearchProvider` fixture does not trigger this conflict's reopening
+> condition ("the first real adapter integration") — it is explicitly a
+> pipeline-mechanics fixture, not a real vendor integration. This entry stays
+> deferred, exactly as above.
+
 **`runtime-interfaces.md` §2.6 specifies `invoke(pluginId, operation, args)`,
 and nothing in the certified corpus could make it do anything.**
 
@@ -227,7 +240,24 @@ field the model defines and the runtime ignores. The honest option may be
 that `invoke()` stays unimplemented until one real adapter exists to validate
 it against, per AGENTS.md rule 7.
 
-## Unresolved architectural conflict #4 — `invoke()`'s signature vs. Part XIII's capability model (NOT fixed — flagged, NOT yet evaluated against AGENTS.md rule 1)
+## Unresolved architectural conflict #4 — `invoke()`'s signature vs. Part XIII's capability model — RESOLVED by ADR-0012 (Accepted 2026-07-19)
+
+> **Status: RESOLVED by founder decision, not by the evidence-gathering pass
+> this entry originally gated on.** [`ADR-0012`](../adr/ADR-0012-capability-mediated-access-extends-to-users.md)
+> (Accepted 2026-07-19) adopts the capability-mediated
+> model: `invoke(pluginId, operation, args)`'s pluginId-centric shape is
+> superseded, extending Part XIII Ch.7's Department-scoped
+> `Department → Capability Registry` principle to AIOS's end-users — new
+> ground, not something Part XIII already covered. This is explicitly **not**
+> evidence-derived from a real caller and **not** a reaction to vendor
+> failure (ZipRecruiter/Indeed inaccessibility, discovered while scoping a
+> real caller this session, is corroborating context only — see ADR-0012
+> Decision §4). The Capability Registry's roadmap status, folded into this
+> conflict by founder direction 2026-07-14, is resolved by the same ADR: now
+> in scope. This resolution does **not** extend to conflict #3, which stays
+> deferred — see the reassessment note on that entry above. The original
+> conflict is preserved verbatim below as the record of what was found and
+> why it was flagged rather than resolved unilaterally at the time.
 
 **Found 2026-07-14, while gathering the founder decision on conflict #3.
 It is a different conflict from #3 and must not be folded into it.**
