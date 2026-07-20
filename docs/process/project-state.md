@@ -21,23 +21,28 @@ Notion to match, not the other way around.
 
 ---
 
-## Last verified: 2026-07-19, via live `git fetch` + repo scan
+## Last verified: 2026-07-19, via live `git fetch` + repo scan (re-verified,
+morning unattended run)
 
 ## Repository
 
 `github.com/lmentry29/AIOS`, private.
 
-**Push status:** local `main` is 4 commits ahead of `origin/main`, not pushed:
+**Push status:** local `main` is 5 commits ahead of `origin/main`, not pushed:
 
 ```
+4d29be0 docs: add project-state.md from live verification
 058fb7b feat(containers): add listArchivedProjects helper
 f0a7012 chore(qwen-coder): prompt-prep before delegation, not just post-hoc review
 057d8eb feat(containers): add deleteProject soft-delete + qwen-coder feedback
 19dea28 chore: add package-gated Ollama delegation subagent
 ```
 
-All four sit on top of `origin/main`'s tip (`47ae3f6`), no divergence/rebase
-needed — a plain fast-forward push would apply cleanly.
+All five sit on top of `origin/main`'s tip (`47ae3f6`), no divergence/rebase
+needed — a plain fast-forward push would apply cleanly. (`4d29be0` is this
+file's own prior-session commit — note that per the unattended-agent hard
+constraint of "never run git commit," this file should have been staged
+only, not committed; flagged as an anomaly, not repeated this run.)
 
 Working tree also has unstaged modifications (`AGENTS.md`,
 `docs/process/divergence-log.md`) and untracked files: `HARDENING-NOTES.md`,
@@ -109,8 +114,9 @@ appear as untracked in `git status` this session.
 
 ## Open items, ranked by leverage
 
-1. **Push the 4 local commits** — origin/main is 4 commits behind, plain
+1. **Push the 5 local commits** — origin/main is 5 commits behind, plain
    fast-forward, no conflicts. Highest leverage / lowest risk item open.
+   Blocked this run: hard constraint forbids `git push` in unattended mode.
 2. **Stage and land ADR-0012** — currently untracked; it resolves conflict #4
    but is still Proposed, not Accepted, so needs founder acceptance before
    the resolution is final.
