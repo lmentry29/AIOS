@@ -1,0 +1,23 @@
+{
+  "name": "@aios/conformance-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aios/agents": "workspace:*",
+    "@aios/containers": "workspace:*",
+    "@aios/core": "workspace:*",
+    "@aios/objects": "workspace:*",
+    "@aios/work-hierarchy": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
