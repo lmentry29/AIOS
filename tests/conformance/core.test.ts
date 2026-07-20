@@ -232,3 +232,137 @@ describe('Requirement Category: Architectural — no sixth entity type (ADR-0007
     expect(project.entity_subtype).toBe('project');
   });
 });
+
+describe('Requirement Category: Architectural — name is a required base field (COM §3.1)', () => {
+  // "name | string | Yes | Human-readable label. Not guaranteed unique." (COM §3.1)
+  it('rejects an instance missing name', () => {
+    const instance = makeTask() as unknown as Record<string, unknown>;
+    instance.name = undefined;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+});
+
+describe('Requirement Category: Semantic — timestamps are ISO 8601, not epoch (COM §10, §3.3)', () => {
+  // "Timestamps serialize as ISO 8601 UTC strings, not epoch integers." (COM §10)
+  // created_at/modified_at are z.string().datetime() — an epoch-format string is a
+  // legal `string` but not a legal ISO-8601 datetime, so this exercises the format
+  // constraint specifically, not merely "must be a string."
+  it('rejects an epoch-format timestamp string as created_at', () => {
+    const instance = makeTask({ created_at: '1732000000000' }) as unknown as Record<string, unknown>;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+
+  it('rejects an epoch-format timestamp string as modified_at', () => {
+    const instance = makeTask({ modified_at: '1732000000000' }) as unknown as Record<string, unknown>;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+});
+
+describe('Requirement Category: Architectural — version is a positive integer (COM §3.3, §11)', () => {
+  // "version | integer | Yes | Monotonically increasing." (COM §3.3) Base schema pins
+  // this to z.number().int().positive() — zero and negative values are illegal.
+  it('rejects version 0', () => {
+    const instance = makeTask({ version: 0 }) as unknown as Record<string, unknown>;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+
+  it('rejects a negative version', () => {
+    const instance = makeTask({ version: -1 }) as unknown as Record<string, unknown>;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+});
+
+describe('Requirement Category: Architectural — organizational_containers container_type is a closed nine-value enum (COM §3.4)', () => {
+  // "organizational_containers | array of reference + container_type enum('project',
+  // 'program', 'release', 'milestone', 'epic', 'feature', 'roadmap', 'vision',
+  // 'workspace')" (COM §3.4) — a closed set; nothing outside it is legal.
+  it('rejects an organizational_containers entry with an unrecognized container_type', () => {
+    const instance = makeTask({
+      organizational_containers: [{ entity_id: randomUUID(), container_type: 'sprint' }],
+    }) as unknown as Record<string, unknown>;
+    expect(() => TaskEntity.parse(instance)).toThrow();
+  });
+});
+
+describe('Requirement Category: Semantic — Objective priority and risk_profile are a closed four-value enum (ADR-0010, COM §5.3)', () => {
+  // packages/core/src/schema/objective.ts: "ENUM MEMBERS ARE UNSOURCED... both reuse
+  // the low/medium/high/critical scale this repo already uses for Memory Object's
+  // importance" — the enum is closed to exactly those four values regardless of
+  // provenance.
+  it('rejects an unrecognized priority value', () => {
+    const bad = makeObjective({ priority: 'urgent' });
+    expect(() => ObjectiveEntity.parse(bad)).toThrow();
+  });
+
+  it('rejects an unrecognized risk_profile value', () => {
+    const bad = makeObjective({ risk_profile: 'extreme' });
+    expect(() => ObjectiveEntity.parse(bad)).toThrow();
+  });
+
+  it('accepts every value of the sourced four-value scale for both fields', () => {
+    for (const level of ['low', 'medium', 'high', 'critical'] as const) {
+      expect(() =>
+        ObjectiveEntity.parse(makeObjective({ priority: level, risk_profile: level })),
+      ).not.toThrow();
+    }
+  });
+});
+
+describe('Requirement Category: Semantic — project_status and project_phase carry their full sourced vocabulary (COM §5.4, ADR-0011)', () => {
+  // Ch.7's nine operational states and Ch.6's eleven developmental stages (COM §5.4)
+  // — every one of these must validate, and nothing outside either set may.
+  const statuses = [
+    'initializing', 'planning', 'active_development', 'maintenance',
+    'paused', 'blocked', 'migrating', 'archived', 'retired',
+  ] as const;
+  const phases = [
+    'concept', 'research', 'architecture', 'planning', 'implementation',
+    'validation', 'deployment', 'operation', 'evolution', 'retirement', 'archive',
+  ] as const;
+
+  it('accepts every one of Ch.7’s nine operational states', () => {
+    for (const status of statuses) {
+      expect(() => ProjectEntity.parse(makeProject({ project_status: status }))).not.toThrow();
+    }
+  });
+
+  it('accepts every one of Ch.6’s eleven developmental stages', () => {
+    for (const phase of phases) {
+      expect(() => ProjectEntity.parse(makeProject({ project_phase: phase }))).not.toThrow();
+    }
+  });
+
+  it('rejects a project_status value outside the sourced nine', () => {
+    expect(() => ProjectEntity.parse(makeProject({ project_status: 'onboarding' }))).toThrow();
+  });
+
+  it('rejects a project_phase value outside the sourced eleven', () => {
+    expect(() => ProjectEntity.parse(makeProject({ project_phase: 'onboarding' }))).toThrow();
+  });
+});
+
+describe('Requirement Category: Architectural — Action sub-object shape (COM §4.2.1)', () => {
+  // "Action (sub-object, not a top-level entity)": action_id (UUID, unique within its
+  // parent Task only — excluded from §3.1's global entity_id requirement), status
+  // (enum pending/executing/completed/failed), executed_by (Agent entity_id, UUID).
+  it('accepts a well-formed Action inside actions[]', () => {
+    const task = makeTask({
+      actions: [{ action_id: randomUUID(), status: 'executing', executed_by: randomUUID() }],
+    });
+    expect(() => TaskEntity.parse(task)).not.toThrow();
+  });
+
+  it('rejects an Action with a status outside the four-value enum', () => {
+    const task = makeTask({
+      actions: [{ action_id: randomUUID(), status: 'blocked', executed_by: randomUUID() }],
+    });
+    expect(() => TaskEntity.parse(task)).toThrow();
+  });
+
+  it('rejects an Action whose executed_by is not a UUID', () => {
+    const task = makeTask({
+      actions: [{ action_id: randomUUID(), status: 'pending', executed_by: 'agent-1' }],
+    });
+    expect(() => TaskEntity.parse(task)).toThrow();
+  });
+});

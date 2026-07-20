@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { CanonicalEntity } from '@aios/core';
 import { MemoryObjectEntity, ObjectiveEntity, ProjectEntity, TaskEntity } from '@aios/core';
@@ -210,5 +211,102 @@ describe('Requirement Category: Interface — schema parameterization preserves 
 
     const updated = taskStore.update(created.entity_id, { name: 'still typed' });
     expect(updated.assigned_agent).toBe('11111111-1111-4111-8111-111111111111');
+  });
+});
+
+describe('Requirement Category: Behavioral — linkRelationship() pairs both sides correctly (COM §8)', () => {
+  // "Every relationship is stored once and interpreted bidirectionally via direction
+  // (outbound/inbound) rather than duplicated on both entities" (COM §8) —
+  // linkRelationship must write an outbound entry on the source and the
+  // direction-flipped inbound entry on the target, each carrying the OTHER party's
+  // real entity_type.
+  it('writes an outbound entry on the source and an inbound entry on the target', () => {
+    const store = new ObjectStore(TaskEntity);
+    const source = store.create(makeTask({ name: 'source' }));
+    const target = store.create(makeTask({ name: 'target' }));
+
+    const { source: updatedSource, target: updatedTarget } = store.linkRelationship(
+      source.entity_id,
+      target.entity_id,
+      'task',
+      'depends_on',
+    );
+
+    expect(updatedSource.relationships).toContainEqual({
+      target_entity_id: target.entity_id,
+      target_entity_type: 'task',
+      relationship_type: 'depends_on',
+      direction: 'outbound',
+    });
+    expect(updatedTarget.relationships).toContainEqual({
+      target_entity_id: source.entity_id,
+      target_entity_type: 'task',
+      relationship_type: 'depends_on',
+      direction: 'inbound',
+    });
+  });
+
+  it('throws EntityNotFoundError-style when the target id does not exist, without touching the source', () => {
+    const store = new ObjectStore(TaskEntity);
+    const source = store.create(makeTask());
+    expect(() => store.linkRelationship(source.entity_id, randomUUID(), 'task', 'depends_on')).toThrow();
+    expect(store.get(source.entity_id)?.relationships).toEqual([]);
+  });
+});
+
+describe('Requirement Category: Behavioral — relationships accumulate rather than replace, through the intended API surface (COM §11)', () => {
+  // Same append-only principle as lifecycle_history (§3.2, §11), applied to
+  // relationships via the store's own addRelationship()/linkRelationship() — the only
+  // way EntityPatch's public type permits touching this field at all (EntityPatch<T>
+  // Omits 'relationships', mirroring its 'lifecycle_history' omission, store.ts:76).
+  //
+  // Scope note: this test covers the intended, typed API surface only. It does NOT
+  // claim update() is runtime-blocked from overwriting relationships if called with an
+  // untyped/cast patch object — verified separately that it is not; see the
+  // conversation record for that finding, flagged for a decision rather than folded
+  // in here.
+  it('accumulates one more entry per addRelationship() call rather than overwriting the array', () => {
+    const store = new ObjectStore(TaskEntity);
+    const source = store.create(makeTask());
+    const targetA = store.create(makeTask({ name: 'a' }));
+    const targetB = store.create(makeTask({ name: 'b' }));
+
+    const afterFirst = store.addRelationship(source.entity_id, {
+      target_entity_id: targetA.entity_id,
+      target_entity_type: 'task',
+      relationship_type: 'depends_on',
+      direction: 'outbound',
+    });
+    expect(afterFirst.relationships).toHaveLength(1);
+
+    const afterSecond = store.addRelationship(source.entity_id, {
+      target_entity_id: targetB.entity_id,
+      target_entity_type: 'task',
+      relationship_type: 'blocks',
+      direction: 'outbound',
+    });
+    expect(afterSecond.relationships).toHaveLength(2);
+    expect(afterSecond.relationships[0]).toEqual(afterFirst.relationships[0]);
+  });
+});
+
+describe('Requirement Category: Architectural — access/audit placeholder fields round-trip unchanged (COM §3.5)', () => {
+  // "access_policy | reference | No | ... placeholder reference type pending future
+  // governance work" and "audit_trail_ref | reference | No" (COM §3.5) — both are
+  // optional UUID references with no attached behavior yet, but the base schema must
+  // still carry them through persistence untouched.
+  it('persists access_policy and audit_trail_ref through create() and update()', () => {
+    const store = new ObjectStore(TaskEntity);
+    const accessPolicyId = randomUUID();
+    const auditTrailId = randomUUID();
+    const created = store.create(
+      makeTask({ access_policy: accessPolicyId, audit_trail_ref: auditTrailId }),
+    );
+    expect(created.access_policy).toBe(accessPolicyId);
+    expect(created.audit_trail_ref).toBe(auditTrailId);
+
+    const updated = store.update(created.entity_id, { name: 'renamed' });
+    expect(updated.access_policy).toBe(accessPolicyId);
+    expect(updated.audit_trail_ref).toBe(auditTrailId);
   });
 });
