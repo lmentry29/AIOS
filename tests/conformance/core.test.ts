@@ -140,6 +140,25 @@ describe('Requirement Category: Lifecycle — Agent is never a Work Hierarchy me
   });
 });
 
+describe('Requirement Category: Governance — an Agent instance’s owner_id MUST resolve to a human (COM §7)', () => {
+  // "An Agent can own Task, Workflow, Plugin, and Canonical Object instances, but an
+  // Agent cannot own another Agent — Agent-to-Agent accountability would imply a
+  // governance/authority relationship the certified architecture explicitly reserves
+  // for the Human Layer and Executive Governance... An Agent instance's owner_id MUST
+  // resolve to a human." (COM §7) Enforced by AgentEntity's second .refine(), per
+  // packages/core/src/schema/agent.ts. Previously an undocumented gap (see git history
+  // of tests/conformance/known-gaps.test.ts); audited repo-wide for existing
+  // dependents before fixing — none found.
+  it('rejects an Agent whose owner_id is another entity’s UUID rather than a human', () => {
+    const bad = makeAgent({ owner_id: randomUUID() });
+    expect(() => AgentEntity.parse(bad)).toThrow();
+  });
+
+  it('accepts an Agent whose owner_id is human:<id>', () => {
+    expect(() => AgentEntity.parse(makeAgent({ owner_id: 'human:founder' }))).not.toThrow();
+  });
+});
+
 describe('Requirement Category: Lifecycle — Task’s parent is always an Objective (COM §4.2, ADR-0004 chain)', () => {
   // "work_hierarchy_parent is REQUIRED at level 'objective' (a Task's parent must be
   // an Objective, never a Mission or another Task directly — per ADR-0004's canonical

@@ -84,3 +84,25 @@ export class ImmutableEntityError extends Error {
     this.name = 'ImmutableEntityError';
   }
 }
+
+/**
+ * Thrown when update() is called with a patch object that touches `lifecycle_history`
+ * or `relationships`. Per COM §11, both fields are append-only — "the record is
+ * mutable, but its history is not" — and the only sanctioned write paths are
+ * transitionLifecycle() (for lifecycle_history) and addRelationship()/
+ * linkRelationship() (for relationships).
+ *
+ * EntityPatch<T> already Omits both fields at the TYPE level, which blocks a
+ * normally-typed caller at compile time. This check is the runtime backstop for
+ * every caller that isn't: a plain JS caller, a deserialized JSON patch, or a
+ * TypeScript caller using a cast to bypass EntityPatch. Without it, the append-only
+ * guarantee held only for callers the compiler could see, not for the store itself.
+ */
+export class AppendOnlyFieldError extends Error {
+  constructor(entityId: string, fields: readonly string[]) {
+    super(
+      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — both lifecycle_history and relationships are append-only (COM §11). Use transitionLifecycle() or addRelationship()/linkRelationship() instead.`
+    );
+    this.name = 'AppendOnlyFieldError';
+  }
+}

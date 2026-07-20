@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CanonicalEntity } from '@aios/core';
 import { MemoryObjectEntity, ObjectiveEntity, ProjectEntity, TaskEntity } from '@aios/core';
 import {
+  AppendOnlyFieldError,
   EntityIdConflictError,
   ImmutableEntityError,
   ImmutableObjectiveFieldError,
@@ -260,11 +261,9 @@ describe('Requirement Category: Behavioral — relationships accumulate rather t
   // way EntityPatch's public type permits touching this field at all (EntityPatch<T>
   // Omits 'relationships', mirroring its 'lifecycle_history' omission, store.ts:76).
   //
-  // Scope note: this test covers the intended, typed API surface only. It does NOT
-  // claim update() is runtime-blocked from overwriting relationships if called with an
-  // untyped/cast patch object — verified separately that it is not; see the
-  // conversation record for that finding, flagged for a decision rather than folded
-  // in here.
+  // Scope note: this test covers the intended, typed API surface only. The separate
+  // runtime guard against update() overwriting relationships via an untyped/cast patch
+  // is covered below, in its own describe block.
   it('accumulates one more entry per addRelationship() call rather than overwriting the array', () => {
     const store = new ObjectStore(TaskEntity);
     const source = store.create(makeTask());
@@ -287,6 +286,49 @@ describe('Requirement Category: Behavioral — relationships accumulate rather t
     });
     expect(afterSecond.relationships).toHaveLength(2);
     expect(afterSecond.relationships[0]).toEqual(afterFirst.relationships[0]);
+  });
+});
+
+describe('Requirement Category: Architectural — update() runtime-rejects any patch touching relationships or lifecycle_history (COM §11)', () => {
+  // COM §11: both fields are append-only — "the record is mutable, but its history is
+  // not." EntityPatch<T> Omits both at the TYPE level (store.ts), which blocks a
+  // normally-typed caller at compile time. This block covers the runtime backstop for
+  // callers the compiler can't see: a plain JS caller, a deserialized JSON patch, or
+  // any TypeScript caller using a cast to bypass EntityPatch. Previously an
+  // undocumented gap (see git history of tests/conformance/known-gaps.test.ts);
+  // audited repo-wide for existing dependents before fixing — none found; every real
+  // update() call site in the repo patches only ordinary mutable fields.
+  it('throws AppendOnlyFieldError when a patch names relationships, even via an untyped cast', () => {
+    const store = new ObjectStore(TaskEntity);
+    const source = store.create(makeTask());
+    const target = store.create(makeTask({ name: 'target' }));
+    store.addRelationship(source.entity_id, {
+      target_entity_id: target.entity_id,
+      target_entity_type: 'task',
+      relationship_type: 'depends_on',
+      direction: 'outbound',
+    });
+
+    const rawPatch: Record<string, unknown> = { relationships: [] };
+    expect(() => store.update(source.entity_id, rawPatch as never)).toThrow(AppendOnlyFieldError);
+    // The attempted write must not have landed even partially.
+    expect(store.get(source.entity_id)?.relationships).toHaveLength(1);
+  });
+
+  it('throws AppendOnlyFieldError when a patch names lifecycle_history, even via an untyped cast', () => {
+    const store = new ObjectStore(TaskEntity);
+    const created = store.create(makeTask());
+    store.transitionLifecycle(created.entity_id, 'validated', FOUNDER);
+
+    const rawPatch: Record<string, unknown> = { lifecycle_history: [] };
+    expect(() => store.update(created.entity_id, rawPatch as never)).toThrow(AppendOnlyFieldError);
+    expect(store.get(created.entity_id)?.lifecycle_history).toHaveLength(1);
+  });
+
+  it('still permits an ordinary field update when the patch does not name either append-only field', () => {
+    const store = new ObjectStore(TaskEntity);
+    const created = store.create(makeTask());
+    expect(() => store.update(created.entity_id, { name: 'renamed' })).not.toThrow();
   });
 });
 

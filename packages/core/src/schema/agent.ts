@@ -24,5 +24,13 @@ const AgentEntityShape = CanonicalEntity.extend({
 export const AgentEntity = AgentEntityShape.refine(
   (a: z.infer<typeof AgentEntityShape>) => a.work_hierarchy_parent === undefined,
   { message: 'Agent instances do not occupy a Work Hierarchy position' }
+).refine(
+  // §7: "An Agent can own Task, Workflow, Plugin, and Canonical Object instances,
+  // but an Agent cannot own another Agent... An Agent instance's owner_id MUST
+  // resolve to a human." owner_id is already constrained to UUID | human:<id> by
+  // the base ActorRef type; this narrows it further, for Agent instances only, to
+  // reject the UUID half of that union.
+  (a: z.infer<typeof AgentEntityShape>) => a.owner_id.startsWith('human:'),
+  { message: "An Agent instance's owner_id MUST resolve to a human (COM §7) — an Agent cannot own another Agent" }
 );
 export type AgentEntity = z.infer<typeof AgentEntity>;

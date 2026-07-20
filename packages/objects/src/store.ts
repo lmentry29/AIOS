@@ -10,12 +10,16 @@ import {
   PROJECT_IMMUTABLE_FIELDS,
 } from '@aios/core';
 import {
+  AppendOnlyFieldError,
   EntityIdConflictError,
   EntityNotFoundError,
   ImmutableEntityError,
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
 } from './errors.js';
+
+/** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
+const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships'] as const;
 
 /**
  * Subtypes whose fields are immutable after creation, and what to throw when a write
@@ -126,6 +130,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    this.assertAppendOnlyFieldsUntouched(entityId, patch);
     this.assertImmutableFieldsUnchanged(current, patch);
 
     const updated = this.schema.parse({
@@ -222,6 +227,24 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   private assertMutable(entity: T): void {
     if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
       throw new ImmutableEntityError(entity.entity_id);
+    }
+  }
+
+  /**
+   * Runtime backstop for the append-only guarantee on lifecycle_history and
+   * relationships (COM §11). EntityPatch<T> Omits both fields at the TYPE level, which
+   * stops a normally-typed caller at compile time — but that protection vanishes for a
+   * plain JS caller, a deserialized JSON patch, or any cast that bypasses the type.
+   * Key-presence, not value comparison: unlike assertImmutableFieldsUnchanged's no-op
+   * allowance for a re-submitted identical value, these fields may never be named in a
+   * patch at all — only transitionLifecycle() and addRelationship()/linkRelationship()
+   * are sanctioned write paths.
+   */
+  private assertAppendOnlyFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
+    const patched = patch as unknown as Record<string, unknown>;
+    const touched = APPEND_ONLY_FIELDS.filter((field) => field in patched);
+    if (touched.length > 0) {
+      throw new AppendOnlyFieldError(entityId, touched);
     }
   }
 
