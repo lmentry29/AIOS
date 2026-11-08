@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskEntity as TaskEntityType } from '@aios/core';
 import { ObjectStore } from '../src/store.js';
-import { AccessPolicyMutationError, EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from '../src/errors.js';
+import { AccessPolicyMutationError, EntityIdConflictError, EntityNotFoundError, ImmutableEntityError, InvalidLifecycleTransitionError } from '../src/errors.js';
 
 function baseFields(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date().toISOString();
@@ -109,6 +109,59 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     expect(updated.version).toBe(created.version + 1);
     expect(updated.modified_at).not.toBe(created.modified_at);
     expect(updated.description).toBe('now has a description');
+  });
+
+
+  it('rejects lifecycle jumps that violate the canonical state graph', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+
+    expect(() => store.transitionLifecycle(created.entity_id, 'active', 'human:founder'))
+      .toThrow(InvalidLifecycleTransitionError);
+    expect(store.get(created.entity_id)?.lifecycle_state).toBe('created');
+    expect(store.get(created.entity_id)?.version).toBe(created.version);
+
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
+    expect(() => store.transitionLifecycle(created.entity_id, 'active', 'human:founder'))
+      .toThrow(InvalidLifecycleTransitionError);
+  });
+
+  it('allows active substate progression while preserving the canonical state', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'mutating');
+    const persisting = store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'persisting');
+
+    expect(persisting.lifecycle_state).toBe('active');
+    expect(persisting.lifecycle_substate).toBe('persisting');
+    expect(persisting.lifecycle_history.map((entry) => entry.state)).toEqual([
+      'validated',
+      'active',
+      'active',
+    ]);
+  });
+
+  it('permits a completed Memory Object to be archived without reopening mutation', () => {
+    const store = new ObjectStore();
+    const memory = store.create(baseFields({
+      entity_type: 'canonical_object',
+      entity_subtype: 'memory_object',
+      memory_type: 'decision',
+      confidence: 0.9,
+      importance: 'high',
+      evidence: [],
+      source_references: [],
+    }) as never);
+    store.transitionLifecycle(memory.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(memory.entity_id, 'active', 'human:founder');
+    store.transitionLifecycle(memory.entity_id, 'completed', 'human:founder');
+
+    const archived = store.transitionLifecycle(memory.entity_id, 'archived', 'human:founder');
+    expect(archived.lifecycle_state).toBe('archived');
+    expect(archived.lifecycle_history.at(-1)?.state).toBe('archived');
   });
 
   it('appends (does not replace) lifecycle_history on transitionLifecycle()', () => {
