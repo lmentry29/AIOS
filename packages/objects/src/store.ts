@@ -32,7 +32,7 @@ function cloneRecord<T>(value: T): T {
   return value;
 }
 
-/** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
+/** Fields update() may never touch, regardless of caller typing (COM §11, Project Ch.7). */
 const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships', 'project_status_history'] as const;
 const LIFECYCLE_FIELDS = ['lifecycle_state', 'lifecycle_substate'] as const;
 
@@ -341,7 +341,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
 
   /**
    * Runtime backstop for append-only lifecycle_history and relationships (COM §11)
-   * plus Project status history (Project Ch.7). EntityPatch<T> Omits both fields at the TYPE level, which
+   * plus Project status history (Project Ch.7). EntityPatch<T> omits all protected fields at the TYPE level, which
    * stops a normally-typed caller at compile time — but that protection vanishes for a
    * plain JS caller, a deserialized JSON patch, or any cast that bypasses the type.
    * Key-presence, not value comparison: unlike assertImmutableFieldsUnchanged's no-op
