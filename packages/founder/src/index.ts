@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity as ArtifactEntityType, CanonicalEntity } from '@aios/core';
 import { ArtifactEntity } from '@aios/core';
-import { LearningService } from '@aios/learning';
+import type { LearningService } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
 
 export interface FounderDecisionRecord {
