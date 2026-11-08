@@ -107,6 +107,22 @@ describe('Project DNA immutability (COM §5.4, ADR-0011 — write-time rule)', (
 });
 
 describe('Project DNA immutability — what stays MUTABLE', () => {
+
+  it('does not mutate Project state when a status append fails schema validation', () => {
+    const store = projectStore();
+    const created = store.create(makeProject());
+
+    expect(() =>
+      store.appendProjectStatus(created.entity_id, 'not-a-status' as never, FOUNDER),
+    ).toThrow();
+
+    const persisted = store.get(created.entity_id);
+    expect(persisted?.project_status).toBe(created.project_status);
+    expect(persisted?.project_status_history).toEqual([]);
+    expect(persisted?.version).toBe(created.version);
+    expect(persisted?.modified_at).toBe(created.modified_at);
+  });
+
   it('permits project_status transitions — they are not DNA mutations', () => {
     const store = projectStore();
     const created = store.create(makeProject());
