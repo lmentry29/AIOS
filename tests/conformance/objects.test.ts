@@ -90,11 +90,12 @@ describe('Requirement Category: Behavioral — lifecycle_history is append-only 
     const validated = store.transitionLifecycle(created.entity_id, 'validated', FOUNDER);
     expect(validated.lifecycle_history).toHaveLength(1);
 
-    const active = store.transitionLifecycle(created.entity_id, 'active', FOUNDER, 'executing');
+    const active = store.transitionLifecycle(created.entity_id, 'active', FOUNDER);
     expect(active.lifecycle_history).toHaveLength(2);
     // Prior entry must survive unchanged, not be replaced by the new one.
     expect(active.lifecycle_history[0]).toEqual(validated.lifecycle_history[0]);
     expect(active.lifecycle_history[1]?.state).toBe('active');
+    expect(active.lifecycle_history[1]?.substate).toBeUndefined();
   });
 });
 
