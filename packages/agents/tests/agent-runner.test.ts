@@ -48,8 +48,8 @@ function baseTask(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('AgentRunner — full Agent Execution Loop against a real Task', () => {
-  it('runs an Agent through its complete lifecycle and completes the assigned Task', () => {
+describe('AgentRunner — Agent lifecycle harness against a real Task record', () => {
+  it('records the Agent lifecycle and Task state transitions without executing Task actions', () => {
     const taskStore = new TaskStore();
     const runner = new AgentRunner(taskStore);
 
