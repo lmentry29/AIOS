@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AgentEntity, TaskEntity } from '@aios/core';
+import { AgentEntity, CanonicalObjectEntity, TaskEntity } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
-import { FOUNDER, makeAgent, makeTask } from './fixtures.js';
+import { FOUNDER, makeAgent, makeCanonicalObject, makeTask } from './fixtures.js';
 
 /**
  * Regression coverage for entity-specific lifecycle substates.
@@ -9,6 +9,19 @@ import { FOUNDER, makeAgent, makeTask } from './fixtures.js';
  * lifecycle state. COM §4.1 defines Agent substates; COM §4.2 defines none for Task.
  */
 describe('Lifecycle substate conformance (COM §3.2, §4.1, §4.2)', () => {
+
+  it('enforces the Canonical Object contract on the public base schema', () => {
+    const valid = makeCanonicalObject({
+      lifecycle_state: 'active',
+      lifecycle_substate: 'persisting',
+    });
+    expect(CanonicalObjectEntity.parse(valid).lifecycle_substate).toBe('persisting');
+    expect(() => CanonicalObjectEntity.parse({
+      ...valid,
+      lifecycle_substate: 'executing',
+    })).toThrow();
+  });
+
   it.each(['planning', 'reasoning', 'executing', 'monitoring'])(
     'accepts Agent substate %s only under active',
     (substate) => {
