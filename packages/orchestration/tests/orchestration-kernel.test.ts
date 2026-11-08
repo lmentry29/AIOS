@@ -92,7 +92,7 @@ describe('OrchestrationKernel', () => {
 
     const handle = await h.kernel.dispatch(wf);
 
-    expect(await h.kernel.status(handle)).toBe('completed');
+    expect(await h.kernel.status(handle, 'human:founder')).toBe('completed');
     expect(h.tasks.getTask(first.entity_id)?.lifecycle_state).toBe('completed');
     expect(h.tasks.getTask(second.entity_id)?.lifecycle_state).toBe('completed');
     expect(h.tasks.getTask(first.entity_id)?.assigned_agent).toBe(h.agentId);
