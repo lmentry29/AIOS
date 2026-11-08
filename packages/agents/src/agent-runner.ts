@@ -1,4 +1,4 @@
-import type { AgentEntity as AgentEntityType, LifecycleState } from '@aios/core';
+import type { AgentEntity as AgentEntityType, AgentSubstate, LifecycleState } from '@aios/core';
 import { AgentEntity } from '@aios/core';
 import type { TaskStore } from '@aios/work-hierarchy';
 
@@ -54,7 +54,7 @@ export class AgentRunner {
   private transitionAgent(
     agentId: string,
     newState: LifecycleState,
-    substate: string | undefined,
+    substate: AgentSubstate | undefined,
     actor: string
   ): AgentEntityType {
     const current = this.agents.get(agentId);
