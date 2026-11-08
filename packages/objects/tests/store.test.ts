@@ -125,6 +125,22 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     expect(store.get(entity.entity_id)?.version).toBe(entity.version);
   });
 
+
+  it('derives relationship entity types from the actual stored target', () => {
+    const store = new ObjectStore();
+    const source = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+    const target = store.create(baseFields({ entity_type: 'task' }) as never);
+
+    const { source: linkedSource, target: linkedTarget } = store.linkRelationship(
+      source.entity_id,
+      target.entity_id,
+      'depends_on',
+    );
+
+    expect(linkedSource.relationships[0]?.target_entity_type).toBe('task');
+    expect(linkedTarget.relationships[0]?.target_entity_type).toBe('canonical_object');
+  });
+
   it('appends bidirectional relationship entries via linkRelationship()', () => {
     const store = new ObjectStore();
     const a = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
