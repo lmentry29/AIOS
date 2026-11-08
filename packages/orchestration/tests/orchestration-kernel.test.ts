@@ -189,6 +189,16 @@ describe('OrchestrationKernel', () => {
     await expect(h.kernel.status({ workflow_id: wf.entity_id }, 'human:founder')).rejects.toThrow(/read denied/);
   });
 
+
+  it('rejects forged created_by or owner_id values during intake', async () => {
+    const h = harness();
+    const wf = workflow([]);
+    await expect(h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:attacker'))
+      .rejects.toThrow(/provenance and ownership/);
+    await expect(h.kernel.status({ workflow_id: wf.entity_id }, 'human:founder'))
+      .rejects.toThrow(/not found/);
+  });
+
   it('fails closed when intake authorization is denied', async () => {
     const h = harness({ allowed: false });
     const wf = workflow([]);
