@@ -6,7 +6,7 @@ import type {
   ProjectStatus,
 } from '@aios/core';
 import { ProjectEntity } from '@aios/core';
-import { ObjectStore, type EntityPatch } from '@aios/objects';
+import { EntityNotFoundError, ObjectStore, type EntityPatch } from '@aios/objects';
 
 /**
  * ProjectStore — the Organizational Container layer's only implemented container type,
@@ -154,6 +154,25 @@ export class ProjectStore {
    * file.
    */
   deleteProject(projectId: string, actor: string): ProjectEntityType {
+    let project = this.getProject(projectId);
+    if (!project) throw new EntityNotFoundError(projectId);
+    if (project.lifecycle_state === 'archived') return project;
+
+    // ADR-0003 requires terminal archival to pass through completed. Bring earlier
+    // states through the canonical path rather than bypassing lifecycle history.
+    if (project.lifecycle_state === 'created') {
+      project = this.transitionProjectLifecycle(projectId, 'validated', actor);
+    }
+    if (project.lifecycle_state === 'validated' || project.lifecycle_state === 'suspended') {
+      if (project.lifecycle_state === 'suspended') {
+        project = this.transitionProjectLifecycle(projectId, 'active', actor);
+      } else {
+        project = this.transitionProjectLifecycle(projectId, 'active', actor);
+      }
+    }
+    if (project.lifecycle_state === 'active' || project.lifecycle_state === 'monitored') {
+      project = this.transitionProjectLifecycle(projectId, 'completed', actor);
+    }
     return this.transitionProjectLifecycle(projectId, 'archived', actor);
   }
 }
