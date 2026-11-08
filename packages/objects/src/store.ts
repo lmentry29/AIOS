@@ -321,7 +321,11 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   }
 
   private assertMutable(entity: T): void {
-    if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
+    if (
+      entity.entity_type === 'canonical_object' &&
+      entity.entity_subtype === 'memory_object' &&
+      entity.lifecycle_state === 'completed'
+    ) {
       throw new ImmutableEntityError(entity.entity_id);
     }
   }
@@ -384,9 +388,10 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
    * with an identical value is a no-op rather than a spurious failure.
    */
   private assertImmutableFieldsUnchanged(current: T, patch: EntityPatch<T>): void {
-    const rule = current.entity_subtype
-      ? IMMUTABLE_FIELDS_BY_SUBTYPE[current.entity_subtype]
-      : undefined;
+    const rule =
+      current.entity_type === 'canonical_object' && current.entity_subtype
+        ? IMMUTABLE_FIELDS_BY_SUBTYPE[current.entity_subtype]
+        : undefined;
     if (!rule) return;
 
     const record = current as unknown as Record<string, unknown>;
