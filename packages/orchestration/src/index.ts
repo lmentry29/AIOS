@@ -223,20 +223,21 @@ export class OrchestrationKernel {
     }
   }
 
-  getWorkflow(workflowId: string): WorkflowEntity | undefined {
-    return this.workflows.get(workflowId);
-  }
-
-  async status(handle: WorkflowRunHandle, actorId: string): Promise<LifecycleState> {
-    const workflow = this.workflows.get(handle.workflow_id);
-    if (!workflow) throw new OrchestrationError(`Workflow "${handle.workflow_id}" was not found.`);
+  async getWorkflow(workflowId: string, actorId: string): Promise<WorkflowEntity> {
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) throw new OrchestrationError(`Workflow "${workflowId}" was not found.`);
     if (!(await this.options.authorization.authorize({
       actor_id: actorId,
       action: 'read_status',
       resource_id: workflow.entity_id,
     }))) {
-      throw new OrchestrationError('Workflow status read denied by authorization policy.');
+      throw new OrchestrationError('Workflow read denied by authorization policy.');
     }
+    return workflow;
+  }
+
+  async status(handle: WorkflowRunHandle, actorId: string): Promise<LifecycleState> {
+    const workflow = await this.getWorkflow(handle.workflow_id, actorId);
     return workflow.lifecycle_state;
   }
 
