@@ -100,6 +100,8 @@ describe('OrchestrationKernel', () => {
     expect(evidenceId).toBeDefined();
     const evidence = evidenceId ? h.kernel.getExecutionEvidence(evidenceId) : undefined;
     expect(evidence?.artifact_kind).toBe('test_report');
+    expect(evidence?.lifecycle_state).toBe('completed');
+    expect(evidence?.lifecycle_history).toHaveLength(3);
     expect(evidence?.description).toContain('Acceptance criteria checked');
     expect(h.execution.executeTask).toHaveBeenCalledTimes(2);
   });
