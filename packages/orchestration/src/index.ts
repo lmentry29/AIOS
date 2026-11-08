@@ -99,7 +99,11 @@ export class OrchestrationKernel {
       throw new OrchestrationError(`Workflow "${stored.entity_id}" must be created before dispatch.`);
     }
 
-    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'dispatch', resource_id: stored.entity_id }))) {\n      throw new OrchestrationError('Workflow dispatch denied by authorization policy.');\n    }\n\n    // Preflight every Task, Agent, and permission before the first lifecycle write.
+    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'dispatch', resource_id: stored.entity_id }))) {
+      throw new OrchestrationError('Workflow dispatch denied by authorization policy.');
+    }
+
+    // Preflight every Task, Agent, and permission before the first lifecycle write.
     const plan = [];
     for (const taskId of stored.steps) {
       const task = this.tasks.getTask(taskId);
@@ -165,7 +169,11 @@ export class OrchestrationKernel {
       throw new OrchestrationError('Coordination requires an existing Task in created state.');
     }
 
-    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'coordinate', resource_id: current.entity_id }))) {\n      throw new OrchestrationError('Coordination request denied by authorization policy.');\n    }\n\n    for (const agentId of uniqueAgents) {
+    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'coordinate', resource_id: current.entity_id }))) {
+      throw new OrchestrationError('Coordination request denied by authorization policy.');
+    }
+
+    for (const agentId of uniqueAgents) {
       if (!(await this.options.execution.validateAgent(agentId))) {
         throw new OrchestrationError(`Agent "${agentId}" is not available for coordination.`);
       }
