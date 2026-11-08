@@ -77,8 +77,11 @@ describe('Project DNA immutability (COM §5.4, ADR-0011 — write-time rule)', (
 
     // Value-compared, not key-presence-compared: resubmitting the same DNA is not a
     // mutation and must not be a spurious failure.
+    const sameDNAWithDifferentKeyOrder = Object.fromEntries(
+      Object.entries(created.project_dna).reverse(),
+    ) as typeof created.project_dna;
     expect(() =>
-      store.update(created.entity_id, { project_dna: created.project_dna } as never),
+      store.update(created.entity_id, { project_dna: sameDNAWithDifferentKeyOrder } as never),
     ).not.toThrow();
   });
 });
