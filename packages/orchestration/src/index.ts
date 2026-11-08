@@ -179,7 +179,7 @@ export class OrchestrationKernel {
     }
 
     this.tasks.transitionTaskLifecycle(current.entity_id, 'validated', 'orchestration');
-    const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', 'orchestration);
+    const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', 'orchestration');
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
       this.assertVerifiedResult(result, current.entity_id);
