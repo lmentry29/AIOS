@@ -68,6 +68,25 @@ export class AgentRunner {
     taskId: string
   ): { agent: AgentEntityType; task: ReturnType<TaskStore['getTask']> } {
     const actor = agentId;
+    const existingAgent = this.agents.get(agentId);
+    if (!existingAgent) {
+      throw new Error(`No agent found with entity_id "${agentId}".`);
+    }
+    if (existingAgent.lifecycle_state !== 'created') {
+      throw new Error(
+        `Agent "${agentId}" must be in created state to start its execution loop; found "${existingAgent.lifecycle_state}".`,
+      );
+    }
+
+    const existingTask = this.taskStore.getTask(taskId);
+    if (!existingTask) {
+      throw new Error(`No task found with entity_id "${taskId}".`);
+    }
+    if (existingTask.lifecycle_state !== 'created') {
+      throw new Error(
+        `Task "${taskId}" must be in created state to start agent execution; found "${existingTask.lifecycle_state}".`,
+      );
+    }
 
     this.transitionAgent(agentId, 'validated', undefined, actor);
     this.transitionAgent(agentId, 'active', 'planning', actor);
