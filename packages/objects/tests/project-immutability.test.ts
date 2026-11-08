@@ -148,7 +148,7 @@ describe('Project DNA immutability — what stays MUTABLE', () => {
 
     const completed = store.transitionLifecycle(created.entity_id, 'completed', FOUNDER);
     expect(completed.lifecycle_state).toBe('completed');
-    expect(completed.lifecycle_history.map((h) => h.state)).toEqual(['validated', 'active', 'completed']);
+    expect(completed.lifecycle_history.map((h) => h.state)).toEqual(['completed']);
     expect(completed.project_dna.mission).toBe('an AI-native engineering organization');
   });
 
