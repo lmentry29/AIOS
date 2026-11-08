@@ -71,7 +71,8 @@ describe('AgentRunner — full Agent Execution Loop against a real Task', () => 
     const agent = runner.createAgent(baseAgent() as never);
 
     agent.name = 'mutated create result';
-    const fetched = runner.getAgent(agent.entity_id)!;
+    const fetched = runner.getAgent(agent.entity_id);
+    if (!fetched) throw new Error('Created Agent was not retrievable.');
     fetched.name = 'mutated get result';
 
     expect(runner.getAgent(agent.entity_id)?.name).toBe('test agent');
