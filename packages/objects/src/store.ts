@@ -202,26 +202,58 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     relationshipType: string,
     direction: RelationshipDirection = 'outbound'
   ): { source: T; target: T } {
+    if (sourceId === targetId) {
+      throw new Error('An entity cannot be linked to itself.');
+    }
+
+    const source = this.records.get(sourceId);
+    if (!source) {
+      throw new EntityNotFoundError(sourceId);
+    }
     const target = this.records.get(targetId);
     if (!target) {
       throw new EntityNotFoundError(targetId);
     }
 
-    const source = this.addRelationship(sourceId, {
-      target_entity_id: targetId,
-      target_entity_type: targetEntityType,
-      relationship_type: relationshipType,
-      direction,
+    // Preflight both sides and parse both candidates before committing either write.
+    // Otherwise an immutable/invalid target could leave a one-sided relationship.
+    this.assertMutable(source);
+    this.assertMutable(target);
+
+    const now = new Date().toISOString();
+    const updatedSource = this.schema.parse({
+      ...source,
+      relationships: [
+        ...source.relationships,
+        {
+          target_entity_id: targetId,
+          target_entity_type: targetEntityType,
+          relationship_type: relationshipType,
+          direction,
+        },
+      ],
+      version: source.version + 1,
+      modified_at: now,
     });
 
-    const updatedTarget = this.addRelationship(targetId, {
-      target_entity_id: sourceId,
-      target_entity_type: source.entity_type,
-      relationship_type: relationshipType,
-      direction: direction === 'outbound' ? 'inbound' : 'outbound',
+    const updatedTarget = this.schema.parse({
+      ...target,
+      relationships: [
+        ...target.relationships,
+        {
+          target_entity_id: sourceId,
+          target_entity_type: source.entity_type,
+          relationship_type: relationshipType,
+          direction: direction === 'outbound' ? 'inbound' : 'outbound',
+        },
+      ],
+      version: target.version + 1,
+      modified_at: now,
     });
 
-    return { source, target: updatedTarget };
+    this.records.set(sourceId, updatedSource);
+    this.records.set(targetId, updatedTarget);
+    return { source: updatedSource, target: updatedTarget };
   }
 
   private assertMutable(entity: T): void {
