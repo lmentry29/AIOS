@@ -86,10 +86,28 @@ function isLifecycleTransitionAllowed(
   to: LifecycleState,
   substate?: string,
 ): boolean {
-  // Same-state transitions are reserved for actual active-substate changes.
-  return current.lifecycle_state === to
-    ? to === 'active' && substate !== current.lifecycle_substate
-    : ALLOWED_LIFECYCLE_TRANSITIONS[current.lifecycle_state].includes(to);
+  if (current.lifecycle_state !== to) {
+    return ALLOWED_LIFECYCLE_TRANSITIONS[current.lifecycle_state].includes(to);
+  }
+  if (to !== 'active' || substate === current.lifecycle_substate) return false;
+
+  const substateTransitions: Record<string, Record<string, readonly (string | undefined)[]>> = {
+    agent: {
+      planning: ['reasoning'],
+      reasoning: ['executing'],
+      executing: ['monitoring'],
+      monitoring: ['planning', undefined],
+    },
+    canonical_object: {
+      mutating: ['persisting'],
+      persisting: ['synchronizing'],
+      synchronizing: ['mutating', undefined],
+    },
+  };
+  const entityTransitions = substateTransitions[current.entity_type];
+  const currentSubstate = current.lifecycle_substate;
+  if (!entityTransitions || !currentSubstate) return false;
+  return entityTransitions[currentSubstate]?.includes(substate) ?? false;
 }
 
 /**
