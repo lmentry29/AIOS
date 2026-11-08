@@ -18,24 +18,17 @@ export interface AccessRequest {
   resource_id: string;
 }
 
+export interface AccessPolicyStore {
+  get(policyId: string): Promise<AccessPolicy | undefined>;
+}
+
 export type AccessPolicyResolver = (resourceId: string) => Promise<string | undefined>;
 
-/**
- * Exact-match authorization evaluator.
- *
- * Security semantics: no resource policy means deny; no matching allow means deny;
- * any matching deny overrides all matching allows. There are no wildcard subjects,
- * actions, resources, implicit owner bypasses, or role expansion. Policy configuration
- * is immutable for the lifetime of this instance and must come from a trusted bootstrap
- * source. This is an in-process evaluator, not a durable policy-management system.
- */
-export class AuthorizationService {
+/** Immutable bootstrap policy store. A durable implementation can satisfy AccessPolicyStore. */
+export class StaticAccessPolicyStore implements AccessPolicyStore {
   private readonly policies = new Map<string, AccessPolicy>();
 
-  constructor(
-    policies: readonly AccessPolicy[],
-    private readonly resolvePolicyId: AccessPolicyResolver,
-  ) {
+  constructor(policies: readonly AccessPolicy[]) {
     for (const policy of policies) {
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
       if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
@@ -64,17 +57,37 @@ export class AuthorizationService {
     }
   }
 
+  async get(policyId: string): Promise<AccessPolicy | undefined> {
+    return this.policies.get(policyId);
+  }
+}
+
+/**
+ * Exact-match authorization evaluator.
+ *
+ * Security semantics: no resource policy means deny; no matching allow means deny;
+ * any matching deny overrides all matching allows. There are no wildcard subjects,
+ * actions, resources, implicit owner bypasses, or role expansion. The policy store is
+ * injected so production can replace the immutable bootstrap store with a durable,
+ * audited implementation.
+ */
+export class AuthorizationService {
+  constructor(
+    private readonly policies: AccessPolicyStore,
+    private readonly resolvePolicyId: AccessPolicyResolver,
+  ) {}
+
   async authorize(request: AccessRequest): Promise<boolean> {
     if (!isActorRef(request.actor_id) || !isUuid(request.resource_id) || !isAccessAction(request.action)) return false;
     let policyId: string | undefined;
+    let policy: AccessPolicy | undefined;
     try {
       policyId = await this.resolvePolicyId(request.resource_id);
+      if (!policyId) return false;
+      policy = await this.policies.get(policyId);
     } catch {
       return false;
     }
-    if (!policyId) return false;
-
-    const policy = this.policies.get(policyId);
     if (!policy) return false;
 
     const matching = policy.rules.filter((rule) =>
