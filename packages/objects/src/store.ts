@@ -180,7 +180,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
   }
 
   addRelationship(entityId: string, relationship: Relationship): T {
@@ -198,7 +198,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
   }
 
   linkRelationship(
