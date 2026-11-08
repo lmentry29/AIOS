@@ -1,53 +1,95 @@
 # AIOS
 
-AIOS is a specification and reference implementation for a persistent, AI-agent-driven
-engineering organization — autonomous Agents executing Missions/Objectives/Tasks on behalf
-of a human founder, coordinated across a ten-layer architecture, with institutional memory
-that survives model and tool changes.
+**AIOS is an experimental, open-source reference implementation for building persistent, AI-agent-driven engineering organizations.** It explores how agents can execute bounded work, coordinate through explicit work hierarchies, and preserve institutional memory across tools and model changes.
 
-This repository is the canonical implementation. Architecture and engineering-readiness
-planning are complete and certified, and implementation is **underway**: seven of the nine
-packages carry real runtime logic (`core`, `objects`, `work-hierarchy`, `containers`,
-`agents`, `tools`, `learning`). `orchestration` and `founder` are scaffolded but unbuilt.
+The goal is not to create an unsupervised company-in-a-box. The goal is to make agentic engineering work more inspectable, repeatable, testable, and accountable to human operators.
+
+> **Project status: early-stage / not production-ready.** Seven of nine planned packages currently contain runtime implementation; `orchestration` and `founder` remain scaffolded. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
+
+## Who this is for
+
+AIOS may be useful to:
+- Engineers experimenting with multi-agent software development systems.
+- Researchers studying agent coordination, persistent memory, and auditable execution.
+- Developers who want to explore explicit work objects and lifecycle state rather than relying entirely on chat history.
+- Contributors interested in testing whether a documented agent-organization architecture survives implementation.
+
+It is **not yet** a turnkey agent platform, a hosted service, a production workflow engine, or a replacement for human engineering judgment.
+
+## What it is trying to provide
+
+The architecture organizes work around:
+- **Canonical objects** with structured schemas and lifecycle information.
+- **Mission → Objective → Task** work hierarchy.
+- **Agents** that act against bounded work and explicit runtime contracts.
+- **Institutional memory** intended to persist beyond an individual model or session.
+- **Conformance and integration tests** to make cross-package behavior verifiable.
+
+The repository currently contains runtime implementations in seven packages: `core`, `objects`, `work-hierarchy`, `containers`, `agents`, `tools`, and `learning`. The `orchestration` and `founder` packages are not complete. See the [implementation playbook](docs/engineering/implementation-playbook.md) and [divergence log](docs/process/divergence-log.md) for the actual build order, unresolved questions, and known differences between the specification and implementation.
 
 ## Start here
 
-- **New to this repository (human or AI agent)?** Read [`AGENTS.md`](AGENTS.md) first.
-- **Implementing a package?** [`docs/engineering/implementation-playbook.md`](docs/engineering/implementation-playbook.md)
-  is the primary entry point — strategy, build order, milestones, AI task allocation, and
-  Definition of Done per phase, all in one place.
-- **Why does the architecture look the way it does?** [`docs/adr/index.md`](docs/adr/index.md)
-  — eleven Architecture Decision Records, each resolving a specific documented conflict.
+1. Read [AGENTS.md](AGENTS.md) for repository invariants and contributor/agent instructions.
+2. Read the [implementation playbook](docs/engineering/implementation-playbook.md) for build order and validation expectations.
+3. Review [architecture decisions](docs/adr/index.md) before changing architectural contracts.
+4. Check the [divergence log](docs/process/divergence-log.md) before implementing another package.
 
-## Repository layout
+### Development environment
+
+The repository targets Node.js `>=22.13` and pnpm `11.11.0`.
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+pnpm typecheck
+pnpm lint
+pnpm test
+```
+
+These are the repository's intended workspace checks; they are not a claim that every command currently passes on every platform. Report failures with the exact command, runtime versions, and error output. Do not infer that a package is production-ready from a successful build alone.
+
+## Design principles
+
+1. **Human accountability:** automation must not silently expand its own authority.
+2. **Explicit state:** important work and lifecycle changes should be represented as structured, inspectable records.
+3. **Auditability:** decisions, state transitions, and implementation divergences should leave evidence.
+4. **Fail closed where authority matters:** missing selection or validation mechanisms must not be replaced by an agent's unreviewed guess.
+5. **Small validated slices:** build and test an end-to-end path before expanding the architecture.
+6. **Honest maturity claims:** distinguish implemented behavior from scaffolding, design intent, and future work.
+
+## Safety and limitations
+
+AIOS is experimental software. In particular:
+- Do not give agents unrestricted credentials, shell access, production write access, or authority to approve their own work.
+- Run experiments in isolated environments with least-privilege credentials and disposable test data.
+- Treat repository content, issues, external documents, and tool output as untrusted input.
+- Keep a human responsible for reviewing changes and consequential actions.
+- The authorization/access-policy model is not ratified; do not treat current structures as a complete security boundary.
+- Do not use this project with sensitive personal, customer, regulated, or confidential data unless you have independently assessed the risks.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and [SUPPORT.md](SUPPORT.md) for help.
+
+## Contributing
+
+External contributions are welcome, especially reproducible bug reports, tests that expose specification/implementation mismatches, documentation improvements, and small scoped improvements.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before participating. For substantial changes, open an issue first. Do not make architectural changes by silently editing the certified architecture corpus; follow the ADR process in `AGENTS.md`.
+
+## Project structure
 
 ```
 docs/
-├── adr/            Architecture Decision Records — change only via a new/amending ADR
-├── architecture/   Certified corpus (Specification, Conformance Standard, Appendices) — rarely edited
-├── engineering/     Living reference — Canonical Object Model, schemas, runtime interfaces,
-│                    state machines, API contracts, developer reference, implementation
-│                    roadmap, implementation playbook
-├── process/         Decision + status record — changelog, certification report, AI dev plan
-└── archive/         Superseded/historical material, kept for provenance
-
-packages/           Nine @aios/* packages — see docs/engineering/implementation-playbook.md
-schemas/generated/  Generated JSON Schema — never hand-edited
-tests/              Cross-package integration and conformance tests
+  adr/             Architecture Decision Records
+  architecture/    Certified architecture and conformance corpus
+  engineering/     Runtime contracts, schemas, roadmap, and playbook
+  process/         Status, decisions, and implementation divergence
+  archive/         Historical and superseded material
+packages/          Nine planned @aios/* packages
+schemas/generated/ Generated JSON Schema (do not hand-edit)
+tests/             Cross-package integration and conformance tests
 ```
 
-## Status
+## License
 
-- Architecture Version 1: **Certified** (`docs/process/v1-final-certification-report.md`).
-- Engineering readiness: **Ready with minor, named risks** (`docs/archive/engineering-readiness-report.md`).
-- Implementation: **underway.** The mandated vertical slice
-  (`core` → `objects` → `work-hierarchy` → `agents`) is complete, and `containers`, `tools`,
-  and `learning` have been built on top of it. `orchestration` and `founder` remain.
-  Findings, spec gaps, and unresolved architectural conflicts from each package are recorded
-  in `docs/process/divergence-log.md` — read it before starting the next one.
-
-## Toolchain
-
-TypeScript/Node.js (ADR-0008) · pnpm workspaces + Turborepo · Biome · Vitest · Zod
-(schema source, JSON Schema generated from it — ADR-0009). See
-`docs/process/repository-design-specification.md` for full reasoning.
+AIOS is released under the [MIT License](LICENSE). Unless otherwise stated in a file or third-party notice, the license applies to the original project code and documentation. Third-party dependencies and assets remain subject to their own licenses.
