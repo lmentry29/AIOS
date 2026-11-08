@@ -8,11 +8,9 @@ export interface WorkflowRunHandle {
   workflow_id: string;
 }
 
-export interface WorkIntakeRequest {
-  kind: 'task' | 'workflow';
-  task?: TaskEntity;
-  workflow?: WorkflowEntity;
-}
+export type WorkIntakeRequest =
+  | { kind: 'task'; task: TaskEntity }
+  | { kind: 'workflow'; workflow: WorkflowEntity };
 
 export interface TaskExecutionResult {
   /** Must be true only after the executor has checked the task's acceptance criteria. */
@@ -80,7 +78,9 @@ export class OrchestrationKernel {
 
   async intake(request: WorkIntakeRequest, actorId: string): Promise<TaskEntity | WorkflowEntity> {
     if (request.kind === 'task') {
-      if (!request.task) throw new OrchestrationError('Task intake requires a Task record.');
+      if (request.task.created_by !== actorId || request.task.owner_id !== actorId) {
+        throw new OrchestrationError('Task intake provenance and ownership must match the authenticated requester.');
+      }
       const allowed = await this.options.authorization.authorize({
         actor_id: actorId,
         action: 'intake',
@@ -89,7 +89,9 @@ export class OrchestrationKernel {
       if (!allowed) throw new OrchestrationError('Task intake denied by authorization policy.');
       return this.tasks.createTask(request.task);
     }
-    if (!request.workflow) throw new OrchestrationError('Workflow intake requires a Workflow record.');
+    if (request.workflow.created_by !== actorId || request.workflow.owner_id !== actorId) {
+      throw new OrchestrationError('Workflow intake provenance and ownership must match the authenticated requester.');
+    }
     const allowed = await this.options.authorization.authorize({
       actor_id: actorId,
       action: 'intake',
