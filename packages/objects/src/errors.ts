@@ -134,3 +134,17 @@ export class ProjectStatusTransitionError extends Error {
     this.name = 'ProjectStatusTransitionError';
   }
 }
+
+/**
+ * Thrown when a generic update attempts to change a resource's access_policy reference.
+ * Policy attachment is a privileged security operation and must never be smuggled
+ * through an ordinary entity patch.
+ */
+export class AccessPolicyMutationError extends Error {
+  constructor(entityId: string) {
+    super(
+      `update() cannot modify access_policy on entity_id "${entityId}" — policy attachment and revocation require the trusted authorization-administration path.`,
+    );
+    this.name = 'AccessPolicyMutationError';
+  }
+}
