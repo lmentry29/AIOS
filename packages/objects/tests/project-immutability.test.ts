@@ -88,7 +88,7 @@ describe('Project DNA immutability — what stays MUTABLE', () => {
     const store = projectStore();
     const created = store.create(makeProject());
 
-    const updated = store.update(created.entity_id, { project_status: 'paused' } as never);
+    const updated = store.appendProjectStatus(created.entity_id, 'paused', FOUNDER);
     expect(updated.project_status).toBe('paused');
     expect(updated.project_dna.mission).toBe('an AI-native engineering organization');
   });
