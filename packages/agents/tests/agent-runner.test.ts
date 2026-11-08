@@ -65,6 +65,15 @@ describe('AgentRunner — full Agent Execution Loop against a real Task', () => 
     // active/executing, active/monitoring, completed
     expect(result.agent.lifecycle_history).toHaveLength(6);
   });
+  it('rejects duplicate Agent identities instead of replacing the stored Agent', () => {
+    const runner = new AgentRunner(new TaskStore());
+    const agent = baseAgent();
+    runner.createAgent(agent as never);
+
+    expect(() => runner.createAgent(agent as never)).toThrow(/already exists/);
+    expect(runner.getAgent(agent.entity_id)?.version).toBe(agent.version);
+  });
+
   it('preflights the Task before mutating the Agent', () => {
     const taskStore = new TaskStore();
     const runner = new AgentRunner(taskStore);
