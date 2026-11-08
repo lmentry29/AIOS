@@ -148,3 +148,11 @@ export class AccessPolicyMutationError extends Error {
     this.name = 'AccessPolicyMutationError';
   }
 }
+
+/** Thrown when a lifecycle transition is not permitted by the canonical state graph. */
+export class InvalidLifecycleTransitionError extends Error {
+  constructor(entityId: string, from: string, to: string) {
+    super(`Cannot transition entity "${entityId}" from lifecycle state "${from}" to "${to}" (ADR-0003, state-machines.md).`);
+    this.name = 'InvalidLifecycleTransitionError';
+  }
+}
