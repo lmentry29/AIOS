@@ -231,7 +231,6 @@ describe('Requirement Category: Behavioral — linkRelationship() pairs both sid
     const { source: updatedSource, target: updatedTarget } = store.linkRelationship(
       source.entity_id,
       target.entity_id,
-      'task',
       'depends_on',
     );
 
@@ -252,7 +251,7 @@ describe('Requirement Category: Behavioral — linkRelationship() pairs both sid
   it('throws EntityNotFoundError-style when the target id does not exist, without touching the source', () => {
     const store = new ObjectStore(TaskEntity);
     const source = store.create(makeTask());
-    expect(() => store.linkRelationship(source.entity_id, randomUUID(), 'task', 'depends_on')).toThrow();
+    expect(() => store.linkRelationship(source.entity_id, randomUUID(), 'depends_on')).toThrow();
     expect(store.get(source.entity_id)?.relationships).toEqual([]);
   });
 });
