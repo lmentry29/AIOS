@@ -88,7 +88,7 @@ export class AuthorizationService {
 }
 
 function isActorRef(value: string): boolean {
-  return isUuid(value) || /^human:[^\\s:*]+$/.test(value);
+  return isUuid(value) || /^human:[^\s:*]+$/.test(value);
 }
 
 function isAccessAction(value: string): value is AccessAction {
