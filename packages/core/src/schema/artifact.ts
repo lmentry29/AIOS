@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalObjectEntity, withCanonicalObjectLifecycle } from './canonical-object.js';
+import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.2 Artifact — thin Canonical Object subtype. No further field-level
 // detail exists in the certified corpus (deliberately not expanded).
@@ -15,7 +15,7 @@ export const ArtifactKind = z.enum([
 ]);
 export type ArtifactKind = z.infer<typeof ArtifactKind>;
 
-const ArtifactEntityShape = CanonicalObjectEntity.extend({
+const ArtifactEntityShape = CanonicalObjectEntityShape.extend({
   entity_subtype: z.literal('artifact'),
   artifact_kind: ArtifactKind,
 
