@@ -3,12 +3,17 @@ import { AgentEntity } from '@aios/core';
 import type { TaskStore } from '@aios/work-hierarchy';
 
 /**
- * Minimal Agent Execution Loop runner (ADR-0002): planning → reasoning
+ * Demonstration-only Agent lifecycle harness for the ADR-0002 sequence: planning → reasoning
  * → executing → monitoring → completion, mapped onto the base
  * lifecycle_state/lifecycle_substate fields per COM §4.1's table.
  *
+ * IMPORTANT: this class exercises lifecycle and persistence contracts only. It does not
+ * invoke tools, execute Task actions, or verify a Task's desired outcome. Its transition
+ * to 'completed' is a conformance fixture, not evidence that real work was performed.
+ * Do not use it as a production task executor.
+ *
  * This is the vertical slice's final mandated step: run one Agent
- * through its full lifecycle against one real Task from
+ * through the lifecycle sequence against one real Task from
  * @aios/work-hierarchy's TaskStore, then stop — per the mandated
  * checkpoint. No orchestration, no multi-agent coordination, no System
  * Execution Loop; those belong to @aios/orchestration and are
