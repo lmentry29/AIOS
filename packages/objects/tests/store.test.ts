@@ -191,8 +191,11 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
 
     expect(source.relationships).toHaveLength(1);
     expect(source.relationships[0].direction).toBe('outbound');
+    expect(source.version).toBe(a.version + 1);
     expect(target.relationships).toHaveLength(1);
     expect(target.relationships[0].direction).toBe('inbound');
+    expect(target.version).toBe(b.version + 1);
+    expect(source.modified_at).toBe(target.modified_at);
   });
 });
 
