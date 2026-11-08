@@ -134,6 +134,9 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'mutating');
     const persisting = store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'persisting');
+    expect(() =>
+      store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'persisting'),
+    ).toThrow(InvalidLifecycleTransitionError);
 
     expect(persisting.lifecycle_state).toBe('active');
     expect(persisting.lifecycle_substate).toBe('persisting');
