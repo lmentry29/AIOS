@@ -14,6 +14,11 @@ import type { TaskStore } from '@aios/work-hierarchy';
  * Execution Loop; those belong to @aios/orchestration and are
  * deliberately out of scope here.
  */
+function cloneAgent(agent: AgentEntityType): AgentEntityType {
+  if (Array.isArray(agent)) return agent.map((item) => item) as never;
+  return JSON.parse(JSON.stringify(agent)) as AgentEntityType;
+}
+
 export class AgentRunner {
   private readonly agents = new Map<string, AgentEntityType>();
 
@@ -25,12 +30,12 @@ export class AgentRunner {
       throw new Error(`Agent entity_id "${parsed.entity_id}" already exists and cannot be reused.`);
     }
     this.agents.set(parsed.entity_id, parsed);
-    return structuredClone(parsed);
+    return cloneAgent(parsed);
   }
 
   getAgent(agentId: string): AgentEntityType | undefined {
     const agent = this.agents.get(agentId);
-    return agent ? structuredClone(agent) : undefined;
+    return agent ? cloneAgent(agent) : undefined;
   }
 
   private transitionAgent(
@@ -57,7 +62,7 @@ export class AgentRunner {
     });
 
     this.agents.set(agentId, updated);
-    return structuredClone(updated);
+    return cloneAgent(updated);
   }
 
   /**
