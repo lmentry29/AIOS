@@ -15,12 +15,17 @@ export const PluginInstallStatus = z.enum([
 ]);
 export type PluginInstallStatus = z.infer<typeof PluginInstallStatus>;
 
-export const PluginEntity = CanonicalEntity.extend({
+const PluginEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('plugin'),
   governing_layer: z.literal('tool_abstraction_layer'),
   wraps_adapter: z.string().uuid().optional(),
   // Orthogonal to lifecycle_state by design (§4.4) — do not conflate
   // install_status with lifecycle_state in downstream logic.
   install_status: PluginInstallStatus,
+
 });
+export const PluginEntity = PluginEntityShape.refine(
+  (plugin) => plugin.lifecycle_substate === undefined && plugin.lifecycle_history.every((entry) => entry.substate === undefined),
+  { message: 'Plugin has no ratified lifecycle_substate vocabulary (COM §4.4)' },
+);
 export type PluginEntity = z.infer<typeof PluginEntity>;
