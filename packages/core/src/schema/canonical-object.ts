@@ -8,7 +8,7 @@ export const CanonicalObjectEntityShape = CanonicalEntity.extend({
   // entity_subtype: 'memory_object' | 'artifact' | future subtypes (open, §12)
 });
 
-const ObjectSubstate = z.enum(['mutating', 'persisting', 'synchronizing']);
+export const CanonicalObjectSubstate = z.enum(['mutating', 'persisting', 'synchronizing']);
 
 type CanonicalObjectLifecycle = {
   lifecycle_state: LifecycleState;
@@ -28,7 +28,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
     (object: z.output<T> & CanonicalObjectLifecycle) =>
       object.lifecycle_substate === undefined ||
       (object.lifecycle_state === 'active' &&
-        ObjectSubstate.safeParse(object.lifecycle_substate).success),
+        CanonicalObjectSubstate.safeParse(object.lifecycle_substate).success),
     {
       message:
         'Canonical Object substates must be mutating, persisting, or synchronizing while lifecycle_state is active (COM §4.5)',
@@ -41,7 +41,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
       object.lifecycle_history.every((entry: LifecycleHistoryEntry) =>
         entry.substate === undefined
           ? true
-          : entry.state === 'active' && ObjectSubstate.safeParse(entry.substate).success,
+          : entry.state === 'active' && CanonicalObjectSubstate.safeParse(entry.substate).success,
       ),
     {
       message:
