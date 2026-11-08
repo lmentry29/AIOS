@@ -101,7 +101,7 @@ export class ImmutableEntityError extends Error {
 export class AppendOnlyFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — both lifecycle_history and relationships are append-only (COM §11). Use transitionLifecycle() or addRelationship()/linkRelationship() instead.`
+      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — these history/relationship fields are append-only. Use transitionLifecycle(), addRelationship()/linkRelationship(), or appendProjectStatus() as appropriate (COM §11, Project Ch.7).`
     );
     this.name = 'AppendOnlyFieldError';
   }
