@@ -57,6 +57,19 @@ export interface KnowledgeRecord {
  * The Memory Object remains the canonical, persisted entity. This service holds the
  * two things the ratified model has no field for, keyed by that entity's id.
  */
+function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
+  const cloneValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(cloneValue);
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
+      );
+    }
+    return value;
+  };
+  return cloneValue(record) as KnowledgeRecord;
+}
+
 export class LearningService {
   private readonly memories: ObjectStore<MemoryObjectEntityType>;
   private readonly knowledge = new Map<string, KnowledgeRecord>();
@@ -145,7 +158,8 @@ export class LearningService {
   }
 
   getKnowledge(id: string): KnowledgeRecord | undefined {
-    return this.knowledge.get(id);
+    const record = this.knowledge.get(id);
+    return record ? cloneKnowledge(record) : undefined;
   }
 
   /** The backing Memory Object (COM §5.1) for a knowledge record. */
@@ -154,7 +168,9 @@ export class LearningService {
   }
 
   listByStage(stage: KnowledgeStage): KnowledgeRecord[] {
-    return Array.from(this.knowledge.values()).filter((r) => r.stage === stage);
+    return Array.from(this.knowledge.values())
+      .filter((record) => record.stage === stage)
+      .map(cloneKnowledge);
   }
 
   private require(id: string): KnowledgeRecord {
