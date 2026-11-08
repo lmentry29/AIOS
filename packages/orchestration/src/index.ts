@@ -190,11 +190,11 @@ export class OrchestrationKernel {
     }
   }
 
-  async status(handle: WorkflowRunHandle): Promise<LifecycleState> {
+  async status(handle: WorkflowRunHandle, actorId: string): Promise<LifecycleState> {
     const workflow = this.workflows.get(handle.workflow_id);
     if (!workflow) throw new OrchestrationError(`Workflow "${handle.workflow_id}" was not found.`);
     if (!(await this.options.authorization.authorize({
-      actor_id: workflow.owner_id,
+      actor_id: actorId,
       action: 'read_status',
       resource_id: workflow.entity_id,
     }))) {
