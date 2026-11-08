@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { AuthorizationService, type AccessPolicy } from '../src/authorization.js';
+import { AuthorizationService, StaticAccessPolicyStore, type AccessPolicy } from '../src/authorization.js';
 
 describe('AuthorizationService', () => {
   const policyId = randomUUID();
@@ -17,7 +17,7 @@ describe('AuthorizationService', () => {
   };
 
   it('allows only an exact subject/action/resource match', async () => {
-    const auth = new AuthorizationService([policy], async () => policyId);
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId);
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(true);
     expect(await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId })).toBe(false);
     expect(await auth.authorize({ actor_id: actorId, action: 'coordinate', resource_id: resourceId })).toBe(false);
@@ -25,8 +25,8 @@ describe('AuthorizationService', () => {
   });
 
   it('denies when the resource has no policy or references an unknown policy', async () => {
-    const noPolicy = new AuthorizationService([policy], async () => undefined);
-    const unknownPolicy = new AuthorizationService([policy], async () => randomUUID());
+    const noPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => undefined);
+    const unknownPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => randomUUID());
     const request = { actor_id: actorId, action: 'execute' as const, resource_id: resourceId };
     expect(await noPolicy.authorize(request)).toBe(false);
     expect(await unknownPolicy.authorize(request)).toBe(false);
@@ -45,22 +45,20 @@ describe('AuthorizationService', () => {
         },
       ],
     };
-    const auth = new AuthorizationService([withDeny], async () => policyId);
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([withDeny]), async () => policyId);
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(false);
   });
 
 
   it('fails closed when policy resolution throws or the actor identity is malformed', async () => {
-    const unavailable = new AuthorizationService([policy], async () => {
-      throw new Error('policy store unavailable');
-    });
+    const unavailable = new AuthorizationService({ get: async () => { throw new Error('policy store unavailable'); } }, async () => policyId);
     expect(await unavailable.authorize({
       actor_id: actorId,
       action: 'execute',
       resource_id: resourceId,
     })).toBe(false);
 
-    const auth = new AuthorizationService([policy], async () => policyId);
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId);
     expect(await auth.authorize({
       actor_id: '*',
       action: 'execute',
@@ -81,13 +79,13 @@ describe('AuthorizationService', () => {
   });
 
   it('rejects empty or malformed policy configuration', () => {
-    expect(() => new AuthorizationService([{
+    expect(() => new AuthorizationService(new StaticAccessPolicyStore([{
       policy_id: 'not-a-uuid',
       rules: policy.rules,
-    }], async () => policyId)).toThrow(/Invalid access policy ID/);
-    expect(() => new AuthorizationService([{
+    }]), async () => policyId)).toThrow(/Invalid access policy ID/);
+    expect(() => new AuthorizationService(new StaticAccessPolicyStore([{
       policy_id: randomUUID(),
       rules: [],
-    }], async () => policyId)).toThrow(/at least one rule/);
+    }]), async () => policyId)).toThrow(/at least one rule/);
   });
 });
