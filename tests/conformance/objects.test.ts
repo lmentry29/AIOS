@@ -291,10 +291,11 @@ describe('Requirement Category: Behavioral — relationships accumulate rather t
   });
 });
 
-describe('Requirement Category: Architectural — update() runtime-rejects any patch touching relationships or lifecycle_history (COM §11)', () => {
-  // COM §11: both fields are append-only — "the record is mutable, but its history is
-  // not." EntityPatch<T> Omits both at the TYPE level (store.ts), which blocks a
-  // normally-typed caller at compile time. This block covers the runtime backstop for
+describe('Requirement Category: Architectural — update() rejects lifecycle and append-only field bypasses (COM §3.2, §11)', () => {
+  // COM §11: lifecycle_history and relationships are append-only — "the record is
+  // mutable, but its history is not." lifecycle_state/substate also must use
+  // transitionLifecycle() so each state change gets an audit entry. EntityPatch<T>
+  // Omits all four protected fields at the TYPE level. This block covers the runtime backstop for
   // callers the compiler can't see: a plain JS caller, a deserialized JSON patch, or
   // any TypeScript caller using a cast to bypass EntityPatch. Previously an
   // undocumented gap (see git history of tests/conformance/known-gaps.test.ts);
