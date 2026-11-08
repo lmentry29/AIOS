@@ -14,7 +14,8 @@
   "dependencies": {
     "@aios/core": "workspace:*",
     "@aios/agents": "workspace:*",
-    "@aios/work-hierarchy": "workspace:*"
+    "@aios/work-hierarchy": "workspace:*",
+    "@aios/objects": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
