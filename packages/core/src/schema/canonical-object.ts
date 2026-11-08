@@ -50,5 +50,5 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
     },
   );
 
-  return withHistory as z.ZodEffects<T, z.output<T>, z.input<T>>;
+  return withHistory as unknown as z.ZodEffects<T, z.output<T>, z.input<T>>;
 }
