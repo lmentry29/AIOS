@@ -24,7 +24,7 @@ function cloneAgent(agent: AgentEntityType): AgentEntityType {
     }
     return value;
   };
-  return cloneValue(agent) as AgentEntityType;
+  return cloneValue(agent) as unknown as AgentEntityType;
 }
 
 export class AgentRunner {
