@@ -72,6 +72,11 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     const entity = baseFields({ entity_type: 'canonical_object' });
     const created = store.create(entity as never);
 
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'archived', 'human:founder');
 
     expect(() => store.create(entity as never)).toThrow(EntityIdConflictError);
@@ -295,6 +300,7 @@ describe('ObjectStore — Task-shaped entity insertion (COM §10 evidence)', () 
 
     expect((updated as unknown as TaskEntityType).assigned_agent).toBeUndefined();
 
+    store.transitionLifecycle(updated.entity_id, 'validated', agentId);
     const transitioned = store.transitionLifecycle(
       updated.entity_id,
       'active',
