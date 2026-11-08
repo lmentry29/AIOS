@@ -106,7 +106,7 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     }) as never);
 
     expect(() =>
-      store.linkRelationship(source.entity_id, target.entity_id, 'canonical_object', 'derived_from'),
+      store.linkRelationship(source.entity_id, target.entity_id, 'derived_from'),
     ).toThrow(ImmutableEntityError);
     expect(store.get(source.entity_id)?.relationships).toHaveLength(0);
     expect(store.get(target.entity_id)?.relationships).toHaveLength(0);
@@ -119,7 +119,7 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     const entity = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
 
     expect(() =>
-      store.linkRelationship(entity.entity_id, entity.entity_id, 'canonical_object', 'derived_from'),
+      store.linkRelationship(entity.entity_id, entity.entity_id, 'derived_from'),
     ).toThrow(/cannot be linked to itself/);
     expect(store.get(entity.entity_id)?.relationships).toHaveLength(0);
     expect(store.get(entity.entity_id)?.version).toBe(entity.version);
