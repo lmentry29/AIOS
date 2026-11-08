@@ -67,7 +67,7 @@ describe('AuthorizationService', () => {
   });
 
   it('rejects wildcard-like policy subjects and invalid resource IDs at construction', () => {
-    expect(() => new AuthorizationService([{
+    expect(() => new StaticAccessPolicyStore([{
       policy_id: randomUUID(),
       rules: [{
         effect: 'allow',
@@ -75,7 +75,7 @@ describe('AuthorizationService', () => {
         actions: ['execute'],
         resource_ids: [resourceId],
       }],
-    }], async () => policyId)).toThrow(/invalid subject or resource IDs/);
+    }])).toThrow(/invalid subject or resource IDs/);
   });
 
   it('rejects empty or malformed policy configuration', () => {
