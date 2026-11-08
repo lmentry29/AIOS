@@ -121,6 +121,22 @@ describe('LearningService — archiveKnowledge', () => {
 });
 
 describe('LearningService — queries', () => {
+
+  it('returns detached nested knowledge snapshots', async () => {
+    const svc = new LearningService();
+    const id = await svc.recordObservation('snapshot', { nested: { value: 1 } });
+
+    const first = svc.getKnowledge(id);
+    if (!first) throw new Error('Knowledge record missing.');
+    (first.content as { nested: { value: number } }).nested.value = 99;
+
+    const listed = svc.listByStage('observation')[0];
+    if (!listed) throw new Error('Knowledge record missing from stage query.');
+    (listed.content as { nested: { value: number } }).nested.value = 77;
+
+    expect((svc.getKnowledge(id)?.content as { nested: { value: number } }).nested.value).toBe(1);
+  });
+
   it('lists records by stage', async () => {
     const svc = new LearningService();
     const a = await svc.recordObservation('a', {});
