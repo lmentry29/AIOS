@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CanonicalEntity, MemoryObjectEntity, TaskEntity } from '@aios/core';
+import { AgentEntity, CanonicalEntity, MemoryObjectEntity, TaskEntity } from '@aios/core';
 import {
   EntityIdConflictError,
   ImmutableEntityError,
   ObjectStore,
 } from '@aios/objects';
-import { FOUNDER, makeCanonicalObject, makeMemoryObject, makeTask } from './fixtures.js';
+import { FOUNDER, makeAgent, makeCanonicalObject, makeMemoryObject, makeTask } from './fixtures.js';
 
 /**
  * BOUNDARY: @aios/core → @aios/objects
@@ -92,11 +92,23 @@ describe('core → objects: COM invariants enforced at the store', () => {
     expect(created.lifecycle_history).toHaveLength(0);
 
     store.transitionLifecycle(created.entity_id, 'validated', FOUNDER);
-    const active = store.transitionLifecycle(created.entity_id, 'active', FOUNDER, 'executing');
+    const active = store.transitionLifecycle(created.entity_id, 'active', FOUNDER);
 
     expect(active.lifecycle_history.map((h) => h.state)).toEqual(['validated', 'active']);
-    expect(active.lifecycle_history[1]?.substate).toBe('executing');
+    expect(active.lifecycle_history[1]?.substate).toBeUndefined();
     expect(active.lifecycle_history[1]?.actor).toBe(FOUNDER);
+  });
+
+  it('stores Agent-specific substates without allowing them on Tasks (COM §3.2, §4.1, §4.2)', () => {
+    const agentStore = new ObjectStore(AgentEntity);
+    const agent = agentStore.create(makeAgent());
+    const activeAgent = agentStore.transitionLifecycle(agent.entity_id, 'active', FOUNDER, 'planning');
+    expect(activeAgent.lifecycle_substate).toBe('planning');
+    expect(activeAgent.lifecycle_history[0]?.substate).toBe('planning');
+
+    const taskStore = new ObjectStore(TaskEntity);
+    const task = taskStore.create(makeTask());
+    expect(() => taskStore.transitionLifecycle(task.entity_id, 'active', FOUNDER, 'executing')).toThrow();
   });
 
   it('enforces Memory Object immutability after completion (COM §5.1)', () => {
