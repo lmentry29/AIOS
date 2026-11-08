@@ -176,6 +176,22 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     expect(archived.lifecycle_history.at(-1)?.state).toBe('archived');
   });
 
+
+  it('enforces Agent active-substate order in ObjectStore', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'agent' }) as never);
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'planning');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'reasoning');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'executing');
+    const monitoring = store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'monitoring');
+
+    expect(monitoring.lifecycle_substate).toBe('monitoring');
+    expect(() =>
+      store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'executing'),
+    ).toThrow(InvalidLifecycleTransitionError);
+  });
+
   it('appends (does not replace) lifecycle_history on transitionLifecycle()', () => {
     const store = new ObjectStore();
     const entity = baseFields({ entity_type: 'canonical_object' });
