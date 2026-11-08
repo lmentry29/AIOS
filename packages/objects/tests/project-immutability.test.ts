@@ -47,6 +47,26 @@ function makeProject(overrides: Record<string, unknown> = {}): ProjectEntityType
 const projectStore = () => new ObjectStore<ProjectEntityType>(ProjectEntity);
 
 describe('Project DNA immutability (COM §5.4, ADR-0011 — write-time rule)', () => {
+
+  it('returns detached nested Project DNA snapshots', () => {
+    const store = projectStore();
+    const created = store.create(makeProject());
+
+    created.project_dna.non_goals.push('mutated through create result');
+    const fetched = store.get(created.entity_id);
+    if (!fetched) throw new Error('Created Project was not retrievable.');
+    fetched.project_dna.core_principles[0] = 'mutated through get result';
+
+    const listed = store.list()[0];
+    if (!listed) throw new Error('Created Project was not listed.');
+    listed.project_dna.target_users.push('mutated through list result');
+
+    const persisted = store.get(created.entity_id);
+    expect(persisted?.project_dna.non_goals).not.toContain('mutated through create result');
+    expect(persisted?.project_dna.core_principles).toContain('no unilateral resolution');
+    expect(persisted?.project_dna.target_users).toEqual(['the founder']);
+  });
+
   it('refuses to change project_dna after creation', () => {
     const store = projectStore();
     const created = store.create(makeProject());
