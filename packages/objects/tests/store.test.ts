@@ -74,8 +74,6 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
 
     store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
-    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
-    store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'archived', 'human:founder');
 
@@ -218,6 +216,8 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
       source_references: [],
     });
     const created = store.create(entity as never);
+    store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+    store.transitionLifecycle(created.entity_id, 'active', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
 
     expect(() => store.update(created.entity_id, { description: 'edit attempt' })).toThrow(
