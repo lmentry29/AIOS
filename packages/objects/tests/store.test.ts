@@ -95,6 +95,36 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     );
   });
 
+
+  it('does not partially link when the target is immutable', () => {
+    const store = new ObjectStore();
+    const source = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+    const target = store.create(baseFields({
+      entity_type: 'canonical_object',
+      entity_subtype: 'memory_object',
+      lifecycle_state: 'completed',
+    }) as never);
+
+    expect(() =>
+      store.linkRelationship(source.entity_id, target.entity_id, 'canonical_object', 'derived_from'),
+    ).toThrow(ImmutableEntityError);
+    expect(store.get(source.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(target.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(source.entity_id)?.version).toBe(source.version);
+    expect(store.get(target.entity_id)?.version).toBe(target.version);
+  });
+
+  it('rejects self-links without mutating the entity', () => {
+    const store = new ObjectStore();
+    const entity = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+
+    expect(() =>
+      store.linkRelationship(entity.entity_id, entity.entity_id, 'canonical_object', 'derived_from'),
+    ).toThrow(/cannot be linked to itself/);
+    expect(store.get(entity.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(entity.entity_id)?.version).toBe(entity.version);
+  });
+
   it('appends bidirectional relationship entries via linkRelationship()', () => {
     const store = new ObjectStore();
     const a = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
