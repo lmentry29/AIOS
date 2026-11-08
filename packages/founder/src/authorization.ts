@@ -41,8 +41,15 @@ export class AuthorizationService {
       if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
       if (policy.rules.length === 0) throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
       for (const rule of policy.rules) {
+        if (rule.effect !== 'allow' && rule.effect !== 'deny') throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
         if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
           throw new Error(`Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
+        }
+        if (rule.subject_ids.some((id) => !isActorRef(id)) || rule.resource_ids.some((id) => !isUuid(id))) {
+          throw new Error(`Access policy "${policy.policy_id}" contains invalid subject or resource IDs.`);
+        }
+        if (rule.actions.some((action) => !isAccessAction(action))) {
+          throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
         }
       }
       this.policies.set(policy.policy_id, Object.freeze({
@@ -58,8 +65,13 @@ export class AuthorizationService {
   }
 
   async authorize(request: AccessRequest): Promise<boolean> {
-    if (!request.actor_id.trim() || !request.resource_id.trim()) return false;
-    const policyId = await this.resolvePolicyId(request.resource_id);
+    if (!isActorRef(request.actor_id) || !isUuid(request.resource_id) || !isAccessAction(request.action)) return false;
+    let policyId: string | undefined;
+    try {
+      policyId = await this.resolvePolicyId(request.resource_id);
+    } catch {
+      return false;
+    }
     if (!policyId) return false;
 
     const policy = this.policies.get(policyId);
@@ -73,6 +85,14 @@ export class AuthorizationService {
     if (matching.some((rule) => rule.effect === 'deny')) return false;
     return matching.some((rule) => rule.effect === 'allow');
   }
+}
+
+function isActorRef(value: string): boolean {
+  return isUuid(value) || /^human:[^\\s:*]+$/.test(value);
+}
+
+function isAccessAction(value: string): value is AccessAction {
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'read_status'].includes(value);
 }
 
 function isUuid(value: string): boolean {
