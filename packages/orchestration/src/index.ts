@@ -94,13 +94,17 @@ export class OrchestrationKernel {
   }
 
   async dispatch(workflow: WorkflowEntity, actorId: string): Promise<WorkflowRunHandle> {
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action: 'dispatch',
+      resource_id: workflow.entity_id,
+    }))) {
+      throw new OrchestrationError('Workflow dispatch denied by authorization policy.');
+    }
+
     const stored = this.workflows.get(workflow.entity_id) ?? this.workflows.create(workflow);
     if (stored.lifecycle_state !== 'created') {
       throw new OrchestrationError(`Workflow "${stored.entity_id}" must be created before dispatch.`);
-    }
-
-    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'dispatch', resource_id: stored.entity_id }))) {
-      throw new OrchestrationError('Workflow dispatch denied by authorization policy.');
     }
 
     // Preflight every Task, Agent, and permission before the first lifecycle write.
