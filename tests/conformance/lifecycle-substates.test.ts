@@ -73,6 +73,10 @@ describe('Lifecycle substate conformance (COM §3.2, §4.1, §4.2)', () => {
     const taskStore = new ObjectStore(TaskEntity);
     const task = taskStore.create(makeTask());
     expect(() => taskStore.transitionLifecycle(task.entity_id, 'active', FOUNDER, 'executing')).toThrow();
+    const unchangedTask = taskStore.get(task.entity_id);
+    expect(unchangedTask?.lifecycle_state).toBe('created');
+    expect(unchangedTask?.lifecycle_history).toHaveLength(0);
+    expect(unchangedTask?.version).toBe(task.version);
 
     const agentStore = new ObjectStore(AgentEntity);
     const agent = agentStore.create(makeAgent());
