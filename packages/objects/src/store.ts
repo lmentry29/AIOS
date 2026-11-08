@@ -387,6 +387,9 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   }
 
   private assertMutable(entity: T): void {
+    if (entity.lifecycle_state === 'archived') {
+      throw new ImmutableEntityError(entity.entity_id);
+    }
     if (
       entity.entity_type === 'canonical_object' &&
       entity.entity_subtype === 'memory_object' &&
