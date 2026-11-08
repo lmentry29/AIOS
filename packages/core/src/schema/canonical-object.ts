@@ -9,6 +9,7 @@ export const CanonicalObjectEntityShape = CanonicalEntity.extend({
 });
 
 export const CanonicalObjectSubstate = z.enum(['mutating', 'persisting', 'synchronizing']);
+export type CanonicalObjectSubstate = z.infer<typeof CanonicalObjectSubstate>;
 
 type CanonicalObjectLifecycle = {
   lifecycle_state: LifecycleState;
