@@ -223,6 +223,10 @@ export class OrchestrationKernel {
     }
   }
 
+  getWorkflow(workflowId: string): WorkflowEntity | undefined {
+    return this.workflows.get(workflowId);
+  }
+
   async status(handle: WorkflowRunHandle, actorId: string): Promise<LifecycleState> {
     const workflow = this.workflows.get(handle.workflow_id);
     if (!workflow) throw new OrchestrationError(`Workflow "${handle.workflow_id}" was not found.`);
