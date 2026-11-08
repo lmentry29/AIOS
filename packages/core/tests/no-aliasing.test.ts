@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProjectEntity } from '../src/index.js';
+import { ProjectEntity, ProjectPhase, ProjectStatus } from '../src/index.js';
 import { PAUSED_MID_IMPLEMENTATION, SHELVED_PROJECT, baseProject } from './fixtures.js';
 
 /**
@@ -58,8 +58,8 @@ describe('no-aliasing — the axes are independent across their full cross-produ
   it('accepts every (project_status × project_phase) combination', () => {
     // 9 × 11 = 99 combinations. If any pair were constrained against the other — a
     // lookup table, a guard, a shared enum — some combination here would fail.
-    const statuses = ProjectEntity._def.schema.shape.project_status.options;
-    const phases = ProjectEntity._def.schema.shape.project_phase.options;
+    const statuses = ProjectStatus.options;
+    const phases = ProjectPhase.options;
 
     const rejected: string[] = [];
     for (const project_status of statuses) {
