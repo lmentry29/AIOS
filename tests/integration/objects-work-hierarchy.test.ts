@@ -118,10 +118,11 @@ describe('objects → work-hierarchy: ObjectStore’s COM guarantees arrive inta
     const created = store.createTask(makeTask());
 
     store.transitionTaskLifecycle(created.entity_id, 'validated', FOUNDER);
-    store.transitionTaskLifecycle(created.entity_id, 'active', FOUNDER, 'executing');
+    store.transitionTaskLifecycle(created.entity_id, 'active', FOUNDER);
     const completed = store.transitionTaskLifecycle(created.entity_id, 'completed', FOUNDER);
 
     expect(completed.lifecycle_state).toBe('completed');
+    expect(completed.lifecycle_history.every((h) => h.substate === undefined)).toBe(true);
     expect(completed.lifecycle_history.map((h) => h.state)).toEqual([
       'validated',
       'active',
