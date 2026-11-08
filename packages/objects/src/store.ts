@@ -11,6 +11,7 @@ import {
   PROJECT_IMMUTABLE_FIELDS,
 } from '@aios/core';
 import {
+  AccessPolicyMutationError,
   AppendOnlyFieldError,
   EntityIdConflictError,
   EntityNotFoundError,
@@ -118,6 +119,7 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
   Omit<
     T,
     | 'entity_id'
+    | 'access_policy'
     | 'entity_type'
     | 'created_at'
     | 'created_by'
@@ -182,6 +184,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    this.assertAccessPolicyUntouched(entityId, patch);
     this.assertLifecycleFieldsUntouched(entityId, patch);
     this.assertProjectStatusUntouched(entityId, patch);
     this.assertAppendOnlyFieldsUntouched(entityId, patch);
@@ -372,6 +375,12 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   }
 
   /** Lifecycle fields can only be changed via transitionLifecycle(), never update(). */
+  private assertAccessPolicyUntouched(entityId: string, patch: EntityPatch<T>): void {
+    if (Object.hasOwn(patch, 'access_policy')) {
+      throw new AccessPolicyMutationError(entityId);
+    }
+  }
+
   private assertLifecycleFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
     const patched = patch as unknown as Record<string, unknown>;
     const touched = LIFECYCLE_FIELDS.filter((field) => field in patched);
