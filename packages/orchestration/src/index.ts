@@ -166,7 +166,7 @@ export class OrchestrationKernel {
         });
         this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', item.agentId);
       }
-      this.workflows.transitionLifecycle(stored.entity_id, 'completed', 'orchestration');
+      this.workflows.transitionLifecycle(stored.entity_id, 'completed', actorId);
       return { workflow_id: stored.entity_id };
     } catch (error) {
       const activeTask = plan
