@@ -8,6 +8,7 @@ import {
   ImmutableEntityError,
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
+  LifecycleTransitionError,
   ObjectStore,
 } from '@aios/objects';
 import { FOUNDER, makeCanonicalObject, makeMemoryObject, makeObjective, makeProject, makeTask } from './fixtures.js';
@@ -326,7 +327,33 @@ describe('Requirement Category: Architectural — update() runtime-rejects any p
     expect(store.get(created.entity_id)?.lifecycle_history).toHaveLength(1);
   });
 
-  it('still permits an ordinary field update when the patch does not name either append-only field', () => {
+
+  it('throws LifecycleTransitionError when a patch directly changes lifecycle_state', () => {
+    const store = new ObjectStore(TaskEntity);
+    const created = store.create(makeTask());
+    const rawPatch: Record<string, unknown> = { lifecycle_state: 'completed' };
+
+    expect(() => store.update(created.entity_id, rawPatch as never)).toThrow(
+      LifecycleTransitionError,
+    );
+    expect(store.get(created.entity_id)?.lifecycle_state).toBe('created');
+    expect(store.get(created.entity_id)?.lifecycle_history).toHaveLength(0);
+    expect(store.get(created.entity_id)?.version).toBe(created.version);
+  });
+
+  it('throws LifecycleTransitionError when a patch directly changes lifecycle_substate', () => {
+    const store = new ObjectStore(TaskEntity);
+    const created = store.create(makeTask());
+    const rawPatch: Record<string, unknown> = { lifecycle_substate: 'executing' };
+
+    expect(() => store.update(created.entity_id, rawPatch as never)).toThrow(
+      LifecycleTransitionError,
+    );
+    expect(store.get(created.entity_id)?.lifecycle_substate).toBeUndefined();
+    expect(store.get(created.entity_id)?.version).toBe(created.version);
+  });
+
+  it('still permits an ordinary field update when the patch does not name protected fields', () => {
     const store = new ObjectStore(TaskEntity);
     const created = store.create(makeTask());
     expect(() => store.update(created.entity_id, { name: 'renamed' })).not.toThrow();
