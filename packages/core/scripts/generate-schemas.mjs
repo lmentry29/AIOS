@@ -31,6 +31,7 @@ const outDir = join(pkgRoot, "..", "..", "schemas", "generated");
 // index.ts is a re-export barrel — every export it has is a duplicate of one of the
 // modules below, so emitting it would write every schema twice.
 const BARREL = "index";
+const INTERNAL_SCHEMA_EXPORTS = new Set(["CanonicalObjectEntityShape"]);
 
 const isZodSchema = (v) =>
   v !== null && typeof v === "object" && "_def" in v && typeof v.safeParse === "function";
@@ -174,7 +175,7 @@ for (const moduleName of modules) {
   for (const exportName of Object.keys(mod).sort()) {
     const value = mod[exportName];
     // Type-only exports don't exist at runtime, so this skips them for free.
-    if (!isZodSchema(value)) continue;
+    if (!isZodSchema(value) || INTERNAL_SCHEMA_EXPORTS.has(exportName)) continue;
     // No `name` option: passing one makes zodToJsonSchema wrap the result in its own
     // {$ref, definitions} envelope, which would nest redundantly inside the envelope
     // this script already builds. $refStrategy "none" keeps each definition
