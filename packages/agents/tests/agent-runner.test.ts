@@ -65,6 +65,27 @@ describe('AgentRunner — full Agent Execution Loop against a real Task', () => 
     // 6 transitions: validated, active/planning, active/reasoning,
     // active/executing, active/monitoring, completed
     expect(result.agent.lifecycle_history).toHaveLength(6);
+    expect(result.agent.lifecycle_history.map((entry) => entry.state)).toEqual([
+      'validated',
+      'active',
+      'active',
+      'active',
+      'active',
+      'completed',
+    ]);
+    expect(result.agent.lifecycle_history.map((entry) => entry.substate)).toEqual([
+      undefined,
+      'planning',
+      'reasoning',
+      'executing',
+      'monitoring',
+      undefined,
+    ]);
+    expect(result.agent.version).toBe(agent.version + 7);
+    expect(result.task?.version).toBe(task.version + 3);
+    expect(
+      result.agent.lifecycle_history.every((entry) => entry.entered_at <= result.agent.modified_at),
+    ).toBe(true);
   });
 
   it('returns detached Agent snapshots that cannot mutate runner state', () => {
