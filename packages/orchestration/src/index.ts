@@ -1,5 +1,5 @@
-import type { LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
-import { WorkflowEntity as WorkflowSchema } from '@aios/core';
+import type { ArtifactEntity, LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
+import { ArtifactEntity as ArtifactSchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
 import type { TaskStore } from '@aios/work-hierarchy';
 
@@ -65,13 +65,16 @@ export class OrchestrationError extends Error {
  */
 export class OrchestrationKernel {
   private readonly workflows: ObjectStore<WorkflowEntity>;
+  private readonly evidence: ObjectStore<ArtifactEntity>;
 
   constructor(
     private readonly tasks: TaskStore,
     private readonly options: OrchestrationOptions,
     workflowStore?: ObjectStore<WorkflowEntity>,
+    evidenceStore?: ObjectStore<ArtifactEntity>,
   ) {
     this.workflows = workflowStore ?? new ObjectStore<WorkflowEntity>(WorkflowSchema);
+    this.evidence = evidenceStore ?? new ObjectStore<ArtifactEntity>(ArtifactSchema);
   }
 
   async intake(request: WorkIntakeRequest, actorId: string): Promise<TaskEntity | WorkflowEntity> {
@@ -155,9 +158,11 @@ export class OrchestrationKernel {
 
         const result = await this.options.execution.executeTask(item.agentId, task);
         this.assertVerifiedResult(result, task, [item.agentId]);
-        if (task.actions.length > 0) {
-          this.tasks.updateTask(task.entity_id, { actions: result.completed_actions ?? [] });
-        }
+        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], result);
+        this.tasks.updateTask(task.entity_id, {
+          audit_trail_ref: evidenceId,
+          ...(task.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
+        });
         this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', 'orchestration');
       }
       this.workflows.transitionLifecycle(stored.entity_id, 'completed', 'orchestration');
@@ -230,12 +235,46 @@ export class OrchestrationKernel {
     return workflow.lifecycle_state;
   }
 
+  getExecutionEvidence(evidenceId: string): ArtifactEntity | undefined {
+    return this.evidence.get(evidenceId);
+  }
+
+  private persistExecutionEvidence(task: TaskEntity, agentIds: string[], result: TaskExecutionResult): string {
+    const now = new Date().toISOString();
+    const artifact = this.evidence.create(ArtifactSchema.parse({
+      entity_id: crypto.randomUUID(),
+      entity_type: 'canonical_object',
+      entity_subtype: 'artifact',
+      artifact_kind: 'test_report',
+      name: `Execution evidence: ${task.name}`,
+      description: JSON.stringify({
+        task_id: task.entity_id,
+        agent_ids: agentIds,
+        summary: result.summary,
+        evidence: result.evidence,
+        verified: result.verified,
+        recorded_at: now,
+      }),
+      lifecycle_state: 'created',
+      lifecycle_history: [],
+      created_at: now,
+      created_by: agentIds[0]!,
+      modified_at: now,
+      version: 1,
+      organizational_containers: [],
+      owner_id: agentIds[0]!,
+      owner_type: 'agent',
+      relationships: [],
+    }));
+    return artifact.entity_id;
+  }
+
   private assertVerifiedResult(
     result: TaskExecutionResult,
     task: TaskEntity,
     allowedExecutors: string[],
   ): void {
-    if (!result.verified || !result.summary.trim() || result.evidence.length === 0) {
+    if (!result.verified || !result.summary.trim() || result.evidence.length === 0 || result.evidence.some((item) => !item.trim())) {
       throw new OrchestrationError(
         `Task "${task.entity_id}" was not completed: executor must return verified=true, a summary, and evidence.`,
       );
