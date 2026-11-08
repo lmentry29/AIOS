@@ -3,7 +3,7 @@ import { CanonicalEntity, type LifecycleHistoryEntry, type LifecycleState } from
 
 // §4.5 Canonical Object — a reusable Zod object shape. Keep this as a ZodObject
 // because Memory Object, Artifact, Objective, and Project extend it.
-export const CanonicalObjectEntity = CanonicalEntity.extend({
+export const CanonicalObjectEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('canonical_object'),
   // entity_subtype: 'memory_object' | 'artifact' | future subtypes (open, §12)
 });
@@ -52,3 +52,9 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
 
   return withHistory as unknown as z.ZodEffects<T, z.output<T>, z.input<T>>;
 }
+
+
+// Public schema validates the generic Canonical Object lifecycle contract. Concrete
+// subtypes extend the shape above and apply the same guard after adding their fields.
+export const CanonicalObjectEntity = withCanonicalObjectLifecycle(CanonicalObjectEntityShape);
+export type CanonicalObjectEntity = z.infer<typeof CanonicalObjectEntity>;
