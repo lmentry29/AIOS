@@ -62,7 +62,7 @@ export class FounderInterface {
         this.learning.listByStage('historical_archive'),
       )
       .filter((record) =>
-        [record.subject, typeof record.content === 'string' ? record.content : JSON.stringify(record.content)]
+        [record.subject, typeof record.content === 'string' ? record.content : (JSON.stringify(record.content) ?? '')]
           .some((value) => value.toLocaleLowerCase().includes(normalized)),
       )
       .map((record) => ({ ...record }));
