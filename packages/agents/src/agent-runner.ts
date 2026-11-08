@@ -120,12 +120,15 @@ export class AgentRunner {
       modified_at: new Date().toISOString(),
     });
 
+    // Commit the validated assignment before starting lifecycle execution. The Agent
+    // candidate is prepared above, so a Task-store validation failure leaves the Agent
+    // untouched; subsequent transitions build on the assigned snapshot and preserve it.
+    this.taskStore.updateTask(taskId, { assigned_agent: agentId });
+    this.agents.set(agentId, assignedAgent);
+
     this.transitionAgent(agentId, 'validated', undefined, actor);
     this.transitionAgent(agentId, 'active', 'planning', actor);
     this.transitionAgent(agentId, 'active', 'reasoning', actor);
-
-    this.taskStore.updateTask(taskId, { assigned_agent: agentId });
-    this.agents.set(agentId, assignedAgent);
     this.transitionAgent(agentId, 'active', 'executing', actor);
     this.taskStore.transitionTaskLifecycle(taskId, 'active', actor);
 
