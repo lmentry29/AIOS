@@ -30,7 +30,7 @@ export const TaskEntity = TaskEntityShape.refine(
   (task: z.infer<typeof TaskEntityShape>) => task.lifecycle_substate === undefined,
   {
     message:
-      'Task has no ratified lifecycle_substate vocabulary; substates are not accepted for Task entities (ADR-0012, COM §4.2)',
+      'Task has no ratified lifecycle_substate vocabulary; substates are not accepted for Task entities (COM §4.2)',
     path: ['lifecycle_substate'],
   },
 ).refine(
@@ -38,7 +38,7 @@ export const TaskEntity = TaskEntityShape.refine(
     task.lifecycle_history.every((entry) => entry.substate === undefined),
   {
     message:
-      'Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (ADR-0012, COM §4.2)',
+      'Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (COM §4.2)',
     path: ['lifecycle_history'],
   },
 );
