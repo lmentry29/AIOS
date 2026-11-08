@@ -134,6 +134,9 @@ importers:
 
   packages/orchestration:
     dependencies:
+      '@aios/objects':
+        specifier: workspace:*
+        version: link:../objects
       '@aios/agents':
         specifier: workspace:*
         version: link:../agents
