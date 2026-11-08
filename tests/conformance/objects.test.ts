@@ -328,6 +328,16 @@ describe('Requirement Category: Architectural — update() rejects lifecycle and
   });
 
 
+
+  it('throws AppendOnlyFieldError when a patch names Project status history', () => {
+    const store = new ObjectStore(ProjectEntity);
+    const project = store.create(makeProject());
+    const rawPatch: Record<string, unknown> = { project_status_history: [] };
+
+    expect(() => store.update(project.entity_id, rawPatch as never)).toThrow(AppendOnlyFieldError);
+    expect(store.get(project.entity_id)?.project_status_history).toHaveLength(0);
+  });
+
   it('throws LifecycleTransitionError when a patch directly changes lifecycle_state', () => {
     const store = new ObjectStore(TaskEntity);
     const created = store.create(makeTask());
