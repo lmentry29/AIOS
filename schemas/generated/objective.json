@@ -1,9 +1,58 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "objective",
   "definitions": {
     "ObjectiveEntity": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "lifecycle_substate"
+            ]
+          },
+          "then": {
+            "properties": {
+              "lifecycle_state": {
+                "const": "active"
+              },
+              "lifecycle_substate": {
+                "enum": [
+                  "mutating",
+                  "persisting",
+                  "synchronizing"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "lifecycle_history": {
+              "items": {
+                "if": {
+                  "required": [
+                    "substate"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "state": {
+                      "const": "active"
+                    },
+                    "substate": {
+                      "enum": [
+                        "mutating",
+                        "persisting",
+                        "synchronizing"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "acceptance_criteria": {
           "items": {
@@ -294,5 +343,6 @@
       ],
       "type": "string"
     }
-  }
+  },
+  "title": "objective"
 }
