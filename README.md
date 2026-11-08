@@ -4,7 +4,7 @@
 
 The goal is not to create an unsupervised company-in-a-box. The goal is to make agentic engineering work more inspectable, repeatable, testable, and accountable to human operators.
 
-> **Project status: early-stage / not production-ready.** Seven of nine planned packages currently contain runtime implementation; `orchestration` and `founder` remain scaffolded. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
+> **Project status: early-stage / not production-ready.** Seven packages have established domain runtime implementations. `orchestration` and `founder` now contain early runtime implementations, but neither is complete: execution and authorization are adapter-driven, policy management is not durable, and orchestration persistence is in-memory. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
 
 ## Who this is for
 
@@ -25,7 +25,7 @@ The architecture organizes work around:
 - **Institutional memory** intended to persist beyond an individual model or session.
 - **Conformance and integration tests** to make cross-package behavior verifiable.
 
-The repository currently contains runtime implementations in seven packages: `core`, `objects`, `work-hierarchy`, `containers`, `agents`, `tools`, and `learning`. The `orchestration` and `founder` packages are not complete. See the [implementation playbook](docs/engineering/implementation-playbook.md) and [divergence log](docs/process/divergence-log.md) for the actual build order, unresolved questions, and known differences between the specification and implementation.
+The repository contains runtime implementations across all nine planned packages, at materially different maturity levels. `core`, `objects`, `work-hierarchy`, `containers`, `agents`, `tools`, and `learning` contain the established domain implementations. `orchestration` and `founder` are early implementations with significant production gaps. See the implementation playbook and divergence log for scope and unresolved contracts. See the [implementation playbook](docs/engineering/implementation-playbook.md) and [divergence log](docs/process/divergence-log.md) for the actual build order, unresolved questions, and known differences between the specification and implementation.
 
 ## Start here
 
