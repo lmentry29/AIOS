@@ -45,9 +45,10 @@ describe('TaskStore and TaskEntity lifecycle contract', () => {
     const created = store.createTask(baseTask() as never);
     const agentId = crypto.randomUUID();
     store.updateTask(created.entity_id, { assigned_agent: agentId });
+    store.transitionTaskLifecycle(created.entity_id, 'validated', agentId);
     const transitioned = store.transitionTaskLifecycle(created.entity_id, 'active', agentId);
     expect(transitioned.lifecycle_state).toBe('active');
-    expect(transitioned.lifecycle_history).toHaveLength(1);
+    expect(transitioned.lifecycle_history).toHaveLength(2);
     expect(transitioned.lifecycle_history[0]?.substate).toBeUndefined();
     expect(transitioned.assigned_agent).toBe(agentId);
   });
