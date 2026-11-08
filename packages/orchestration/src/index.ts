@@ -156,7 +156,7 @@ export class OrchestrationKernel {
         const result = await this.options.execution.executeTask(item.agentId, task);
         this.assertVerifiedResult(result, task, [item.agentId]);
         if (task.actions.length > 0) {
-          this.tasks.updateTask(task.entity_id, { actions: result.completed_actions });
+          this.tasks.updateTask(task.entity_id, { actions: result.completed_actions ?? [] });
         }
         this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', 'orchestration');
       }
