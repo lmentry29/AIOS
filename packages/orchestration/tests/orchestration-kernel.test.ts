@@ -102,7 +102,7 @@ describe('OrchestrationKernel', () => {
   it('fails closed when intake authorization is denied', async () => {
     const h = harness({ allowed: false });
     const wf = workflow([]);
-    await expect(h.kernel.intake({ kind: 'workflow', workflow: wf })).rejects.toThrow(
+    await expect(h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder')).rejects.toThrow(
       /intake denied/,
     );
   });
@@ -111,9 +111,9 @@ describe('OrchestrationKernel', () => {
     const h = harness({ verified: false });
     const t = h.tasks.createTask(task());
     const wf = workflow([t.entity_id]);
-    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
 
-    await expect(h.kernel.dispatch(wf)).rejects.toBeInstanceOf(OrchestrationError);
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toBeInstanceOf(OrchestrationError);
     expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
   });
 
@@ -121,9 +121,9 @@ describe('OrchestrationKernel', () => {
     const h = harness();
     const t = h.tasks.createTask(task());
     const wf = workflow([t.entity_id, randomUUID()]);
-    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
 
-    await expect(h.kernel.dispatch(wf)).rejects.toThrow(/does not exist/);
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/does not exist/);
     expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('created');
     expect(h.execution.executeTask).not.toHaveBeenCalled();
   });
