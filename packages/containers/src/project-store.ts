@@ -1,4 +1,5 @@
 import type {
+  CanonicalObjectSubstate,
   LifecycleState,
   ProjectEntity as ProjectEntityType,
   ProjectPhase,
@@ -133,7 +134,7 @@ export class ProjectStore {
     projectId: string,
     newState: LifecycleState,
     actor: string,
-    substate?: string
+    substate?: CanonicalObjectSubstate
   ): ProjectEntityType {
     return this.store.transitionLifecycle(projectId, newState, actor, substate);
   }
