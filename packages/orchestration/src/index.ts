@@ -240,9 +240,11 @@ export class OrchestrationKernel {
   }
 
   private persistExecutionEvidence(task: TaskEntity, agentIds: string[], result: TaskExecutionResult): string {
+    const primaryAgentId = agentIds[0];
+    if (!primaryAgentId) throw new OrchestrationError('Execution evidence requires at least one Agent.');
     const now = new Date().toISOString();
     const artifact = this.evidence.create(ArtifactSchema.parse({
-      entity_id: crypto.randomUUID(),
+      entity_id: randomUUID(),
       entity_type: 'canonical_object',
       entity_subtype: 'artifact',
       artifact_kind: 'test_report',
@@ -258,11 +260,11 @@ export class OrchestrationKernel {
       lifecycle_state: 'created',
       lifecycle_history: [],
       created_at: now,
-      created_by: agentIds[0]!,
+      created_by: primaryAgentId,
       modified_at: now,
       version: 1,
       organizational_containers: [],
-      owner_id: agentIds[0]!,
+      owner_id: primaryAgentId,
       owner_type: 'agent',
       relationships: [],
     }));
