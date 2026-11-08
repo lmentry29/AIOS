@@ -518,3 +518,33 @@ decision turns out to be.
 > `@aios/orchestration` and `@aios/founder` remain unbuilt. Read the paragraph
 > above as the record of a checkpoint that was held and then cleared — not as a
 > hold that is still in force.
+
+
+## Phase 2 — Orchestration and Founder implementation (2026-11-08)
+
+The initial vertical-slice stop was intentionally passed after the user directed implementation of the remaining packages and explicit closure of orchestration, Founder, and authorization gaps.
+
+### Implemented in this phase
+
+- `@aios/founder`: query canonical entity names/descriptions and LearningService observations; capture founder decisions as ADR-kind Artifact records; list decision artifacts; surface records carrying an explicit `access_policy` reference for review.
+- `@aios/founder`: exact-match authorization evaluator with deny-by-default, deny-overrides, and no wildcard or implicit-owner grants. Policy configuration is immutable and injected from a trusted bootstrap source.
+- `@aios/orchestration`: ordered workflow dispatch, Task/Agent preflight, explicit requester identity, authorization checks for intake/dispatch/execution/coordination/status reads, sequential execution adapter calls, and refusal to complete Tasks unless the executor returns verified success, a summary, and evidence.
+- `@aios/orchestration`: rejects empty/duplicate workflow steps and preassigned Tasks; suspends active work when execution fails or verification is absent.
+- `@aios/learning`: return detached snapshots from knowledge reads to prevent callers mutating internal service state.
+
+### Production blockers that remain
+
+These implementations are **not a production-ready platform**. In particular:
+
+1. **Durability:** ObjectStore, TaskStore, workflow records, Founder decisions, and knowledge-stage metadata are in-memory. Process restart loses them. No database schema/migrations, transaction boundary, backup/restore, or multi-process concurrency control exists.
+2. **Authorization lifecycle:** the evaluator is an in-process policy evaluator. Policies are injected, not persisted or administered through a secured control plane. Policy creation, assignment, revocation, versioning, and durable decision audit are not implemented. The evaluator is not yet ratified by an ADR.
+3. **Identity:** there is no authenticated principal/session/token subsystem. The kernel now requires caller-supplied actor IDs, but a production host must bind those IDs to cryptographically authenticated identities; accepting arbitrary strings from an HTTP caller would be insecure.
+4. **Execution:** orchestration requires an injected AgentExecutionPort and agent resolver. No concrete production executor, sandbox, tool invocation pipeline, model-provider adapter, timeout/cancellation contract, or resource isolation is supplied. A caller-provided `verified: true` is not itself a trustworthy verification mechanism.
+5. **Evidence durability:** executor evidence is checked for presence but is not yet persisted as immutable, tamper-evident execution artifacts linked to Tasks.
+6. **Recovery:** there is no durable run journal, idempotency key, lease/lock, retry policy, compensation strategy, or crash recovery. A process crash between external side effects and state updates can leave inconsistent work.
+7. **Coordination:** multi-agent coordination is delegated to an injected adapter. Conflict resolution, shared-task write ownership, agent messaging, consensus, and deadlock prevention are not implemented.
+8. **Founder interface:** query is literal substring matching, not semantic retrieval or an LLM-backed synthesis layer. Decision records are stored in an in-memory Artifact store unless a caller injects a shared store. The review queue currently detects explicit `access_policy` references only.
+9. **Architecture:** ADR-0012 remains Proposed; the Plugin/Adapter execution model remains deferred; Capability Registry and platform/application boundaries remain unresolved. Organizational Container support is incomplete for eight of nine container types.
+10. **Operational assurance:** no production deployment profile, secrets management, observability/alerting, SLOs, penetration test, threat model, data-retention policy, or disaster-recovery exercise exists.
+
+The current CI suite verifies implementation consistency and regression behavior. It does not validate any of the production controls above. These items must be closed and independently reviewed before any production deployment claim.
