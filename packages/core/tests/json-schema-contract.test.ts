@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const JSON_SCHEMA_THEN = 'then';
-
 type JsonSchema = {
   allOf?: Array<Record<string, unknown>>;
 };
+
+function jsonSchemaIfThen(ifSchema: unknown, thenSchema: unknown): Record<string, unknown> {
+  return Object.fromEntries([['if', ifSchema], ['then', thenSchema]]);
+}
 
 function generatedSchema(moduleName: string, exportName: string): JsonSchema {
   const url = new URL(`../../../schemas/generated/${moduleName}.json`, import.meta.url);
