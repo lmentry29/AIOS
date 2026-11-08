@@ -38,6 +38,8 @@ const isZodSchema = (v) =>
 // Zod refinements are not representable in JSON Schema by zod-to-json-schema.
 // Keep the cross-runtime contract explicit here so generated schemas enforce the same
 // lifecycle/substate rules as the runtime Zod schemas. These are draft-07 conditionals.
+const JSON_SCHEMA_THEN = "then";
+
 const lifecycleContracts = {
   "agent.AgentEntity": { substates: ["planning", "reasoning", "executing", "monitoring"] },
   "task.TaskEntity": { substates: [] },
@@ -70,7 +72,7 @@ const applyLifecycleContract = (moduleName, exportName, schema) => {
     : [
         {
           if: { required: ["lifecycle_substate"] },
-          ["then"]: {
+          [JSON_SCHEMA_THEN]: {
             properties: {
               lifecycle_state: { const: "active" },
               lifecycle_substate: { enum: contract.substates },
@@ -82,7 +84,7 @@ const applyLifecycleContract = (moduleName, exportName, schema) => {
             lifecycle_history: {
               items: {
                 if: { required: ["substate"] },
-                ["then"]: {
+                [JSON_SCHEMA_THEN]: {
                   properties: {
                     state: { const: "active" },
                     substate: { enum: contract.substates },
