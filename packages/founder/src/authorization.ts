@@ -88,15 +88,19 @@ export class AuthorizationService {
     } catch {
       return false;
     }
-    if (!policy) return false;
+    if (!policy || !Array.isArray(policy.rules)) return false;
 
-    const matching = policy.rules.filter((rule) =>
-      rule.subject_ids.includes(request.actor_id)
-      && rule.actions.includes(request.action)
-      && rule.resource_ids.includes(request.resource_id),
-    );
-    if (matching.some((rule) => rule.effect === 'deny')) return false;
-    return matching.some((rule) => rule.effect === 'allow');
+    try {
+      const matching = policy.rules.filter((rule) =>
+        rule.subject_ids.includes(request.actor_id)
+        && rule.actions.includes(request.action)
+        && rule.resource_ids.includes(request.resource_id),
+      );
+      if (matching.some((rule) => rule.effect === 'deny')) return false;
+      return matching.some((rule) => rule.effect === 'allow');
+    } catch {
+      return false;
+    }
   }
 }
 
