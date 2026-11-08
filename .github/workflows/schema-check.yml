@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "packages/core/src/schema/**"
+      - "packages/core/scripts/generate-schemas.mjs"
+      - "schemas/generated/**"
+      - ".github/workflows/schema-check.yml"
 
 jobs:
   schema-check:
