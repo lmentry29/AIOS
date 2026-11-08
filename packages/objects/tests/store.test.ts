@@ -29,12 +29,31 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
 
     created.name = 'mutated create result';
+    created.relationships.push({
+      target_entity_id: crypto.randomUUID(),
+      target_entity_type: 'task',
+      relationship_type: 'depends_on',
+      direction: 'outbound',
+    });
     const fetched = store.get(created.entity_id)!;
     fetched.name = 'mutated get result';
+    fetched.lifecycle_history.push({
+      state: 'active',
+      entered_at: new Date().toISOString(),
+      actor: 'human:founder',
+    });
     const listed = store.list();
     listed[0]!.name = 'mutated list result';
+    listed[0]!.organizational_containers.push({
+      entity_id: crypto.randomUUID(),
+      container_type: 'project',
+    });
 
-    expect(store.get(created.entity_id)?.name).toBe('test entity');
+    const persisted = store.get(created.entity_id)!;
+    expect(persisted.name).toBe('test entity');
+    expect(persisted.relationships).toHaveLength(0);
+    expect(persisted.lifecycle_history).toHaveLength(0);
+    expect(persisted.organizational_containers).toHaveLength(0);
   });
 
   it('creates and retrieves a canonical_object entity', () => {
