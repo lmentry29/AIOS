@@ -312,6 +312,15 @@
         "worker"
       ],
       "type": "string"
+    },
+    "AgentSubstate": {
+      "enum": [
+        "planning",
+        "reasoning",
+        "executing",
+        "monitoring"
+      ],
+      "type": "string"
     }
   }
 }
