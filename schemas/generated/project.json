@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "project",
   "definitions": {
     "ProjectDna": {
       "additionalProperties": false,
@@ -526,6 +527,5 @@
       ],
       "type": "object"
     }
-  },
-  "title": "project"
+  }
 }
