@@ -65,6 +65,18 @@ describe('AgentRunner — full Agent Execution Loop against a real Task', () => 
     // active/executing, active/monitoring, completed
     expect(result.agent.lifecycle_history).toHaveLength(6);
   });
+
+  it('returns detached Agent snapshots that cannot mutate runner state', () => {
+    const runner = new AgentRunner(new TaskStore());
+    const agent = runner.createAgent(baseAgent() as never);
+
+    agent.name = 'mutated create result';
+    const fetched = runner.getAgent(agent.entity_id)!;
+    fetched.name = 'mutated get result';
+
+    expect(runner.getAgent(agent.entity_id)?.name).toBe('test agent');
+  });
+
   it('rejects duplicate Agent identities instead of replacing the stored Agent', () => {
     const runner = new AgentRunner(new TaskStore());
     const agent = baseAgent();
