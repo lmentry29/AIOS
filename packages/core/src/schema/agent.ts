@@ -13,7 +13,7 @@ export const AgentGoverningLayer = z.enum([
 ]);
 export type AgentGoverningLayer = z.infer<typeof AgentGoverningLayer>;
 
-const AgentSubstate = z.enum(['planning', 'reasoning', 'executing', 'monitoring']);
+export const AgentSubstate = z.enum(['planning', 'reasoning', 'executing', 'monitoring']);
 
 const AgentEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('agent'),
