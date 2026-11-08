@@ -74,7 +74,9 @@ describe('work-hierarchy → agents: the Agent Execution Loop over a real Task',
     // proves the write actually landed in persistence.
     const persisted = taskStore.getTask(task.entity_id);
     expect(persisted?.lifecycle_state).toBe('completed');
+    expect(persisted?.lifecycle_substate).toBeUndefined();
     expect(persisted?.lifecycle_history.map((h) => h.state)).toEqual(['active', 'completed']);
+    expect(persisted?.lifecycle_history.every((h) => h.substate === undefined)).toBe(true);
   });
 
   it('records the Agent as the actor on the Task’s lifecycle history', () => {
@@ -95,7 +97,7 @@ describe('work-hierarchy → agents: the Agent Execution Loop over a real Task',
     runner.runFullLifecycle(agent.entity_id, task.entity_id);
 
     const after = taskStore.getTask(task.entity_id);
-    // Three writes: assigned_agent, → active/executing, → completed. COM §11's
+    // Three writes: assigned_agent, → active, → completed. COM §11's
     // atomic bump must hold for writes originating in another package.
     expect(after?.version).toBe((before?.version ?? 0) + 3);
   });
