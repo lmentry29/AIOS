@@ -23,6 +23,20 @@ function baseFields(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('ObjectStore — base CanonicalEntity behavior', () => {
+
+  it('returns detached snapshots so callers cannot mutate stored records directly', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+
+    created.name = 'mutated create result';
+    const fetched = store.get(created.entity_id)!;
+    fetched.name = 'mutated get result';
+    const listed = store.list();
+    listed[0]!.name = 'mutated list result';
+
+    expect(store.get(created.entity_id)?.name).toBe('test entity');
+  });
+
   it('creates and retrieves a canonical_object entity', () => {
     const store = new ObjectStore();
     const entity = baseFields({ entity_type: 'canonical_object' });
