@@ -1,11 +1,15 @@
 export type AccessAction = 'intake' | 'execute' | 'coordinate' | 'read_status';
 
-export interface AccessPolicy {
-  policy_id: string;
+export interface AccessRule {
   effect: 'allow' | 'deny';
   subject_ids: readonly string[];
   actions: readonly AccessAction[];
   resource_ids: readonly string[];
+}
+
+export interface AccessPolicy {
+  policy_id: string;
+  rules: readonly AccessRule[];
 }
 
 export interface AccessRequest {
@@ -17,12 +21,12 @@ export interface AccessRequest {
 export type AccessPolicyResolver = (resourceId: string) => Promise<string | undefined>;
 
 /**
- * Explicit, exact-match authorization evaluator.
+ * Exact-match authorization evaluator.
  *
  * Security semantics: no resource policy means deny; no matching allow means deny;
- * an explicit deny overrides every allow. There are no wildcard subjects, actions,
- * resources, implicit owner bypasses, or role expansion. Policy configuration is
- * immutable for the lifetime of this instance and must come from a trusted bootstrap
+ * any matching deny overrides all matching allows. There are no wildcard subjects,
+ * actions, resources, implicit owner bypasses, or role expansion. Policy configuration
+ * is immutable for the lifetime of this instance and must come from a trusted bootstrap
  * source. This is an in-process evaluator, not a durable policy-management system.
  */
 export class AuthorizationService {
@@ -35,14 +39,20 @@ export class AuthorizationService {
     for (const policy of policies) {
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
       if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
-      if (!policy.subject_ids.length || !policy.actions.length || !policy.resource_ids.length) {
-        throw new Error(`Access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
+      if (policy.rules.length === 0) throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
+      for (const rule of policy.rules) {
+        if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
+          throw new Error(`Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
+        }
       }
       this.policies.set(policy.policy_id, Object.freeze({
-        ...policy,
-        subject_ids: Object.freeze([...policy.subject_ids]),
-        actions: Object.freeze([...policy.actions]),
-        resource_ids: Object.freeze([...policy.resource_ids]),
+        policy_id: policy.policy_id,
+        rules: Object.freeze(policy.rules.map((rule) => Object.freeze({
+          ...rule,
+          subject_ids: Object.freeze([...rule.subject_ids]),
+          actions: Object.freeze([...rule.actions]),
+          resource_ids: Object.freeze([...rule.resource_ids]),
+        }))),
       }));
     }
   }
@@ -55,11 +65,13 @@ export class AuthorizationService {
     const policy = this.policies.get(policyId);
     if (!policy) return false;
 
-    const matching = policy.subject_ids.includes(request.actor_id)
-      && policy.actions.includes(request.action)
-      && policy.resource_ids.includes(request.resource_id);
-    if (!matching) return false;
-    return policy.effect === 'allow';
+    const matching = policy.rules.filter((rule) =>
+      rule.subject_ids.includes(request.actor_id)
+      && rule.actions.includes(request.action)
+      && rule.resource_ids.includes(request.resource_id),
+    );
+    if (matching.some((rule) => rule.effect === 'deny')) return false;
+    return matching.some((rule) => rule.effect === 'allow');
   }
 }
 
