@@ -21,11 +21,11 @@ import {
 
 /** Deep-copy the plain JSON-shaped entity records held by this in-memory store. */
 function cloneRecord<T>(value: T): T {
-  if (Array.isArray(value)) return value.map(cloneRecord) as T;
+  if (Array.isArray(value)) return value.map(cloneRecord) as unknown as T;
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value).map(([key, nested]) => [key, cloneRecord(nested)]),
-    ) as T;
+    ) as unknown as T;
   }
   return value;
 }
