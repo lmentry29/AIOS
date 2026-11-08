@@ -18,6 +18,8 @@ export interface TaskExecutionResult {
   verified: boolean;
   summary: string;
   evidence: string[];
+  /** Required when the Task defines Actions; must report the complete final Action set. */
+  completed_actions?: TaskEntity['actions'];
 }
 
 export interface AuthorizationRequest {
@@ -152,7 +154,10 @@ export class OrchestrationKernel {
         task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', 'orchestration');
 
         const result = await this.options.execution.executeTask(item.agentId, task);
-        this.assertVerifiedResult(result, task.entity_id);
+        this.assertVerifiedResult(result, task, [item.agentId]);
+        if (task.actions.length > 0) {
+          this.tasks.updateTask(task.entity_id, { actions: result.completed_actions });
+        }
         this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', 'orchestration');
       }
       this.workflows.transitionLifecycle(stored.entity_id, 'completed', 'orchestration');
@@ -201,7 +206,10 @@ export class OrchestrationKernel {
     const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', 'orchestration');
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
-      this.assertVerifiedResult(result, current.entity_id);
+      this.assertVerifiedResult(result, active, uniqueAgents);
+      if (active.actions.length > 0) {
+        this.tasks.updateTask(active.entity_id, { actions: result.completed_actions });
+      }
       this.tasks.transitionTaskLifecycle(current.entity_id, 'completed', 'orchestration');
     } catch (error) {
       this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', 'orchestration');
@@ -222,11 +230,29 @@ export class OrchestrationKernel {
     return workflow.lifecycle_state;
   }
 
-  private assertVerifiedResult(result: TaskExecutionResult, taskId: string): void {
+  private assertVerifiedResult(
+    result: TaskExecutionResult,
+    task: TaskEntity,
+    allowedExecutors: string[],
+  ): void {
     if (!result.verified || !result.summary.trim() || result.evidence.length === 0) {
       throw new OrchestrationError(
-        `Task "${taskId}" was not completed: executor must return verified=true, a summary, and evidence.`,
+        `Task "${task.entity_id}" was not completed: executor must return verified=true, a summary, and evidence.`,
       );
+    }
+    if (task.actions.length === 0) return;
+    const completed = result.completed_actions;
+    const expectedIds = new Set(task.actions.map((action) => action.action_id));
+    if (!completed || completed.length !== task.actions.length) {
+      throw new OrchestrationError(`Task "${task.entity_id}" requires a complete Action result set.`);
+    }
+    const receivedIds = new Set(completed.map((action) => action.action_id));
+    if (
+      receivedIds.size !== expectedIds.size
+      || [...expectedIds].some((id) => !receivedIds.has(id))
+      || completed.some((action) => action.status !== 'completed' || !allowedExecutors.includes(action.executed_by))
+    ) {
+      throw new OrchestrationError(`Task "${task.entity_id}" has incomplete or invalid Action results.`);
     }
   }
 }
