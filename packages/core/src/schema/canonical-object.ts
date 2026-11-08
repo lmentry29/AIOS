@@ -28,7 +28,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(schema: T) 
     },
   ).refine(
     (object: z.infer<T> & { lifecycle_history: LifecycleHistoryEntry[] }) =>
-      object.lifecycle_history.every((entry) =>
+      object.lifecycle_history.every((entry: LifecycleHistoryEntry) =>
         entry.substate === undefined
           ? true
           : entry.state === 'active' && ObjectSubstate.safeParse(entry.substate).success,
