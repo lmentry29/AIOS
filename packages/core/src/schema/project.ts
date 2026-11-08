@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActorRef } from './base.js';
-import { CanonicalObjectEntity, withCanonicalObjectLifecycle } from './canonical-object.js';
+import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.4 Project — Canonical Object subtype, added by ADR-0011 (amending ADR-0007 and
 // ADR-0004 Amendment A). NOT a sixth entity type: it specializes the existing Canonical
@@ -139,7 +139,7 @@ export type ProjectStatusHistoryEntry = z.infer<typeof ProjectStatusHistoryEntry
  */
 export const PROJECT_IMMUTABLE_FIELDS = ['project_dna'] as const;
 
-const ProjectEntityShape = CanonicalObjectEntity.extend({
+const ProjectEntityShape = CanonicalObjectEntityShape.extend({
   entity_subtype: z.literal('project'),
 
   purpose: z.string(),
