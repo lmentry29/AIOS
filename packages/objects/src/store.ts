@@ -18,6 +18,7 @@ import {
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
   LifecycleTransitionError,
+  ProjectStatusTransitionError,
 } from './errors.js';
 
 /** Deep-copy the plain JSON-shaped entity records held by this in-memory store. */
@@ -92,6 +93,7 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
     | 'modified_at'
     | 'lifecycle_state'
     | 'lifecycle_substate'
+    | 'project_status'
     | 'lifecycle_history'
     | 'relationships'
     | 'project_status_history'
@@ -149,6 +151,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     }
     this.assertMutable(current);
     this.assertLifecycleFieldsUntouched(entityId, patch);
+    this.assertProjectStatusUntouched(entityId, patch);
     this.assertAppendOnlyFieldsUntouched(entityId, patch);
     this.assertImmutableFieldsUnchanged(current, patch);
 
@@ -318,6 +321,14 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     }
   }
 
+
+  /** Project operational status must be changed with its append-only audit entry. */
+  private assertProjectStatusUntouched(entityId: string, patch: EntityPatch<T>): void {
+    const patched = patch as unknown as Record<string, unknown>;
+    if ('project_status' in patched) {
+      throw new ProjectStatusTransitionError(entityId);
+    }
+  }
 
   /** Lifecycle fields can only be changed via transitionLifecycle(), never update(). */
   private assertLifecycleFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
