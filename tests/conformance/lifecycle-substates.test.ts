@@ -131,8 +131,9 @@ describe('Lifecycle substate conformance (COM §3.2, §4.1, §4.2)', () => {
 
     const agentStore = new ObjectStore(AgentEntity);
     const agent = agentStore.create(makeAgent());
+    agentStore.transitionLifecycle(agent.entity_id, 'validated', FOUNDER);
     const active = agentStore.transitionLifecycle(agent.entity_id, 'active', FOUNDER, 'planning');
     expect(active.lifecycle_substate).toBe('planning');
-    expect(active.lifecycle_history[0]?.substate).toBe('planning');
+    expect(active.lifecycle_history[1]?.substate).toBe('planning');
   });
 });
