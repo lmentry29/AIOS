@@ -205,6 +205,9 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    if (current.entity_type !== 'canonical_object' || current.entity_subtype !== 'project') {
+      throw new Error(`Entity "${entityId}" is not a Project and has no Project status transition contract.`);
+    }
 
     const project = current as T & {
       project_status_history: Array<{
