@@ -25,11 +25,12 @@ export class AgentRunner {
       throw new Error(`Agent entity_id "${parsed.entity_id}" already exists and cannot be reused.`);
     }
     this.agents.set(parsed.entity_id, parsed);
-    return parsed;
+    return structuredClone(parsed);
   }
 
   getAgent(agentId: string): AgentEntityType | undefined {
-    return this.agents.get(agentId);
+    const agent = this.agents.get(agentId);
+    return agent ? structuredClone(agent) : undefined;
   }
 
   private transitionAgent(
@@ -56,7 +57,7 @@ export class AgentRunner {
     });
 
     this.agents.set(agentId, updated);
-    return updated;
+    return structuredClone(updated);
   }
 
   /**
