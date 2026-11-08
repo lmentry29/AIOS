@@ -104,6 +104,7 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     expect(t2.lifecycle_history).toHaveLength(2);
     expect(t2.lifecycle_history[0].state).toBe('validated');
     expect(t2.lifecycle_history[1].state).toBe('active');
+    expect(t2.lifecycle_history[1].entered_at).toBe(t2.modified_at);
   });
 
   it('throws EntityNotFoundError for operations against an unknown entity_id', () => {
