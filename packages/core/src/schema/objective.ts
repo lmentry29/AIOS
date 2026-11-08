@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalObjectEntity } from './canonical-object.js';
+import { CanonicalObjectEntity, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.3 Objective — Canonical Object subtype, added by ADR-0010 (amending ADR-0007).
 // NOT a sixth entity type: it specializes the existing Canonical Object type via the
@@ -58,7 +58,7 @@ export const OBJECTIVE_DEFINITION_FIELDS = [
   'acceptance_criteria',
 ] as const;
 
-export const ObjectiveEntity = CanonicalObjectEntity.extend({
+const ObjectiveEntityShape = CanonicalObjectEntity.extend({
   entity_subtype: z.literal('objective'),
 
   purpose: z.string(),
@@ -73,5 +73,7 @@ export const ObjectiveEntity = CanonicalObjectEntity.extend({
   // is thin and flagged for possible follow-on cleanup (ADR-0010, Consequences 3);
   // collapsing them would be a substantive change, not a transcription.
   acceptance_criteria: z.array(z.string()).nonempty(),
+
 });
+export const ObjectiveEntity = withCanonicalObjectLifecycle(ObjectiveEntityShape);
 export type ObjectiveEntity = z.infer<typeof ObjectiveEntity>;
