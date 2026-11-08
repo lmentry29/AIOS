@@ -114,6 +114,23 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     );
   });
 
+
+  it('scopes subtype immutability rules to Canonical Objects, not matching labels on other entity types', () => {
+    const store = new ObjectStore();
+    const taskShapedMemory = store.create(baseFields({
+      entity_type: 'task',
+      entity_subtype: 'memory_object',
+      lifecycle_state: 'completed',
+    }) as never);
+    const taskShapedObjective = store.create(baseFields({
+      entity_type: 'task',
+      entity_subtype: 'objective',
+    }) as never);
+
+    expect(store.update(taskShapedMemory.entity_id, { name: 'mutable task' }).name).toBe('mutable task');
+    expect(store.update(taskShapedObjective.entity_id, { name: 'mutable task' }).name).toBe('mutable task');
+  });
+
   it('rejects mutation of a completed memory_object (COM §5.1 immutability)', () => {
     const store = new ObjectStore();
     const entity = baseFields({
