@@ -86,13 +86,13 @@ export class ImmutableEntityError extends Error {
 }
 
 /**
- * Thrown when update() is called with a patch object that touches `lifecycle_history`
- * or `relationships`. Per COM §11, both fields are append-only — "the record is
+ * Thrown when update() is called with a patch object that touches `lifecycle_history`, `relationships`, or `project_status_history`. Per COM §11 and
+ * Project Ch.7, these fields are append-only — "the record is
  * mutable, but its history is not" — and the only sanctioned write paths are
  * transitionLifecycle() (for lifecycle_history) and addRelationship()/
  * linkRelationship() (for relationships).
  *
- * EntityPatch<T> already Omits both fields at the TYPE level, which blocks a
+ * EntityPatch<T> already omits these fields at the TYPE level, which blocks a
  * normally-typed caller at compile time. This check is the runtime backstop for
  * every caller that isn't: a plain JS caller, a deserialized JSON patch, or a
  * TypeScript caller using a cast to bypass EntityPatch. Without it, the append-only
