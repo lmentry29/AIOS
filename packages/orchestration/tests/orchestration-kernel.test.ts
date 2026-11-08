@@ -124,6 +124,43 @@ describe('OrchestrationKernel', () => {
     expect(h.execution.executeTask).not.toHaveBeenCalled();
   });
 
+
+  it('requires every declared Task Action to be completed by an assigned Agent', async () => {
+    const h = harness();
+    const actionId = randomUUID();
+    const t = h.tasks.createTask(task());
+    h.tasks.updateTask(t.entity_id, {
+      actions: [{ action_id: actionId, status: 'pending', executed_by: h.agentId }],
+    });
+    h.execution.executeTask = vi.fn(async () => ({
+      verified: true,
+      summary: 'Executor claims success',
+      evidence: ['execution-evidence'],
+      completed_actions: [{ action_id: actionId, status: 'completed', executed_by: h.agentId }],
+    }));
+    const wf = workflow([t.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await h.kernel.dispatch(wf, 'human:founder');
+    expect(h.tasks.getTask(t.entity_id)?.actions[0]?.status).toBe('completed');
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('completed');
+  });
+
+  it('does not complete a Task when an Action result is missing', async () => {
+    const h = harness();
+    const actionId = randomUUID();
+    const t = h.tasks.createTask(task());
+    h.tasks.updateTask(t.entity_id, {
+      actions: [{ action_id: actionId, status: 'pending', executed_by: h.agentId }],
+    });
+    const wf = workflow([t.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/complete Action result set/);
+    expect(h.tasks.getTask(t.entity_id)?.actions[0]?.status).toBe('pending');
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
   it('fails closed when intake authorization is denied', async () => {
     const h = harness({ allowed: false });
     const wf = workflow([]);
