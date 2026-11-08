@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "packages/**"
+      - "tests/conformance/**"
+      - "vitest.workspace.ts"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/conformance.yml"
       - "docs/architecture/conformance-standard.md"
 
 jobs:
@@ -17,4 +21,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Package exports point to dist/. Build workspace dependencies before
+      # importing package entry points in the conformance suite.
+      - run: pnpm turbo build
       - run: pnpm vitest run --project conformance
