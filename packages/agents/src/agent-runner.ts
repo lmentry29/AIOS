@@ -57,12 +57,11 @@ export class AgentRunner {
   }
 
   /**
-   * Runs agentId through its full Agent Execution Loop against taskId:
-   * created → validated → active(planning) → active(reasoning) →
-   * active(executing) → active(monitoring) → completed. During
-   * active(executing), assigns the Agent to the Task via TaskStore and
-   * transitions the Task to active/executing too — the cross-package
-   * interaction the vertical slice mandate exists to exercise.
+   * Runs the Agent through its complete execution loop against a Task.
+   * Agent-specific substates remain on the Agent. The Task records only its
+   * canonical lifecycle transitions because COM §4.2 defines no Task substate
+   * vocabulary; duplicating the Agent's 'executing' substate onto Task would
+   * make the persisted Task invalid and conflate two entity contracts.
    */
   runFullLifecycle(
     agentId: string,
@@ -76,7 +75,7 @@ export class AgentRunner {
 
     this.taskStore.updateTask(taskId, { assigned_agent: agentId });
     this.transitionAgent(agentId, 'active', 'executing', actor);
-    this.taskStore.transitionTaskLifecycle(taskId, 'active', actor, 'executing');
+    this.taskStore.transitionTaskLifecycle(taskId, 'active', actor);
 
     this.transitionAgent(agentId, 'active', 'monitoring', actor);
     const finalTask = this.taskStore.transitionTaskLifecycle(taskId, 'completed', actor);
