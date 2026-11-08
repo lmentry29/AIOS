@@ -19,6 +19,8 @@ All six ADRs were amended 2026-07-09 to incorporate explicit founder decisions (
 | [ADR-0009](ADR-0009-repository-and-workspace-organization.md) | Repository and Workspace Organization | Accepted (2026-07-10) | Ratifies `docs/process/repository-design-specification.md`'s structure |
 | [ADR-0010](ADR-0010-objective-canonical-object-subtype.md) | Objective as a Canonical Object Subtype | **Accepted** (2026-07-13) | Amends ADR-0007 as to Objective. Closes the Mission/Objective conflict flagged in `docs/process/divergence-log.md` |
 | [ADR-0011](ADR-0011-project-canonical-object-subtype.md) | Project as a Canonical Object Subtype | **Accepted** (2026-07-13) | Amends ADR-0007 and ADR-0004 Amendment A as to Project. Program, Release, and the six other container types remain non-entities. **Narrows** the Organizational Containers conflict in `docs/process/divergence-log.md`; does not close it |
+| [ADR-0012](ADR-0012-capability-mediated-access-extends-to-users.md) | Capability-Mediated Access Extends to End-Users | **Proposed** (2026-07-14) | Extends capability mediation to end-users; platform model and adapter execution remain open |
+| [ADR-0013](ADR-0013-default-deny-resource-authorization.md) | Default-Deny, Resource-Attached Authorization | **Accepted** (2026-11-08) | Establishes default-deny exact-match access control and deny-overrides semantics |
 
 ## Still open after this batch — HISTORICAL, ALL ITEMS BELOW ARE NOW RESOLVED
 
