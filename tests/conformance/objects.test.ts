@@ -37,6 +37,9 @@ describe('Requirement Category: Architectural — identity is never reused (COM 
     const store = new ObjectStore();
     const entity = makeCanonicalObject();
     store.create(entity);
+    store.transitionLifecycle(entity.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(entity.entity_id, 'active', FOUNDER);
+    store.transitionLifecycle(entity.entity_id, 'completed', FOUNDER);
     store.transitionLifecycle(entity.entity_id, 'archived', FOUNDER);
     expect(() => store.create(entity)).toThrow(EntityIdConflictError);
   });
@@ -108,6 +111,8 @@ describe('Requirement Category: Semantic — Memory Object immutability after co
   it('rejects update() against a completed Memory Object', () => {
     const store = new ObjectStore(MemoryObjectEntity);
     const memory = store.create(makeMemoryObject());
+    store.transitionLifecycle(memory.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(memory.entity_id, 'active', FOUNDER);
     store.transitionLifecycle(memory.entity_id, 'completed', FOUNDER);
     expect(() => store.update(memory.entity_id, { name: 'edited after publication' })).toThrow(
       ImmutableEntityError,
@@ -126,6 +131,8 @@ describe('Requirement Category: Semantic — Memory Object immutability after co
     // reached lifecycle_state 'completed'.
     const store = new ObjectStore(TaskEntity);
     const task = store.create(makeTask());
+    store.transitionLifecycle(task.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(task.entity_id, 'active', FOUNDER);
     store.transitionLifecycle(task.entity_id, 'completed', FOUNDER);
     expect(() => store.update(task.entity_id, { name: 'still mutable' })).not.toThrow();
   });
@@ -148,6 +155,8 @@ describe('Requirement Category: Semantic — Objective definition immutability (
     // Status" — because transitionLifecycle is exempt from the definition-field check.
     const store = new ObjectStore(ObjectiveEntity);
     const objective = store.create(makeObjective());
+    store.transitionLifecycle(objective.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(objective.entity_id, 'active', FOUNDER);
     const completed = store.transitionLifecycle(objective.entity_id, 'completed', FOUNDER);
     expect(completed.lifecycle_state).toBe('completed');
     expect(completed.purpose).toBe(objective.purpose);
