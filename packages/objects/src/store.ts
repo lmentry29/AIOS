@@ -178,6 +178,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     }
     this.assertMutable(current);
 
+    const now = new Date().toISOString();
     const updated = this.schema.parse({
       ...current,
       lifecycle_state: newState,
@@ -187,12 +188,12 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
         {
           state: newState,
           substate,
-          entered_at: new Date().toISOString(),
+          entered_at: now,
           actor,
         },
       ],
       version: current.version + 1,
-      modified_at: new Date().toISOString(),
+      modified_at: now,
     });
 
     this.records.set(entityId, updated);
@@ -220,15 +221,16 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new Error(`Entity "${entityId}" does not have Project status history.`);
     }
 
+    const now = new Date().toISOString();
     const updated = this.schema.parse({
       ...current,
       project_status: status,
       project_status_history: [
         ...project.project_status_history,
-        { status, entered_at: new Date().toISOString(), actor },
+        { status, entered_at: now, actor },
       ],
       version: current.version + 1,
-      modified_at: new Date().toISOString(),
+      modified_at: now,
     });
 
     this.records.set(entityId, updated);
