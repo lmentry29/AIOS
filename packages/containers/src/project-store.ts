@@ -105,18 +105,7 @@ export class ProjectStore {
     status: ProjectStatus,
     actor: string
   ): ProjectEntityType {
-    const current = this.store.get(projectId);
-    if (!current) {
-      throw new Error(`No project found with entity_id "${projectId}".`);
-    }
-
-    return this.store.update(projectId, {
-      project_status: status,
-      project_status_history: [
-        ...current.project_status_history,
-        { status, entered_at: new Date().toISOString(), actor },
-      ],
-    } as EntityPatch<ProjectEntityType>);
+    return this.store.appendProjectStatus(projectId, status, actor);
   }
 
   /**
