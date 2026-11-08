@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskEntity as TaskEntityType } from '@aios/core';
 import { ObjectStore } from '../src/store.js';
-import { EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from '../src/errors.js';
+import { AccessPolicyMutationError, EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from '../src/errors.js';
 
 function baseFields(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date().toISOString();
@@ -75,6 +75,20 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     store.transitionLifecycle(created.entity_id, 'archived', 'human:founder');
 
     expect(() => store.create(entity as never)).toThrow(EntityIdConflictError);
+  });
+
+
+  it('rejects access_policy reassignment through generic update()', () => {
+    const store = new ObjectStore();
+    const entity = store.create(baseFields({
+      entity_type: 'canonical_object',
+      access_policy: crypto.randomUUID(),
+    }) as never);
+
+    expect(() => store.update(entity.entity_id, { access_policy: crypto.randomUUID() } as never))
+      .toThrow(AccessPolicyMutationError);
+    expect(store.get(entity.entity_id)?.access_policy).toBe(entity.access_policy);
+    expect(store.get(entity.entity_id)?.version).toBe(entity.version);
   });
 
   it('bumps version and modified_at atomically on update()', () => {
