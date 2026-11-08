@@ -186,12 +186,10 @@ describe('Requirement Category: Semantic — Project DNA immutability (COM §5.4
   it('permits project_status and project_phase transitions on a DNA-frozen Project', () => {
     const store = new ObjectStore(ProjectEntity);
     const project = store.create(makeProject());
-    const updated = store.update(project.entity_id, {
-      project_status: 'paused',
-      project_phase: 'validation',
-    } as never);
-    expect(updated.project_status).toBe('paused');
-    expect(updated.project_phase).toBe('validation');
+    const statusUpdated = store.appendProjectStatus(project.entity_id, 'paused', FOUNDER);
+    const phaseUpdated = store.update(project.entity_id, { project_phase: 'validation' });
+    expect(statusUpdated.project_status).toBe('paused');
+    expect(phaseUpdated.project_phase).toBe('validation');
   });
 });
 
