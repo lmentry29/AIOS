@@ -115,15 +115,16 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityIdConflictError(parsed.entity_id);
     }
     this.records.set(parsed.entity_id, parsed);
-    return parsed;
+    return this.clone(parsed);
   }
 
   get(entityId: string): T | undefined {
-    return this.records.get(entityId);
+    const entity = this.records.get(entityId);
+    return entity ? this.clone(entity) : undefined;
   }
 
   list(filter?: { entityType?: CanonicalEntity['entity_type'] }): T[] {
-    const all = Array.from(this.records.values());
+    const all = Array.from(this.records.values(), (entity) => this.clone(entity));
     if (!filter?.entityType) return all;
     return all.filter((e) => e.entity_type === filter.entityType);
   }
@@ -146,7 +147,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
   }
 
   transitionLifecycle(
@@ -257,7 +258,12 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
 
     this.records.set(sourceId, updatedSource);
     this.records.set(targetId, updatedTarget);
-    return { source: updatedSource, target: updatedTarget };
+    return { source: this.clone(updatedSource), target: this.clone(updatedTarget) };
+  }
+
+  /** Return detached snapshots so callers cannot mutate records outside validated writes. */
+  private clone(entity: T): T {
+    return structuredClone(entity);
   }
 
   private assertMutable(entity: T): void {
