@@ -145,8 +145,8 @@ export class OrchestrationKernel {
       plan.push({ task, agentId });
     }
 
-    let currentWorkflow = this.workflows.transitionLifecycle(stored.entity_id, 'validated', 'orchestration');
-    currentWorkflow = this.workflows.transitionLifecycle(stored.entity_id, 'active', 'orchestration');
+    let currentWorkflow = this.workflows.transitionLifecycle(stored.entity_id, 'validated', actorId);
+    currentWorkflow = this.workflows.transitionLifecycle(stored.entity_id, 'active', actorId);
 
     try {
       for (const item of plan) {
@@ -154,8 +154,8 @@ export class OrchestrationKernel {
           assigned_agent: item.agentId,
           assigned_workflow: stored.entity_id,
         });
-        task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', 'orchestration');
-        task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', 'orchestration');
+        task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', item.agentId);
+        task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
 
         const result = await this.options.execution.executeTask(item.agentId, task);
         this.assertVerifiedResult(result, task, [item.agentId]);
@@ -164,7 +164,7 @@ export class OrchestrationKernel {
           audit_trail_ref: evidenceId,
           ...(task.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
         });
-        this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', 'orchestration');
+        this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', item.agentId);
       }
       this.workflows.transitionLifecycle(stored.entity_id, 'completed', 'orchestration');
       return { workflow_id: stored.entity_id };
@@ -172,10 +172,10 @@ export class OrchestrationKernel {
       const activeTask = plan
         .map(({ task }) => this.tasks.getTask(task.entity_id))
         .find((task) => task?.lifecycle_state === 'active');
-      if (activeTask) this.tasks.transitionTaskLifecycle(activeTask.entity_id, 'suspended', 'orchestration');
+      if (activeTask) this.tasks.transitionTaskLifecycle(activeTask.entity_id, 'suspended', activeTask.assigned_agent ?? actorId);
       currentWorkflow = this.workflows.get(stored.entity_id) ?? currentWorkflow;
       if (currentWorkflow.lifecycle_state === 'active') {
-        this.workflows.transitionLifecycle(stored.entity_id, 'suspended', 'orchestration');
+        this.workflows.transitionLifecycle(stored.entity_id, 'suspended', actorId);
       }
       throw error;
     }
@@ -208,17 +208,17 @@ export class OrchestrationKernel {
       }
     }
 
-    this.tasks.transitionTaskLifecycle(current.entity_id, 'validated', 'orchestration');
-    const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', 'orchestration');
+    this.tasks.transitionTaskLifecycle(current.entity_id, 'validated', actorId);
+    const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', actorId);
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
       this.assertVerifiedResult(result, active, uniqueAgents);
       if (active.actions.length > 0) {
         this.tasks.updateTask(active.entity_id, { actions: result.completed_actions });
       }
-      this.tasks.transitionTaskLifecycle(current.entity_id, 'completed', 'orchestration');
+      this.tasks.transitionTaskLifecycle(current.entity_id, 'completed', actorId);
     } catch (error) {
-      this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', 'orchestration');
+      this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', actorId);
       throw error;
     }
   }
@@ -269,9 +269,9 @@ export class OrchestrationKernel {
       owner_type: 'agent',
       relationships: [],
     }));
-    this.evidence.transitionLifecycle(artifact.entity_id, 'validated', 'orchestration');
-    this.evidence.transitionLifecycle(artifact.entity_id, 'active', 'orchestration');
-    const completed = this.evidence.transitionLifecycle(artifact.entity_id, 'completed', 'orchestration');
+    this.evidence.transitionLifecycle(artifact.entity_id, 'validated', primaryAgentId);
+    this.evidence.transitionLifecycle(artifact.entity_id, 'active', primaryAgentId);
+    const completed = this.evidence.transitionLifecycle(artifact.entity_id, 'completed', primaryAgentId);
     return completed.entity_id;
   }
 
