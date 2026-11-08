@@ -15,8 +15,16 @@ import type { TaskStore } from '@aios/work-hierarchy';
  * deliberately out of scope here.
  */
 function cloneAgent(agent: AgentEntityType): AgentEntityType {
-  if (Array.isArray(agent)) return agent.map((item) => item) as never;
-  return JSON.parse(JSON.stringify(agent)) as AgentEntityType;
+  const cloneValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(cloneValue);
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
+      );
+    }
+    return value;
+  };
+  return cloneValue(agent) as AgentEntityType;
 }
 
 export class AgentRunner {
