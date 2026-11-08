@@ -189,6 +189,8 @@ describe('Requirement Category: Semantic — Project DNA immutability (COM §5.4
     const statusUpdated = store.appendProjectStatus(project.entity_id, 'paused', FOUNDER);
     const phaseUpdated = store.update(project.entity_id, { project_phase: 'validation' });
     expect(statusUpdated.project_status).toBe('paused');
+    expect(statusUpdated.project_status_history).toHaveLength(1);
+    expect(statusUpdated.version).toBe(project.version + 1);
     expect(phaseUpdated.project_phase).toBe('validation');
   });
 });
