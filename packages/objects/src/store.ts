@@ -329,8 +329,8 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   }
 
   /**
-   * Runtime backstop for the append-only guarantee on lifecycle_history and
-   * relationships (COM §11). EntityPatch<T> Omits both fields at the TYPE level, which
+   * Runtime backstop for append-only lifecycle_history and relationships (COM §11)
+   * plus Project status history (Project Ch.7). EntityPatch<T> Omits both fields at the TYPE level, which
    * stops a normally-typed caller at compile time — but that protection vanishes for a
    * plain JS caller, a deserialized JSON patch, or any cast that bypasses the type.
    * Key-presence, not value comparison: unlike assertImmutableFieldsUnchanged's no-op
