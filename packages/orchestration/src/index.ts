@@ -22,7 +22,7 @@ export interface TaskExecutionResult {
 
 export interface AuthorizationRequest {
   actor_id: string;
-  action: 'intake' | 'execute' | 'coordinate' | 'read_status';
+  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status';
   resource_id: string;
 }
 
@@ -72,11 +72,11 @@ export class OrchestrationKernel {
     this.workflows = workflowStore ?? new ObjectStore<WorkflowEntity>(WorkflowSchema);
   }
 
-  async intake(request: WorkIntakeRequest): Promise<TaskEntity | WorkflowEntity> {
+  async intake(request: WorkIntakeRequest, actorId: string): Promise<TaskEntity | WorkflowEntity> {
     if (request.kind === 'task') {
       if (!request.task) throw new OrchestrationError('Task intake requires a Task record.');
       const allowed = await this.options.authorization.authorize({
-        actor_id: request.task.created_by,
+        actor_id: actorId,
         action: 'intake',
         resource_id: request.task.entity_id,
       });
@@ -85,7 +85,7 @@ export class OrchestrationKernel {
     }
     if (!request.workflow) throw new OrchestrationError('Workflow intake requires a Workflow record.');
     const allowed = await this.options.authorization.authorize({
-      actor_id: request.workflow.created_by,
+      actor_id: actorId,
       action: 'intake',
       resource_id: request.workflow.entity_id,
     });
@@ -93,13 +93,13 @@ export class OrchestrationKernel {
     return this.workflows.create(request.workflow);
   }
 
-  async dispatch(workflow: WorkflowEntity): Promise<WorkflowRunHandle> {
+  async dispatch(workflow: WorkflowEntity, actorId: string): Promise<WorkflowRunHandle> {
     const stored = this.workflows.get(workflow.entity_id) ?? this.workflows.create(workflow);
     if (stored.lifecycle_state !== 'created') {
       throw new OrchestrationError(`Workflow "${stored.entity_id}" must be created before dispatch.`);
     }
 
-    // Preflight every Task, Agent, and permission before the first lifecycle write.
+    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'dispatch', resource_id: stored.entity_id }))) {\n      throw new OrchestrationError('Workflow dispatch denied by authorization policy.');\n    }\n\n    // Preflight every Task, Agent, and permission before the first lifecycle write.
     const plan = [];
     for (const taskId of stored.steps) {
       const task = this.tasks.getTask(taskId);
@@ -155,7 +155,7 @@ export class OrchestrationKernel {
     }
   }
 
-  async coordinate(agents: string[], task: TaskEntity): Promise<void> {
+  async coordinate(agents: string[], task: TaskEntity, actorId: string): Promise<void> {
     const uniqueAgents = [...new Set(agents)];
     if (uniqueAgents.length < 2 || uniqueAgents.length !== agents.length) {
       throw new OrchestrationError('Coordination requires at least two distinct Agent IDs.');
@@ -165,7 +165,7 @@ export class OrchestrationKernel {
       throw new OrchestrationError('Coordination requires an existing Task in created state.');
     }
 
-    for (const agentId of uniqueAgents) {
+    if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'coordinate', resource_id: current.entity_id }))) {\n      throw new OrchestrationError('Coordination request denied by authorization policy.');\n    }\n\n    for (const agentId of uniqueAgents) {
       if (!(await this.options.execution.validateAgent(agentId))) {
         throw new OrchestrationError(`Agent "${agentId}" is not available for coordination.`);
       }
