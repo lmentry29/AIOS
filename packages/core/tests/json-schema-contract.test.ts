@@ -29,7 +29,7 @@ describe('generated JSON Schema lifecycle contracts', () => {
     expect(rules).toEqual(expect.arrayContaining([
       expect.objectContaining({
         if: { required: ['lifecycle_substate'] },
-        then: {
+        ["then"]: {
           properties: {
             lifecycle_state: { const: 'active' },
             lifecycle_substate: { enum: ['planning', 'reasoning', 'executing', 'monitoring'] },
@@ -57,7 +57,7 @@ describe('generated JSON Schema lifecycle contracts', () => {
       expect(rules).toEqual(expect.arrayContaining([
         expect.objectContaining({
           if: { required: ['lifecycle_substate'] },
-          then: {
+          ["then"]: {
             properties: {
               lifecycle_state: { const: 'active' },
               lifecycle_substate: { enum: expected },
