@@ -81,9 +81,15 @@ const ALLOWED_LIFECYCLE_TRANSITIONS: Record<LifecycleState, readonly LifecycleSt
   archived: [],
 };
 
-function isLifecycleTransitionAllowed(from: LifecycleState, to: LifecycleState): boolean {
-  // Same-state transitions are reserved for entity-specific active substates.
-  return from === to ? from === 'active' : ALLOWED_LIFECYCLE_TRANSITIONS[from].includes(to);
+function isLifecycleTransitionAllowed(
+  current: CanonicalEntity,
+  to: LifecycleState,
+  substate?: string,
+): boolean {
+  // Same-state transitions are reserved for actual active-substate changes.
+  return current.lifecycle_state === to
+    ? to === 'active' && substate !== current.lifecycle_substate
+    : ALLOWED_LIFECYCLE_TRANSITIONS[current.lifecycle_state].includes(to);
 }
 
 /**
@@ -228,7 +234,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
-    if (!isLifecycleTransitionAllowed(current.lifecycle_state, newState)) {
+    if (!isLifecycleTransitionAllowed(current, newState, substate)) {
       throw new InvalidLifecycleTransitionError(entityId, current.lifecycle_state, newState);
     }
     const isMemoryObjectArchival =
