@@ -133,7 +133,6 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     const { source, target } = store.linkRelationship(
       a.entity_id,
       b.entity_id,
-      'canonical_object',
       'derived_from'
     );
 
