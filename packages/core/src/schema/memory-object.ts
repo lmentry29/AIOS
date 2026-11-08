@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalObjectEntity } from './canonical-object.js';
+import { CanonicalObjectEntity, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.1 Memory Object — most fully-specified Canonical Object subtype.
 // Per §12's field-unification rule: fields semantically identical to a
@@ -22,7 +22,7 @@ export type MemoryType = z.infer<typeof MemoryType>;
 export const Importance = z.enum(['low', 'medium', 'high', 'critical']);
 export type Importance = z.infer<typeof Importance>;
 
-export const MemoryObjectEntity = CanonicalObjectEntity.extend({
+const MemoryObjectEntityShape = CanonicalObjectEntity.extend({
   entity_subtype: z.literal('memory_object'),
   memory_type: MemoryType,
   confidence: z.number().min(0).max(1),
@@ -37,5 +37,7 @@ export const MemoryObjectEntity = CanonicalObjectEntity.extend({
   // shape validation alone — it's a write-time rule the persistence
   // layer (§11) must enforce, e.g. in @aios/objects. Flagging here
   // rather than silently omitting it.
+
 });
+export const MemoryObjectEntity = withCanonicalObjectLifecycle(MemoryObjectEntityShape);
 export type MemoryObjectEntity = z.infer<typeof MemoryObjectEntity>;
