@@ -35,7 +35,8 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
       relationship_type: 'depends_on',
       direction: 'outbound',
     });
-    const fetched = store.get(created.entity_id)!;
+    const fetched = store.get(created.entity_id);
+    if (!fetched) throw new Error('Created entity was not retrievable.');
     fetched.name = 'mutated get result';
     fetched.lifecycle_history.push({
       state: 'active',
@@ -43,13 +44,16 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
       actor: 'human:founder',
     });
     const listed = store.list();
-    listed[0]!.name = 'mutated list result';
-    listed[0]!.organizational_containers.push({
+    const listedEntity = listed[0];
+    if (!listedEntity) throw new Error('Created entity was not listed.');
+    listedEntity.name = 'mutated list result';
+    listedEntity.organizational_containers.push({
       entity_id: crypto.randomUUID(),
       container_type: 'project',
     });
 
-    const persisted = store.get(created.entity_id)!;
+    const persisted = store.get(created.entity_id);
+    if (!persisted) throw new Error('Created entity disappeared from the store.');
     expect(persisted.name).toBe('test entity');
     expect(persisted.relationships).toHaveLength(0);
     expect(persisted.lifecycle_history).toHaveLength(0);
