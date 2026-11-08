@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalEntity } from './base.js';
+import { CanonicalEntity, type LifecycleHistoryEntry } from './base.js';
 
 // §4.5 Canonical Object — a reusable Zod object shape. Keep this as a ZodObject
 // because Memory Object, Artifact, Objective, and Project extend it.
@@ -16,7 +16,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(schema: T) 
     (object: z.infer<T> & {
       lifecycle_state: string;
       lifecycle_substate?: string;
-      lifecycle_history: Array<{ state: string; substate?: string }>;
+      lifecycle_history: LifecycleHistoryEntry[];
     }) =>
       object.lifecycle_substate === undefined ||
       (object.lifecycle_state === 'active' &&
@@ -27,9 +27,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(schema: T) 
       path: ['lifecycle_substate'],
     },
   ).refine(
-    (object: z.infer<T> & {
-      lifecycle_history: Array<{ state: string; substate?: string }>;
-    }) =>
+    (object: z.infer<T> & { lifecycle_history: LifecycleHistoryEntry[] }) =>
       object.lifecycle_history.every((entry) =>
         entry.substate === undefined
           ? true
