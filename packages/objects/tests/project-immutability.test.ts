@@ -146,8 +146,6 @@ describe('Project DNA immutability — what stays MUTABLE', () => {
     const store = projectStore();
     const created = store.create(makeProject());
 
-    store.transitionLifecycle(created.entity_id, 'validated', FOUNDER);
-    store.transitionLifecycle(created.entity_id, 'active', FOUNDER);
     const completed = store.transitionLifecycle(created.entity_id, 'completed', FOUNDER);
     expect(completed.lifecycle_state).toBe('completed');
     expect(completed.lifecycle_history.map((h) => h.state)).toEqual(['validated', 'active', 'completed']);
@@ -157,8 +155,6 @@ describe('Project DNA immutability — what stays MUTABLE', () => {
   it('still refuses DNA changes after the project is completed', () => {
     const store = projectStore();
     const created = store.create(makeProject());
-    store.transitionLifecycle(created.entity_id, 'validated', FOUNDER);
-    store.transitionLifecycle(created.entity_id, 'active', FOUNDER);
     store.transitionLifecycle(created.entity_id, 'completed', FOUNDER);
 
     // The Memory Object rule (§5.1) does not apply here — a completed Project is not
