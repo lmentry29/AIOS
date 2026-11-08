@@ -13,6 +13,8 @@ export const AgentGoverningLayer = z.enum([
 ]);
 export type AgentGoverningLayer = z.infer<typeof AgentGoverningLayer>;
 
+const AgentSubstate = z.enum(['planning', 'reasoning', 'executing', 'monitoring']);
+
 const AgentEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('agent'),
   current_role: AgentRole,
@@ -25,12 +27,32 @@ export const AgentEntity = AgentEntityShape.refine(
   (a: z.infer<typeof AgentEntityShape>) => a.work_hierarchy_parent === undefined,
   { message: 'Agent instances do not occupy a Work Hierarchy position' }
 ).refine(
-  // §7: "An Agent can own Task, Workflow, Plugin, and Canonical Object instances,
-  // but an Agent cannot own another Agent... An Agent instance's owner_id MUST
-  // resolve to a human." owner_id is already constrained to UUID | human:<id> by
-  // the base ActorRef type; this narrows it further, for Agent instances only, to
-  // reject the UUID half of that union.
   (a: z.infer<typeof AgentEntityShape>) => a.owner_id.startsWith('human:'),
-  { message: "An Agent instance's owner_id MUST resolve to a human (COM §7) — an Agent cannot own another Agent" }
+  {
+    message:
+      "An Agent instance's owner_id MUST resolve to a human (COM §7) — an Agent cannot own another Agent",
+  }
+).refine(
+  (a: z.infer<typeof AgentEntityShape>) =>
+    a.lifecycle_substate === undefined
+      ? true
+      : a.lifecycle_state === 'active' && AgentSubstate.safeParse(a.lifecycle_substate).success,
+  {
+    message:
+      'Agent lifecycle_substate must be planning, reasoning, executing, or monitoring while lifecycle_state is active (ADR-0002, COM §4.1)',
+    path: ['lifecycle_substate'],
+  },
+).refine(
+  (a: z.infer<typeof AgentEntityShape>) =>
+    a.lifecycle_history.every((entry) =>
+      entry.substate === undefined
+        ? true
+        : entry.state === 'active' && AgentSubstate.safeParse(entry.substate).success,
+    ),
+  {
+    message:
+      'Agent lifecycle history substates must be one of planning, reasoning, executing, or monitoring and belong to active state (ADR-0002, COM §4.1)',
+    path: ['lifecycle_history'],
+  },
 );
 export type AgentEntity = z.infer<typeof AgentEntity>;
