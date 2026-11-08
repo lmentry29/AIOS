@@ -19,6 +19,17 @@ import {
   LifecycleTransitionError,
 } from './errors.js';
 
+/** Deep-copy the plain JSON-shaped entity records held by this in-memory store. */
+function cloneRecord<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(cloneRecord) as T;
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, cloneRecord(nested)]),
+    ) as T;
+  }
+  return value;
+}
+
 /** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
 const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships'] as const;
 const LIFECYCLE_FIELDS = ['lifecycle_state', 'lifecycle_substate'] as const;
@@ -263,7 +274,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
 
   /** Return detached snapshots so callers cannot mutate records outside validated writes. */
   private clone(entity: T): T {
-    return structuredClone(entity);
+    return cloneRecord(entity);
   }
 
   private assertMutable(entity: T): void {
