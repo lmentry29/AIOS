@@ -10,6 +10,7 @@ import {
   ImmutableProjectFieldError,
   LifecycleTransitionError,
   ObjectStore,
+  ProjectStatusTransitionError,
 } from '@aios/objects';
 import { FOUNDER, makeCanonicalObject, makeMemoryObject, makeObjective, makeProject, makeTask } from './fixtures.js';
 
@@ -328,6 +329,19 @@ describe('Requirement Category: Architectural — update() rejects lifecycle and
   });
 
 
+
+
+  it('requires Project status changes to append their audit history atomically', () => {
+    const store = new ObjectStore(ProjectEntity);
+    const project = store.create(makeProject());
+    const rawPatch: Record<string, unknown> = { project_status: 'paused' };
+
+    expect(() => store.update(project.entity_id, rawPatch as never)).toThrow(
+      ProjectStatusTransitionError,
+    );
+    expect(store.get(project.entity_id)?.project_status).toBe(project.project_status);
+    expect(store.get(project.entity_id)?.project_status_history).toHaveLength(0);
+  });
 
   it('throws AppendOnlyFieldError when a patch names Project status history', () => {
     const store = new ObjectStore(ProjectEntity);
