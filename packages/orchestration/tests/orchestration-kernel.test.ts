@@ -1,0 +1,147 @@
+import { randomUUID } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+import { TaskEntity, WorkflowEntity } from '@aios/core';
+import { TaskStore } from '@aios/work-hierarchy';
+import {
+  OrchestrationError,
+  OrchestrationKernel,
+  type AgentExecutionPort,
+  type AuthorizationPort,
+} from '../src/index.js';
+
+function task() {
+  const now = new Date().toISOString();
+  return TaskEntity.parse({
+    entity_id: randomUUID(),
+    entity_type: 'task',
+    name: 'Write integration test',
+    lifecycle_state: 'created',
+    lifecycle_history: [],
+    created_at: now,
+    created_by: 'human:founder',
+    modified_at: now,
+    version: 1,
+    organizational_containers: [],
+    owner_id: 'human:founder',
+    owner_type: 'human',
+    relationships: [],
+    work_hierarchy_parent: { entity_id: randomUUID(), level: 'objective' },
+    actions: [],
+  });
+}
+
+function workflow(taskIds: string[]) {
+  const now = new Date().toISOString();
+  return WorkflowEntity.parse({
+    entity_id: randomUUID(),
+    entity_type: 'workflow',
+    name: 'Test workflow',
+    lifecycle_state: 'created',
+    lifecycle_history: [],
+    created_at: now,
+    created_by: 'human:founder',
+    modified_at: now,
+    version: 1,
+    organizational_containers: [],
+    owner_id: 'human:founder',
+    owner_type: 'human',
+    relationships: [],
+    steps: taskIds,
+    governing_loop: 'system_execution_loop',
+  });
+}
+
+function harness(overrides: {
+  allowed?: boolean;
+  verified?: boolean;
+  evidence?: string[];
+} = {}) {
+  const tasks = new TaskStore();
+  const agentId = randomUUID();
+  const authorization: AuthorizationPort = {
+    authorize: vi.fn(async () => overrides.allowed ?? true),
+  };
+  const execution: AgentExecutionPort = {
+    validateAgent: vi.fn(async () => true),
+    executeTask: vi.fn(async () => ({
+      verified: overrides.verified ?? true,
+      summary: 'Acceptance criteria checked',
+      evidence: overrides.evidence ?? ['test-report-1'],
+    })),
+    coordinate: vi.fn(async () => ({
+      verified: overrides.verified ?? true,
+      summary: 'Coordination result checked',
+      evidence: overrides.evidence ?? ['coordination-report-1'],
+    })),
+  };
+  const kernel = new OrchestrationKernel(tasks, {
+    authorization,
+    execution,
+    resolveAgent: async () => agentId,
+  });
+  return { tasks, agentId, authorization, execution, kernel };
+}
+
+describe('OrchestrationKernel', () => {
+  it('dispatches ordered Tasks and completes only after verified execution', async () => {
+    const h = harness();
+    const first = h.tasks.createTask(task());
+    const second = h.tasks.createTask(task());
+    const wf = workflow([first.entity_id, second.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+
+    const handle = await h.kernel.dispatch(wf);
+
+    expect(await h.kernel.status(handle)).toBe('completed');
+    expect(h.tasks.getTask(first.entity_id)?.lifecycle_state).toBe('completed');
+    expect(h.tasks.getTask(second.entity_id)?.lifecycle_state).toBe('completed');
+    expect(h.tasks.getTask(first.entity_id)?.assigned_agent).toBe(h.agentId);
+    expect(h.execution.executeTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when intake authorization is denied', async () => {
+    const h = harness({ allowed: false });
+    const wf = workflow([]);
+    await expect(h.kernel.intake({ kind: 'workflow', workflow: wf })).rejects.toThrow(
+      /intake denied/,
+    );
+  });
+
+  it('does not mark a Task completed when execution is unverified', async () => {
+    const h = harness({ verified: false });
+    const t = h.tasks.createTask(task());
+    const wf = workflow([t.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+
+    await expect(h.kernel.dispatch(wf)).rejects.toBeInstanceOf(OrchestrationError);
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
+  it('preflights all workflow steps before dispatching any Task', async () => {
+    const h = harness();
+    const t = h.tasks.createTask(task());
+    const wf = workflow([t.entity_id, randomUUID()]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+
+    await expect(h.kernel.dispatch(wf)).rejects.toThrow(/does not exist/);
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('created');
+    expect(h.execution.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('requires at least two distinct Agents for coordination', async () => {
+    const h = harness();
+    const t = h.tasks.createTask(task());
+    await expect(h.kernel.coordinate([h.agentId, h.agentId], t)).rejects.toThrow(
+      /at least two distinct/,
+    );
+  });
+
+  it('suspends a coordinated Task when the result is not verified', async () => {
+    const h = harness({ verified: false });
+    const t = h.tasks.createTask(task());
+    await expect(h.kernel.coordinate([h.agentId, randomUUID()], t)).rejects.toThrow(
+      /not completed/,
+    );
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+});
