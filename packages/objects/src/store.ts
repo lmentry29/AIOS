@@ -203,7 +203,6 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   linkRelationship(
     sourceId: string,
     targetId: string,
-    targetEntityType: CanonicalEntity['entity_type'],
     relationshipType: string,
     direction: RelationshipDirection = 'outbound'
   ): { source: T; target: T } {
@@ -232,7 +231,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
         ...source.relationships,
         {
           target_entity_id: targetId,
-          target_entity_type: targetEntityType,
+          target_entity_type: target.entity_type,
           relationship_type: relationshipType,
           direction,
         },
