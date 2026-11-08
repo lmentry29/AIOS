@@ -336,7 +336,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
    * Key-presence, not value comparison: unlike assertImmutableFieldsUnchanged's no-op
    * allowance for a re-submitted identical value, these fields may never be named in a
    * patch at all — only transitionLifecycle() and addRelationship()/linkRelationship()
-   * are sanctioned write paths.
+   * are sanctioned write paths. Project status changes use appendProjectStatus().
    */
   private assertAppendOnlyFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
     const patched = patch as unknown as Record<string, unknown>;
