@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActorRef } from './base.js';
-import { CanonicalObjectEntity } from './canonical-object.js';
+import { CanonicalObjectEntity, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.4 Project — Canonical Object subtype, added by ADR-0011 (amending ADR-0007 and
 // ADR-0004 Amendment A). NOT a sixth entity type: it specializes the existing Canonical
@@ -164,11 +164,12 @@ const ProjectEntityShape = CanonicalObjectEntity.extend({
  * (§4.1) — an Agent acts on Tasks rather than sitting in the hierarchy, and a Project
  * holds work rather than being a rung of it.
  */
-export const ProjectEntity = ProjectEntityShape.refine(
+const ProjectEntityWithoutHierarchy = ProjectEntityShape.refine(
   (p: z.infer<typeof ProjectEntityShape>) => p.work_hierarchy_parent === undefined,
   {
     message:
       'A Project is an Organizational Container, not a Work Hierarchy level — it must not carry work_hierarchy_parent (ADR-0004 Amendment A, ADR-0011, COM §2d)',
   }
 );
+export const ProjectEntity = withCanonicalObjectLifecycle(ProjectEntityWithoutHierarchy);
 export type ProjectEntity = z.infer<typeof ProjectEntity>;
