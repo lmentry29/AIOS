@@ -86,7 +86,8 @@ export class ImmutableEntityError extends Error {
 }
 
 /**
- * Thrown when update() is called with a patch object that touches `lifecycle_history`, `relationships`, or `project_status_history`. Per COM §11 and
+ * Thrown when update() is called with a patch object that touches
+ * `lifecycle_history`, `relationships`, or `project_status_history`. Per COM §11 and
  * Project Ch.7, these fields are append-only — "the record is
  * mutable, but its history is not" — and the only sanctioned write paths are
  * transitionLifecycle() (for lifecycle_history) and addRelationship()/
