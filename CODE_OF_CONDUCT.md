@@ -32,7 +32,7 @@ This Code of Conduct applies within project spaces and when an individual is off
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by opening a private vulnerability/security report using GitHub's security reporting feature where enabled, or by contacting the repository owner through the contact details on their GitHub profile. Reports will be reviewed and handled as promptly and fairly as possible.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately by contacting the repository owner through the contact details on their GitHub profile. Reports will be reviewed and handled as promptly and fairly as possible.
 
 ## Attribution
 
