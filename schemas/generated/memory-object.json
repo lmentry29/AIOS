@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "memory-object",
   "definitions": {
     "Importance": {
       "enum": [
@@ -336,6 +337,5 @@
       ],
       "type": "string"
     }
-  },
-  "title": "memory-object"
+  }
 }
