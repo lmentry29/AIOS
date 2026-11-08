@@ -126,3 +126,4 @@ export class FounderInterface {
       .filter((artifact) => artifact.entity_subtype === 'artifact' && artifact.artifact_kind === 'adr');
   }
 }
+export * from './authorization.js';
