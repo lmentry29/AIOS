@@ -99,6 +99,31 @@ describe('OrchestrationKernel', () => {
     expect(h.execution.executeTask).toHaveBeenCalledTimes(2);
   });
 
+
+  it('rejects empty and duplicate workflow steps before lifecycle changes', async () => {
+    const h = harness();
+    const empty = workflow([]);
+    await h.kernel.intake({ kind: 'workflow', workflow: empty }, 'human:founder');
+    await expect(h.kernel.dispatch(empty, 'human:founder')).rejects.toThrow(/no steps/);
+
+    const t = h.tasks.createTask(task());
+    const duplicate = workflow([t.entity_id, t.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: duplicate }, 'human:founder');
+    await expect(h.kernel.dispatch(duplicate, 'human:founder')).rejects.toThrow(/duplicate Task IDs/);
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('created');
+  });
+
+  it('does not reassign a Task already owned by an Agent', async () => {
+    const h = harness();
+    const t = h.tasks.createTask(task());
+    h.tasks.updateTask(t.entity_id, { assigned_agent: randomUUID() });
+    const wf = workflow([t.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/already assigned to an Agent/);
+    expect(h.execution.executeTask).not.toHaveBeenCalled();
+  });
+
   it('fails closed when intake authorization is denied', async () => {
     const h = harness({ allowed: false });
     const wf = workflow([]);
