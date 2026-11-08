@@ -65,4 +65,31 @@ describe('AgentRunner — full Agent Execution Loop against a real Task', () => 
     // active/executing, active/monitoring, completed
     expect(result.agent.lifecycle_history).toHaveLength(6);
   });
+  it('preflights the Task before mutating the Agent', () => {
+    const taskStore = new TaskStore();
+    const runner = new AgentRunner(taskStore);
+    const agent = runner.createAgent(baseAgent() as never);
+
+    expect(() => runner.runFullLifecycle(agent.entity_id, crypto.randomUUID())).toThrow(
+      /No task found/,
+    );
+
+    const unchanged = runner.getAgent(agent.entity_id);
+    expect(unchanged?.lifecycle_state).toBe('created');
+    expect(unchanged?.lifecycle_history).toHaveLength(0);
+    expect(unchanged?.version).toBe(agent.version);
+  });
+
+  it('rejects re-running a completed Agent execution loop', () => {
+    const taskStore = new TaskStore();
+    const runner = new AgentRunner(taskStore);
+    const task = taskStore.createTask(baseTask() as never);
+    const agent = runner.createAgent(baseAgent() as never);
+    runner.runFullLifecycle(agent.entity_id, task.entity_id);
+
+    expect(() => runner.runFullLifecycle(agent.entity_id, task.entity_id)).toThrow(
+      /must be in created state/,
+    );
+  });
+
 });
