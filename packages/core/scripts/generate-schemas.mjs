@@ -70,7 +70,7 @@ const applyLifecycleContract = (moduleName, exportName, schema) => {
     : [
         {
           if: { required: ["lifecycle_substate"] },
-          then: {
+          ["then"]: {
             properties: {
               lifecycle_state: { const: "active" },
               lifecycle_substate: { enum: contract.substates },
@@ -82,7 +82,7 @@ const applyLifecycleContract = (moduleName, exportName, schema) => {
             lifecycle_history: {
               items: {
                 if: { required: ["substate"] },
-                then: {
+                ["then"]: {
                   properties: {
                     state: { const: "active" },
                     substate: { enum: contract.substates },
