@@ -108,12 +108,19 @@ export class OrchestrationKernel {
     }
 
     // Preflight every Task, Agent, and permission before the first lifecycle write.
+    if (stored.steps.length === 0) throw new OrchestrationError('Cannot dispatch a Workflow with no steps.');
+    if (new Set(stored.steps).size !== stored.steps.length) {
+      throw new OrchestrationError('Workflow steps must not contain duplicate Task IDs.');
+    }
     const plan = [];
     for (const taskId of stored.steps) {
       const task = this.tasks.getTask(taskId);
       if (!task) throw new OrchestrationError(`Workflow step Task "${taskId}" does not exist.`);
       if (task.lifecycle_state !== 'created') {
         throw new OrchestrationError(`Task "${taskId}" must be created before workflow dispatch.`);
+      }
+      if (task.assigned_agent) {
+        throw new OrchestrationError(`Task "${taskId}" is already assigned to an Agent.`);
       }
       if (task.assigned_workflow && task.assigned_workflow !== stored.entity_id) {
         throw new OrchestrationError(`Task "${taskId}" is already assigned to another Workflow.`);
