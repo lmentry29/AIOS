@@ -57,16 +57,17 @@ export class AgentRunner {
       throw new Error(`No agent found with entity_id "${agentId}".`);
     }
 
+    const now = new Date().toISOString();
     const updated = AgentEntity.parse({
       ...current,
       lifecycle_state: newState,
       lifecycle_substate: substate,
       lifecycle_history: [
         ...current.lifecycle_history,
-        { state: newState, substate, entered_at: new Date().toISOString(), actor },
+        { state: newState, substate, entered_at: now, actor },
       ],
       version: current.version + 1,
-      modified_at: new Date().toISOString(),
+      modified_at: now,
     });
 
     this.agents.set(agentId, updated);
@@ -104,12 +105,27 @@ export class AgentRunner {
         `Task "${taskId}" must be in created state to start agent execution; found "${existingTask.lifecycle_state}".`,
       );
     }
+    if (existingTask.assigned_agent && existingTask.assigned_agent !== agentId) {
+      throw new Error(
+        `Task "${taskId}" is already assigned to Agent "${existingTask.assigned_agent}".`,
+      );
+    }
+
+    const assignedAgent = AgentEntity.parse({
+      ...existingAgent,
+      assigned_tasks: existingAgent.assigned_tasks.includes(taskId)
+        ? existingAgent.assigned_tasks
+        : [...existingAgent.assigned_tasks, taskId],
+      version: existingAgent.version + 1,
+      modified_at: new Date().toISOString(),
+    });
 
     this.transitionAgent(agentId, 'validated', undefined, actor);
     this.transitionAgent(agentId, 'active', 'planning', actor);
     this.transitionAgent(agentId, 'active', 'reasoning', actor);
 
     this.taskStore.updateTask(taskId, { assigned_agent: agentId });
+    this.agents.set(agentId, assignedAgent);
     this.transitionAgent(agentId, 'active', 'executing', actor);
     this.taskStore.transitionTaskLifecycle(taskId, 'active', actor);
 
