@@ -106,3 +106,17 @@ export class AppendOnlyFieldError extends Error {
     this.name = 'AppendOnlyFieldError';
   }
 }
+
+/**
+ * Thrown when update() attempts to set lifecycle_state or lifecycle_substate directly.
+ * Lifecycle state changes must go through transitionLifecycle(), which appends the
+ * corresponding audit entry and updates provenance atomically (COM §3.2, §11).
+ */
+export class LifecycleTransitionError extends Error {
+  constructor(entityId: string, fields: readonly string[]) {
+    super(
+      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — lifecycle fields must be changed through transitionLifecycle() so lifecycle_history remains append-only (COM §3.2, §11).`,
+    );
+    this.name = 'LifecycleTransitionError';
+  }
+}
