@@ -65,7 +65,7 @@ AIOS is experimental software. In particular:
 - Run experiments in isolated environments with least-privilege credentials and disposable test data.
 - Treat repository content, issues, external documents, and tool output as untrusted input.
 - Keep a human responsible for reviewing changes and consequential actions.
-- The authorization/access-policy model is not ratified; do not treat current structures as a complete security boundary.
+- Authorization semantics are ratified by ADR-0013, but identity authentication, durable policy storage/administration, revocation, and durable decision auditing are not implemented. Do not treat the current in-process evaluator as a complete security boundary.
 - The current `AgentRunner` is a lifecycle/conformance harness: it records Agent and Task state transitions but does not invoke tools, execute Task actions, or verify task outcomes. Its transition to `completed` is not proof that work was performed.
 - Do not use this project with sensitive personal, customer, regulated, or confidential data unless you have independently assessed the risks.
 
