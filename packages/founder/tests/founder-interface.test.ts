@@ -77,6 +77,6 @@ describe('FounderInterface', () => {
     objects.create(entity());
     const founder = new FounderInterface(objects, new LearningService());
 
-    expect(founder.reviewQueue().map((item) => item.entity_id)).toEqual([governed.entity_id]);
+    expect((await founder.reviewQueue()).map((item) => item.entity_id)).toEqual([governed.entity_id]);
   });
 });
