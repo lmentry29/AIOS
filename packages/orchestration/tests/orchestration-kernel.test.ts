@@ -55,11 +55,12 @@ function harness(overrides: {
   allowed?: boolean;
   verified?: boolean;
   evidence?: string[];
+  denyAction?: string;
 } = {}) {
   const tasks = new TaskStore();
   const agentId = randomUUID();
   const authorization: AuthorizationPort = {
-    authorize: vi.fn(async () => overrides.allowed ?? true),
+    authorize: vi.fn(async (request) => (overrides.allowed ?? true) && request.action !== overrides.denyAction),
   };
   const execution: AgentExecutionPort = {
     validateAgent: vi.fn(async () => true),
@@ -168,6 +169,24 @@ describe('OrchestrationKernel', () => {
     await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/complete Action result set/);
     expect(h.tasks.getTask(t.entity_id)?.actions[0]?.status).toBe('pending');
     expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
+
+  it('denies dispatch before changing Workflow lifecycle when requester lacks permission', async () => {
+    const h = harness({ denyAction: 'dispatch' });
+    const wf = workflow([randomUUID()]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/dispatch denied/);
+    expect(await h.kernel.status({ workflow_id: wf.entity_id }, 'human:founder')).toBe('created');
+  });
+
+  it('denies Workflow reads when the requesting actor lacks permission', async () => {
+    const h = harness({ denyAction: 'read_status' });
+    const wf = workflow([]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.status({ workflow_id: wf.entity_id }, 'human:founder')).rejects.toThrow(/read denied/);
   });
 
   it('fails closed when intake authorization is denied', async () => {
