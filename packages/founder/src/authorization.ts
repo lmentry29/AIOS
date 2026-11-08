@@ -1,4 +1,4 @@
-export type AccessAction = 'intake' | 'execute' | 'coordinate' | 'read_status';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status';
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
