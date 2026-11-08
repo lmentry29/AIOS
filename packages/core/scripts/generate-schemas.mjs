@@ -35,6 +35,68 @@ const BARREL = "index";
 const isZodSchema = (v) =>
   v !== null && typeof v === "object" && "_def" in v && typeof v.safeParse === "function";
 
+// Zod refinements are not representable in JSON Schema by zod-to-json-schema.
+// Keep the cross-runtime contract explicit here so generated schemas enforce the same
+// lifecycle/substate rules as the runtime Zod schemas. These are draft-07 conditionals.
+const lifecycleContracts = {
+  "agent.AgentEntity": { substates: ["planning", "reasoning", "executing", "monitoring"] },
+  "task.TaskEntity": { substates: [] },
+  "workflow.WorkflowEntity": { substates: [] },
+  "plugin.PluginEntity": { substates: [] },
+  "canonical-object.CanonicalObjectEntity": { substates: ["mutating", "persisting", "synchronizing"] },
+  "memory-object.MemoryObjectEntity": { substates: ["mutating", "persisting", "synchronizing"] },
+  "artifact.ArtifactEntity": { substates: ["mutating", "persisting", "synchronizing"] },
+  "objective.ObjectiveEntity": { substates: ["mutating", "persisting", "synchronizing"] },
+  "project.ProjectEntity": { substates: ["mutating", "persisting", "synchronizing"] },
+};
+
+const applyLifecycleContract = (moduleName, exportName, schema) => {
+  const contract = lifecycleContracts[`${moduleName}.${exportName}`];
+  if (!contract) return schema;
+
+  const constraints = contract.substates.length === 0
+    ? [
+        { not: { required: ["lifecycle_substate"] } },
+        {
+          not: {
+            properties: {
+              lifecycle_history: {
+                contains: { required: ["substate"] },
+              },
+            },
+          },
+        },
+      ]
+    : [
+        {
+          if: { required: ["lifecycle_substate"] },
+          then: {
+            properties: {
+              lifecycle_state: { const: "active" },
+              lifecycle_substate: { enum: contract.substates },
+            },
+          },
+        },
+        {
+          properties: {
+            lifecycle_history: {
+              items: {
+                if: { required: ["substate"] },
+                then: {
+                  properties: {
+                    state: { const: "active" },
+                    substate: { enum: contract.substates },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ];
+
+  return { ...schema, allOf: [...(schema.allOf ?? []), ...constraints] };
+};
+
 // Recursively sort object keys so output byte-order is stable across runs.
 const sortDeep = (value) => {
   if (Array.isArray(value)) return value.map(sortDeep);
@@ -91,7 +153,7 @@ for (const moduleName of modules) {
     // this script already builds. $refStrategy "none" keeps each definition
     // self-contained and inlined rather than cross-referencing sibling files.
     const { $schema, ...schema } = zodToJsonSchema(value, { $refStrategy: "none" });
-    definitions[exportName] = sortDeep(schema);
+    definitions[exportName] = sortDeep(applyLifecycleContract(moduleName, exportName, schema));
   }
 
   const count = Object.keys(definitions).length;
