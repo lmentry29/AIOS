@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+const JSON_SCHEMA_THEN = 'then';
+
 type JsonSchema = {
   allOf?: Array<Record<string, unknown>>;
 };
