@@ -49,6 +49,37 @@ describe('AuthorizationService', () => {
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(false);
   });
 
+
+  it('fails closed when policy resolution throws or the actor identity is malformed', async () => {
+    const unavailable = new AuthorizationService([policy], async () => {
+      throw new Error('policy store unavailable');
+    });
+    expect(await unavailable.authorize({
+      actor_id: actorId,
+      action: 'execute',
+      resource_id: resourceId,
+    })).toBe(false);
+
+    const auth = new AuthorizationService([policy], async () => policyId);
+    expect(await auth.authorize({
+      actor_id: '*',
+      action: 'execute',
+      resource_id: resourceId,
+    })).toBe(false);
+  });
+
+  it('rejects wildcard-like policy subjects and invalid resource IDs at construction', () => {
+    expect(() => new AuthorizationService([{
+      policy_id: randomUUID(),
+      rules: [{
+        effect: 'allow',
+        subject_ids: ['*'],
+        actions: ['execute'],
+        resource_ids: [resourceId],
+      }],
+    }], async () => policyId)).toThrow(/invalid subject or resource IDs/);
+  });
+
   it('rejects empty or malformed policy configuration', () => {
     expect(() => new AuthorizationService([{
       policy_id: 'not-a-uuid',
