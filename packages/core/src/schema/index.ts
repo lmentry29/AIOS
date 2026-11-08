@@ -3,7 +3,7 @@ export * from './agent.js';
 export * from './task.js';
 export * from './workflow.js';
 export * from './plugin.js';
-export { CanonicalObjectEntity } from './canonical-object.js';
+export { CanonicalObjectEntity, CanonicalObjectSubstate } from './canonical-object.js';
 export * from './memory-object.js';
 export * from './artifact.js';
 export * from './objective.js';
