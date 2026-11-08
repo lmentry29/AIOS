@@ -108,6 +108,8 @@ describe('Mission → Objective → Task → Agent (playbook §8, Milestone 1 Do
     // Task: completed, assigned to the Agent, still parented to the same Objective.
     const persistedTask = taskStore.getTask(task.entity_id);
     expect(persistedTask?.lifecycle_state).toBe('completed');
+    expect(persistedTask?.lifecycle_substate).toBeUndefined();
+    expect(persistedTask?.lifecycle_history.every((h) => h.substate === undefined)).toBe(true);
     expect(persistedTask?.assigned_agent).toBe(agent.entity_id);
     expect(persistedTask?.work_hierarchy_parent.entity_id).toBe(objective.entity_id);
 
