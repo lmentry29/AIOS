@@ -25,7 +25,7 @@ The architecture organizes work around:
 - **Institutional memory** intended to persist beyond an individual model or session.
 - **Conformance and integration tests** to make cross-package behavior verifiable.
 
-The repository contains runtime implementations across all nine planned packages, at materially different maturity levels. `core`, `objects`, `work-hierarchy`, `containers`, `agents`, `tools`, and `learning` contain the established domain implementations. `orchestration` and `founder` are early implementations with significant production gaps. See the implementation playbook and divergence log for scope and unresolved contracts. See the [implementation playbook](docs/engineering/implementation-playbook.md) and [divergence log](docs/process/divergence-log.md) for the actual build order, unresolved questions, and known differences between the specification and implementation.
+The repository contains runtime implementations across all nine planned packages, at materially different maturity levels. `core`, `objects`, `work-hierarchy`, `containers`, `agents`, `tools`, and `learning` contain the established domain implementations. `orchestration` and `founder` are early implementations with significant production gaps. See the [implementation playbook](docs/engineering/implementation-playbook.md) and [divergence log](docs/process/divergence-log.md) for the actual build order, unresolved questions, and known differences between the specification and implementation.
 
 ## Start here
 
