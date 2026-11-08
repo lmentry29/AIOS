@@ -191,6 +191,7 @@ describe('Requirement Category: Semantic — Project DNA immutability (COM §5.4
     expect(statusUpdated.project_status).toBe('paused');
     expect(statusUpdated.project_status_history).toHaveLength(1);
     expect(statusUpdated.version).toBe(project.version + 1);
+    expect(statusUpdated.project_status_history[0]?.entered_at).toBe(statusUpdated.modified_at);
     expect(phaseUpdated.project_phase).toBe('validation');
   });
 });
