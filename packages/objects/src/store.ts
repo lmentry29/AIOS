@@ -16,10 +16,12 @@ import {
   ImmutableEntityError,
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
+  LifecycleTransitionError,
 } from './errors.js';
 
 /** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
 const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships'] as const;
+const LIFECYCLE_FIELDS = ['lifecycle_state', 'lifecycle_substate'] as const;
 
 /**
  * Subtypes whose fields are immutable after creation, and what to throw when a write
@@ -76,6 +78,8 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
     | 'created_by'
     | 'version'
     | 'modified_at'
+    | 'lifecycle_state'
+    | 'lifecycle_substate'
     | 'lifecycle_history'
     | 'relationships'
   >
@@ -130,6 +134,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    this.assertLifecycleFieldsUntouched(entityId, patch);
     this.assertAppendOnlyFieldsUntouched(entityId, patch);
     this.assertImmutableFieldsUnchanged(current, patch);
 
@@ -259,6 +264,16 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   private assertMutable(entity: T): void {
     if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
       throw new ImmutableEntityError(entity.entity_id);
+    }
+  }
+
+
+  /** Lifecycle fields can only be changed via transitionLifecycle(), never update(). */
+  private assertLifecycleFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
+    const patched = patch as unknown as Record<string, unknown>;
+    const touched = LIFECYCLE_FIELDS.filter((field) => field in patched);
+    if (touched.length > 0) {
+      throw new LifecycleTransitionError(entityId, touched);
     }
   }
 
