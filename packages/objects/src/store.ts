@@ -16,6 +16,7 @@ import {
   EntityIdConflictError,
   EntityNotFoundError,
   ImmutableEntityError,
+  InvalidLifecycleTransitionError,
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
   LifecycleTransitionError,
@@ -68,6 +69,22 @@ function cloneRecord<T>(value: T): T {
 /** Fields update() may never touch, regardless of caller typing (COM §11, Project Ch.7). */
 const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships', 'project_status_history'] as const;
 const LIFECYCLE_FIELDS = ['lifecycle_state', 'lifecycle_substate'] as const;
+
+/** Canonical base lifecycle graph from ADR-0003 / state-machines.md §1. */
+const ALLOWED_LIFECYCLE_TRANSITIONS: Record<LifecycleState, readonly LifecycleState[]> = {
+  created: ['validated'],
+  validated: ['active'],
+  active: ['monitored', 'suspended', 'completed'],
+  monitored: ['active', 'suspended', 'completed'],
+  suspended: ['active'],
+  completed: ['archived'],
+  archived: [],
+};
+
+function isLifecycleTransitionAllowed(from: LifecycleState, to: LifecycleState): boolean {
+  // Same-state transitions are reserved for entity-specific active substates.
+  return from === to ? from === 'active' : ALLOWED_LIFECYCLE_TRANSITIONS[from].includes(to);
+}
 
 /**
  * Subtypes whose fields are immutable after creation, and what to throw when a write
@@ -211,7 +228,15 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
-    this.assertMutable(current);
+    if (!isLifecycleTransitionAllowed(current.lifecycle_state, newState)) {
+      throw new InvalidLifecycleTransitionError(entityId, current.lifecycle_state, newState);
+    }
+    const isMemoryObjectArchival =
+      current.entity_type === 'canonical_object'
+      && current.entity_subtype === 'memory_object'
+      && current.lifecycle_state === 'completed'
+      && newState === 'archived';
+    if (!isMemoryObjectArchival) this.assertMutable(current);
 
     const now = new Date().toISOString();
     const updated = this.schema.parse({
