@@ -21,6 +21,38 @@ import {
   ProjectStatusTransitionError,
 } from './errors.js';
 
+/** Compare JSON-shaped immutable fields without depending on object key insertion order. */
+function valuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => valuesEqual(value, right[index]))
+    );
+  }
+  if (
+    left !== null &&
+    right !== null &&
+    typeof left === 'object' &&
+    typeof right === 'object'
+  ) {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord).sort();
+    const rightKeys = Object.keys(rightRecord).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] && valuesEqual(leftRecord[key], rightRecord[key]),
+      )
+    );
+  }
+  return false;
+}
+
 /** Deep-copy the plain JSON-shaped entity records held by this in-memory store. */
 function cloneRecord<T>(value: T): T {
   if (Array.isArray(value)) return value.map(cloneRecord) as unknown as T;
@@ -399,7 +431,7 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
 
     const changed = rule.fields.filter(
       (field) =>
-        field in patched && JSON.stringify(patched[field]) !== JSON.stringify(record[field])
+        field in patched && !valuesEqual(patched[field], record[field])
     );
 
     if (changed.length > 0) {
