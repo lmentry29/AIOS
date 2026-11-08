@@ -77,6 +77,7 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
     store.transitionLifecycle(created.entity_id, 'archived', 'human:founder');
 
+    expect(() => store.update(created.entity_id, { description: 'cannot edit archive' })).toThrow(ImmutableEntityError);
     expect(() => store.create(entity as never)).toThrow(EntityIdConflictError);
   });
 
