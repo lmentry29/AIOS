@@ -479,6 +479,14 @@
         "owner_type"
       ],
       "type": "object"
+    },
+    "CanonicalObjectSubstate": {
+      "enum": [
+        "mutating",
+        "persisting",
+        "synchronizing"
+      ],
+      "type": "string"
     }
   }
 }
