@@ -88,9 +88,9 @@ describe('OrchestrationKernel', () => {
     const first = h.tasks.createTask(task());
     const second = h.tasks.createTask(task());
     const wf = workflow([first.entity_id, second.entity_id]);
-    await h.kernel.intake({ kind: 'workflow', workflow: wf });
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
 
-    const handle = await h.kernel.dispatch(wf);
+    const handle = await h.kernel.dispatch(wf, 'human:founder');
 
     expect(await h.kernel.status(handle, 'human:founder')).toBe('completed');
     expect(h.tasks.getTask(first.entity_id)?.lifecycle_state).toBe('completed');
@@ -131,7 +131,7 @@ describe('OrchestrationKernel', () => {
   it('requires at least two distinct Agents for coordination', async () => {
     const h = harness();
     const t = h.tasks.createTask(task());
-    await expect(h.kernel.coordinate([h.agentId, h.agentId], t)).rejects.toThrow(
+    await expect(h.kernel.coordinate([h.agentId, h.agentId], t, 'human:founder')).rejects.toThrow(
       /at least two distinct/,
     );
   });
@@ -139,7 +139,7 @@ describe('OrchestrationKernel', () => {
   it('suspends a coordinated Task when the result is not verified', async () => {
     const h = harness({ verified: false });
     const t = h.tasks.createTask(task());
-    await expect(h.kernel.coordinate([h.agentId, randomUUID()], t)).rejects.toThrow(
+    await expect(h.kernel.coordinate([h.agentId, randomUUID()], t, 'human:founder')).rejects.toThrow(
       /not completed/,
     );
     expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
