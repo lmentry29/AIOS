@@ -121,3 +121,16 @@ export class LifecycleTransitionError extends Error {
     this.name = 'LifecycleTransitionError';
   }
 }
+
+/**
+ * Thrown when update() attempts to change project_status without appending its audit
+ * entry. Project operational status changes must go through appendProjectStatus().
+ */
+export class ProjectStatusTransitionError extends Error {
+  constructor(entityId: string) {
+    super(
+      `update() cannot modify project_status on entity_id "${entityId}" — use appendProjectStatus() so the status change and audit history are committed together (Project Ch.7).`,
+    );
+    this.name = 'ProjectStatusTransitionError';
+  }
+}
