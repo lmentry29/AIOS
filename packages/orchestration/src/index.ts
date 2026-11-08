@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity, LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
 import { ArtifactEntity as ArtifactSchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
