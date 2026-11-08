@@ -93,6 +93,7 @@ describe('OrchestrationKernel', () => {
     const handle = await h.kernel.dispatch(wf, 'human:founder');
 
     expect(await h.kernel.status(handle, 'human:founder')).toBe('completed');
+    expect(h.kernel.getWorkflow(handle.workflow_id)?.lifecycle_history.every((entry) => entry.actor === 'human:founder')).toBe(true);
     expect(h.tasks.getTask(first.entity_id)?.lifecycle_state).toBe('completed');
     expect(h.tasks.getTask(second.entity_id)?.lifecycle_state).toBe('completed');
     expect(h.tasks.getTask(first.entity_id)?.lifecycle_history.every((entry) => entry.actor === h.agentId)).toBe(true);
