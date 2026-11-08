@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentEntity, CanonicalObjectEntity, TaskEntity } from '@aios/core';
+import { AgentEntity, CanonicalObjectEntity, PluginEntity, TaskEntity, WorkflowEntity } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
 import { FOUNDER, makeAgent, makeCanonicalObject, makeTask } from './fixtures.js';
 
@@ -20,6 +20,44 @@ describe('Lifecycle substate conformance (COM §3.2, §4.1, §4.2)', () => {
       ...valid,
       lifecycle_substate: 'executing',
     })).toThrow();
+  });
+
+
+  it('rejects invalid Canonical Object history substates', () => {
+    const object = makeCanonicalObject({
+      lifecycle_state: 'active',
+      lifecycle_history: [{
+        state: 'active',
+        substate: 'executing',
+        entered_at: new Date().toISOString(),
+        actor: FOUNDER,
+      }],
+    });
+    expect(() => CanonicalObjectEntity.parse(object)).toThrow();
+  });
+
+  it('rejects lifecycle substates on Workflow and Plugin entities', () => {
+    const workflow = makeCanonicalObject({
+      entity_type: 'workflow',
+      steps: [],
+      governing_loop: 'system_execution_loop',
+      lifecycle_state: 'active',
+      lifecycle_substate: 'executing',
+    });
+    expect(() => WorkflowEntity.parse(workflow)).toThrow();
+
+    const plugin = makeCanonicalObject({
+      entity_type: 'plugin',
+      governing_layer: 'tool_abstraction_layer',
+      install_status: 'available',
+      lifecycle_history: [{
+        state: 'active',
+        substate: 'installing',
+        entered_at: new Date().toISOString(),
+        actor: FOUNDER,
+      }],
+    });
+    expect(() => PluginEntity.parse(plugin)).toThrow();
   });
 
   it.each(['planning', 'reasoning', 'executing', 'monitoring'])(
