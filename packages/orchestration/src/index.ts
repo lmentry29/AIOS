@@ -269,7 +269,10 @@ export class OrchestrationKernel {
       owner_type: 'agent',
       relationships: [],
     }));
-    return artifact.entity_id;
+    this.evidence.transitionLifecycle(artifact.entity_id, 'validated', 'orchestration');
+    this.evidence.transitionLifecycle(artifact.entity_id, 'active', 'orchestration');
+    const completed = this.evidence.transitionLifecycle(artifact.entity_id, 'completed', 'orchestration');
+    return completed.entity_id;
   }
 
   private assertVerifiedResult(
