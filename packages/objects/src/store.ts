@@ -1,6 +1,7 @@
 import type {
   CanonicalEntity,
   LifecycleState,
+  ProjectStatus,
   Relationship,
   RelationshipDirection,
 } from '@aios/core';
@@ -31,7 +32,7 @@ function cloneRecord<T>(value: T): T {
 }
 
 /** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
-const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships'] as const;
+const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships', 'project_status_history'] as const;
 const LIFECYCLE_FIELDS = ['lifecycle_state', 'lifecycle_substate'] as const;
 
 /**
@@ -93,6 +94,7 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
     | 'lifecycle_substate'
     | 'lifecycle_history'
     | 'relationships'
+    | 'project_status_history'
   >
 >;
 
@@ -185,6 +187,39 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
           entered_at: new Date().toISOString(),
           actor,
         },
+      ],
+      version: current.version + 1,
+      modified_at: new Date().toISOString(),
+    });
+
+    this.records.set(entityId, updated);
+    return this.clone(updated);
+  }
+
+  appendProjectStatus(entityId: string, status: ProjectStatus, actor: string): T {
+    const current = this.records.get(entityId);
+    if (!current) {
+      throw new EntityNotFoundError(entityId);
+    }
+    this.assertMutable(current);
+
+    const project = current as T & {
+      project_status_history: Array<{
+        status: ProjectStatus;
+        entered_at: string;
+        actor: string;
+      }>;
+    };
+    if (!Array.isArray(project.project_status_history)) {
+      throw new Error(`Entity "${entityId}" does not have Project status history.`);
+    }
+
+    const updated = this.schema.parse({
+      ...current,
+      project_status: status,
+      project_status_history: [
+        ...project.project_status_history,
+        { status, entered_at: new Date().toISOString(), actor },
       ],
       version: current.version + 1,
       modified_at: new Date().toISOString(),
