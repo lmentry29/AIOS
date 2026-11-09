@@ -53,7 +53,7 @@ export class FounderInputError extends Error {
 
 /**
  * Founder Interface: read-oriented synthesis over canonical records and LearningService,
- * plus durable decision capture as an Artifact. Access-policy-bearing entities are
+ * plus Artifact-backed decision capture through an injected repository. Access-policy-bearing entities are
  * surfaced for human review; this class does not grant or infer permissions.
  */
 export class FounderInterface {
