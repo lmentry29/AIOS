@@ -66,6 +66,17 @@ describe('AuthorizationService', () => {
     })).toBe(false);
   });
 
+
+  it('fails closed for malformed runtime requests and policy identifiers', async () => {
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => 'not-a-uuid');
+    await expect(auth.authorize(null as never)).resolves.toBe(false);
+    await expect(auth.authorize({
+      actor_id: actorId,
+      action: 'execute',
+      resource_id: resourceId,
+    })).resolves.toBe(false);
+  });
+
   it('rejects wildcard-like policy subjects and invalid resource IDs at construction', () => {
     expect(() => new StaticAccessPolicyStore([{
       policy_id: randomUUID(),
