@@ -81,6 +81,27 @@ describe('AuthorizationService', () => {
   });
 
 
+
+  it('snapshots and freezes policy configuration at construction', async () => {
+    const mutable = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow' as const,
+        subject_ids: [actorId],
+        actions: ['execute'] as const,
+        resource_ids: [resourceId],
+      }],
+    };
+    const store = new StaticAccessPolicyStore([mutable]);
+    mutable.rules[0].effect = 'deny';
+    const stored = await store.get(mutable.policy_id);
+
+    expect(stored?.rules[0]?.effect).toBe('allow');
+    expect(Object.isFrozen(stored)).toBe(true);
+    expect(Object.isFrozen(stored?.rules)).toBe(true);
+  });
+
   it('records every allow and deny decision with policy version and reason', async () => {
     const audit = new InMemoryAuthorizationAuditStore();
     const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId, audit);
