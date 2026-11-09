@@ -199,6 +199,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async publish(policy: AccessPolicy, actorId: string): Promise<void> {
+    if (!isActorRef(actorId)) throw new PolicyAdministrationError('Invalid policy publisher identity.');
     new StaticAccessPolicyStore([policy]);
     if (this.policies.has(policy.policy_id)) {
       throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID.');
@@ -224,6 +225,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
+    if (!isActorRef(actorId)) throw new PolicyAdministrationError('Invalid policy administrator identity.');
     const policy = this.policies.get(policyId);
     if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
     this.resourcePolicies.set(resourceId, policyId);
@@ -239,6 +241,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async revoke(resourceId: string, actorId: string): Promise<void> {
+    if (!isActorRef(actorId) || !isUuid(resourceId)) throw new PolicyAdministrationError('Invalid policy revocation request.');
     const policyId = this.resourcePolicies.get(resourceId);
     if (!policyId) throw new PolicyAdministrationError('Resource has no attached policy to revoke.');
     const policy = this.policies.get(policyId);
