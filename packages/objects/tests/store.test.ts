@@ -97,7 +97,7 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
 
 
   it('rejects access_policy reassignment through generic update()', () => {
-    const store = new ObjectStore();
+    const store = new ObjectStore(undefined, { allowAccessPolicyOnCreate: true });
     const entity = store.create(baseFields({
       entity_type: 'canonical_object',
       access_policy: crypto.randomUUID(),
