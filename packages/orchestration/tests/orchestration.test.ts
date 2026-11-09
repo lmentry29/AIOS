@@ -74,8 +74,7 @@ function harness(options: {
     executeTask: async (_agentId, currentTask) => {
       if (options.throwOnExecute) throw new Error('executor unavailable');
       return {
-        verified: options.verified ?? true,
-        summary: 'Acceptance criteria checked',
+          summary: 'Acceptance criteria checked',
         evidence: ['build:passed'],
         completed_actions: currentTask.actions,
       };
@@ -90,6 +89,13 @@ function harness(options: {
   const kernel = new OrchestrationKernel(tasks, {
     authorization,
     execution,
+    verification: {
+      verify: async () => ({
+        accepted: options.verified ?? true,
+        reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+        evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+      }),
+    },
     resolveAgent: async () => randomUUID(),
   });
   return { tasks, kernel, calls, setAllowed: (value: boolean) => { allowed = value; } };
