@@ -72,15 +72,15 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
       if (!Array.isArray(policy.rules) || policy.rules.length === 0) {
         throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
       }
-      for (const rule of policy.rules) {
+      for (const rule of policy.rules as readonly AccessRule[]) {
         if (rule.effect !== 'allow' && rule.effect !== 'deny') throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
         if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
           throw new Error(`Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
         }
-        if (rule.subject_ids.some((id) => !isActorRef(id)) || rule.resource_ids.some((id) => !isUuid(id))) {
+        if (rule.subject_ids.some((id: string) => !isActorRef(id)) || rule.resource_ids.some((id: string) => !isUuid(id))) {
           throw new Error(`Access policy "${policy.policy_id}" contains invalid subject or resource IDs.`);
         }
-        if (rule.actions.some((action) => !isAccessAction(action))) {
+        if (rule.actions.some((action: string) => !isAccessAction(action))) {
           throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
         }
       }
