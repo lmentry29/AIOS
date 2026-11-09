@@ -34,6 +34,21 @@ describe('AuthorizationService', () => {
     expect(await unknownPolicy.authorize(request)).toBe(false);
   });
 
+  it('denies a policy store response whose policy ID does not match the resource reference', async () => {
+    const mismatched = { ...policy, policy_id: randomUUID() };
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      { get: async () => mismatched },
+      async () => policyId,
+      audit,
+    );
+
+    expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(false);
+    expect(audit.list()).toMatchObject([
+      { decision: 'deny', policy_id: policyId, policy_version: null, reason: 'policy_missing_or_invalid' },
+    ]);
+  });
+
   it('applies explicit deny over a matching allow', async () => {
     const withDeny: AccessPolicy = {
       policy_id: policyId,
@@ -174,6 +189,19 @@ describe('AuthorizationService', () => {
       revoke: async () => undefined,
     });
     await expect(admin.attach(resourceId, randomUUID(), actorId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+  });
+
+  it('refuses to attach when the policy store returns a different policy identity', async () => {
+    const mismatched = { ...policy, policy_id: randomUUID() };
+    const admin = new PolicyAdministrationService(actorId, {
+      get: async () => mismatched,
+    }, {
+      publish: async () => undefined,
+      attach: async () => undefined,
+      revoke: async () => undefined,
+    });
+
+    await expect(admin.attach(resourceId, policyId, actorId)).rejects.toBeInstanceOf(PolicyAdministrationError);
   });
 
   it('snapshots and freezes policy configuration at construction', async () => {
