@@ -128,7 +128,7 @@ describe('OrchestrationKernel', () => {
       const completed = tasks.getTask(id);
       expect(completed?.lifecycle_state).toBe('completed');
       expect(completed?.audit_trail_ref).toBeTruthy();
-      const evidence = await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', FOUNDER);
+      const evidence = await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', id, FOUNDER);
       expect(evidence?.artifact_kind).toBe('test_report');
       expect(evidence?.lifecycle_state).toBe('completed');
     }
