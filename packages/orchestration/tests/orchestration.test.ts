@@ -90,9 +90,9 @@ function harness(options: {
     execution,
     verification: {
       verify: async () => ({
-        accepted: overrides.verified ?? true,
-        reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
-        evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+        accepted: options.verified ?? true,
+        reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+        evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
       }),
     },
     resolveAgent: async () => randomUUID(),
@@ -179,7 +179,7 @@ describe('OrchestrationKernel', () => {
     const wf = workflow([current.entity_id]);
     await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
 
-    await expect(kernel.dispatch(wf, FOUNDER)).rejects.toThrow(/not completed/);
+    await expect(kernel.dispatch(wf, FOUNDER)).rejects.toThrow(/independent verification rejected/);
     expect(tasks.getTask(current.entity_id)?.lifecycle_state).toBe('suspended');
   });
 
