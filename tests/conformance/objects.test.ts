@@ -400,7 +400,7 @@ describe('Requirement Category: Architectural — access/audit placeholder field
   // optional UUID references with no attached behavior yet, but the base schema must
   // still carry them through persistence untouched.
   it('persists access_policy and audit_trail_ref through create() and update()', () => {
-    const store = new ObjectStore(TaskEntity);
+    const store = new ObjectStore(TaskEntity, { allowAccessPolicyOnCreate: true });
     const accessPolicyId = randomUUID();
     const auditTrailId = randomUUID();
     const created = store.create(
