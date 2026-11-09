@@ -110,7 +110,8 @@ export class OrchestrationKernel {
       throw new OrchestrationError('Workflow dispatch denied by authorization policy.');
     }
 
-    const stored = this.workflows.get(workflow.entity_id) ?? this.workflows.create(workflow);
+    const stored = this.workflows.get(workflow.entity_id);
+    if (!stored) throw new OrchestrationError('Workflow must be accepted through authorized intake before dispatch.');
     if (stored.lifecycle_state !== 'created') {
       throw new OrchestrationError(`Workflow "${stored.entity_id}" must be created before dispatch.`);
     }
@@ -215,9 +216,11 @@ export class OrchestrationKernel {
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
       this.assertVerifiedResult(result, active, uniqueAgents);
-      if (active.actions.length > 0) {
-        this.tasks.updateTask(active.entity_id, { actions: result.completed_actions });
-      }
+      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, result);
+      this.tasks.updateTask(active.entity_id, {
+        audit_trail_ref: evidenceId,
+        ...(active.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
+      });
       this.tasks.transitionTaskLifecycle(current.entity_id, 'completed', actorId);
     } catch (error) {
       this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', actorId);
