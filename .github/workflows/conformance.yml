@@ -10,6 +10,9 @@ on:
       - ".github/workflows/conformance.yml"
       - "docs/architecture/conformance-standard.md"
 
+permissions:
+  contents: read
+
 jobs:
   conformance:
     runs-on: ubuntu-latest
