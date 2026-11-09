@@ -51,11 +51,12 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
 9. **Commit convention:** Conventional Commits, plus an AI-attribution trailer on
    AI-authored commits (`Implemented-by: GPT-6`, `Implemented-by: Claude`, or `Implemented-by: Ollama/<model>`),
    per `docs/process/ai-development-plan.md`.
-10. **A completed lifecycle state is not proof of completed work.** The current
+10. **Founder governance is human-only.** Agents may read only through explicit resource policy, but they cannot publish policies, record Founder decisions, or operate the human review queue. Decision artifacts must remain scoped to their protected collection.
+11. **A completed lifecycle state is not proof of completed work.** The current
     `AgentRunner` is a lifecycle/conformance harness, not a tool-executing agent. The
     Orchestration Kernel may mark a Task complete only after an independent verifier
     accepts the result and evidence. Never allow an executor to self-attest.
-11. **In-memory adapters are not production persistence.** Object, Task, Workflow,
+12. **In-memory adapters are not production persistence.** Object, Task, Workflow,
     evidence, learning, policy, and audit stores currently include in-memory
     implementations for tests/development. Production use requires durable storage,
     transactions, recovery, trusted identity, protected secrets, sandboxed execution,
