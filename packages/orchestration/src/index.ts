@@ -13,12 +13,27 @@ export type WorkIntakeRequest =
   | { kind: 'workflow'; workflow: WorkflowEntity };
 
 export interface TaskExecutionResult {
-  /** Must be true only after the executor has checked the task's acceptance criteria. */
-  verified: boolean;
   summary: string;
   evidence: string[];
   /** Required when the Task defines Actions; must report the complete final Action set. */
   completed_actions?: TaskEntity['actions'];
+}
+
+export interface TaskVerificationRequest {
+  task: TaskEntity;
+  agent_ids: string[];
+  execution_result: TaskExecutionResult;
+}
+
+export interface TaskVerificationDecision {
+  accepted: boolean;
+  evidence: string[];
+  reason: string;
+}
+
+/** Independent verifier; must not simply trust the executor's self-reported outcome. */
+export interface TaskVerificationPort {
+  verify(request: TaskVerificationRequest): Promise<TaskVerificationDecision>;
 }
 
 export interface AuthorizationRequest {
@@ -40,6 +55,7 @@ export interface AgentExecutionPort {
 export interface OrchestrationOptions {
   authorization: AuthorizationPort;
   execution: AgentExecutionPort;
+  verification: TaskVerificationPort;
   resolveAgent(task: TaskEntity): Promise<string>;
 }
 
@@ -55,7 +71,7 @@ export class OrchestrationError extends Error {
  *
  * The kernel deliberately depends on explicit authorization and execution ports.
  * It never treats a lifecycle transition as proof of completed work: completion is
- * committed only after the execution adapter returns verified=true with evidence.
+ * committed only after an independent verification adapter accepts the execution result.
  * No permissive default authorization or fake executor is supplied.
  *
  * Persistence is currently the injected in-memory ObjectStore/TaskStore. A durable
@@ -161,8 +177,8 @@ export class OrchestrationKernel {
         task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
 
         const result = await this.options.execution.executeTask(item.agentId, task);
-        this.assertVerifiedResult(result, task, [item.agentId]);
-        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], result);
+        const verification = await this.verifyResult(result, task, [item.agentId]);
+        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], result, verification);
         this.tasks.updateTask(task.entity_id, {
           audit_trail_ref: evidenceId,
           ...(task.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
@@ -221,8 +237,8 @@ export class OrchestrationKernel {
     const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', actorId);
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
-      this.assertVerifiedResult(result, active, uniqueAgents);
-      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, result);
+      const verification = await this.verifyResult(result, active, uniqueAgents);
+      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, result, verification);
       this.tasks.updateTask(active.entity_id, {
         audit_trail_ref: evidenceId,
         ...(active.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
@@ -256,7 +272,12 @@ export class OrchestrationKernel {
     return this.evidence.get(evidenceId);
   }
 
-  private persistExecutionEvidence(task: TaskEntity, agentIds: string[], result: TaskExecutionResult): string {
+  private persistExecutionEvidence(
+    task: TaskEntity,
+    agentIds: string[],
+    result: TaskExecutionResult,
+    verification: TaskVerificationDecision,
+  ): string {
     const primaryAgentId = agentIds[0];
     if (!primaryAgentId) throw new OrchestrationError('Execution evidence requires at least one Agent.');
     const now = new Date().toISOString();
@@ -271,7 +292,9 @@ export class OrchestrationKernel {
         agent_ids: agentIds,
         summary: result.summary,
         evidence: result.evidence,
-        verified: result.verified,
+        verifier_accepted: verification.accepted,
+        verifier_reason: verification.reason,
+        verifier_evidence: verification.evidence,
         recorded_at: now,
       }),
       lifecycle_state: 'created',
@@ -291,17 +314,17 @@ export class OrchestrationKernel {
     return completed.entity_id;
   }
 
-  private assertVerifiedResult(
+  private async verifyResult(
     result: TaskExecutionResult,
     task: TaskEntity,
     allowedExecutors: string[],
-  ): void {
-    if (!result.verified || !result.summary.trim() || result.evidence.length === 0 || result.evidence.some((item) => !item.trim())) {
+  ): Promise<TaskVerificationDecision> {
+    if (!result.summary.trim() || result.evidence.length === 0 || result.evidence.some((item) => !item.trim())) {
       throw new OrchestrationError(
-        `Task "${task.entity_id}" was not completed: executor must return verified=true, a summary, and evidence.`,
+        `Task "${task.entity_id}" was not completed: executor must return a summary and evidence.`,
       );
     }
-    if (task.actions.length === 0) return;
+    if (task.actions.length > 0) {
     const completed = result.completed_actions;
     const expectedIds = new Set(task.actions.map((action) => action.action_id));
     if (!completed || completed.length !== task.actions.length) {
@@ -314,6 +337,22 @@ export class OrchestrationKernel {
       || completed.some((action) => action.status !== 'completed' || !allowedExecutors.includes(action.executed_by))
     ) {
       throw new OrchestrationError(`Task "${task.entity_id}" has incomplete or invalid Action results.`);
+      }
     }
+
+    let verification: TaskVerificationDecision;
+    try {
+      verification = await this.options.verification.verify({
+        task,
+        agent_ids: [...allowedExecutors],
+        execution_result: result,
+      });
+    } catch {
+      throw new OrchestrationError(`Task "${task.entity_id}" verification service failed; work remains unverified.`);
+    }
+    if (!verification.accepted || !verification.reason.trim() || verification.evidence.length === 0 || verification.evidence.some((item) => !item.trim())) {
+      throw new OrchestrationError(`Task "${task.entity_id}" was not completed: independent verification rejected or supplied no evidence.`);
+    }
+    return verification;
   }
 }
