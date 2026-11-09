@@ -8,6 +8,9 @@ on:
       - "schemas/generated/**"
       - ".github/workflows/schema-check.yml"
 
+permissions:
+  contents: read
+
 jobs:
   schema-check:
     runs-on: ubuntu-latest
