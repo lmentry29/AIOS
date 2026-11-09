@@ -21,7 +21,7 @@ export interface FounderResponse {
 }
 
 function isActorReference(value: string): boolean {
-  return /^human:[^\\s:*]+$/.test(value) || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^human:[^\s:*]+$/.test(value) || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function searchableText(value: unknown): string {
@@ -54,7 +54,7 @@ export class FounderInterface {
   }
 
   async query(question: string): Promise<FounderResponse> {
-    const terms = question.trim().toLocaleLowerCase().split(/\\s+/).filter(Boolean);
+    const terms = question.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) throw new FounderInputError('Founder query must not be empty.');
 
     const matchingEntities = this.objects.list().filter((entity) => {
