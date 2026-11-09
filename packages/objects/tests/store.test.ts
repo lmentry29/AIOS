@@ -60,6 +60,20 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
     expect(persisted.organizational_containers).toHaveLength(0);
   });
 
+
+  it('rejects caller-supplied access-policy attachments unless privileged bootstrap is enabled', () => {
+    const entity = baseFields({
+      entity_type: 'canonical_object',
+      access_policy: crypto.randomUUID(),
+    });
+
+    expect(() => new ObjectStore().create(entity as never)).toThrow(AccessPolicyMutationError);
+
+    const bootstrapStore = new ObjectStore(undefined, { allowAccessPolicyOnCreate: true });
+    const created = bootstrapStore.create(entity as never);
+    expect(created.access_policy).toBe(entity.access_policy);
+  });
+
   it('creates and retrieves a canonical_object entity', () => {
     const store = new ObjectStore();
     const entity = baseFields({ entity_type: 'canonical_object' });
