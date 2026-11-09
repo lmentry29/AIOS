@@ -74,7 +74,7 @@ describe('FounderInterface', () => {
   });
 
   it('surfaces entities with explicit access policies for human review', async () => {
-    const objects = new ObjectStore(CanonicalEntity);
+    const objects = new ObjectStore(CanonicalEntity, { allowAccessPolicyOnCreate: true });
     const governed = objects.create(entity({ access_policy: randomUUID() }));
     objects.create(entity());
     const founder = new FounderInterface(objects, new LearningService());
