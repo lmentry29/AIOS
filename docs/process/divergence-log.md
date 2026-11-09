@@ -1,5 +1,7 @@
 # Vertical Slice Divergence Log
 
+> **Historical record, refreshed 2026-11-09.** This file records the original vertical-slice comparison and the blockers identified at that time. It is not the live production-status register. For current package maturity and blockers, read `docs/process/project-state.md`. Since this log was first written, ADR-0013 (default-deny resource authorization) and ADR-0014 (Obsidian persistence for Founder Intelligence) have been accepted. Founder reads/writes are now authorization-gated, policy administration is human-only, and orchestration requires a distinct authorized verifier identity. Founder Intelligence persistence is the Obsidian vault; do not infer that a separate database is planned. The original blocker list below is retained as historical evidence and may be superseded by the live project-state snapshot.
+
 Per docs/engineering/implementation-playbook.md §5: this log compares
 what was actually built during the mandated vertical slice
 (core → objects → work-hierarchy → agents → stop) against the design
