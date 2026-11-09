@@ -56,9 +56,12 @@ function harness(overrides: {
   verified?: boolean;
   evidence?: string[];
   denyAction?: string;
+  verifierId?: string;
+  sameVerifierAsExecutor?: boolean;
 } = {}) {
   const tasks = new TaskStore();
   const agentId = randomUUID();
+  const verifierId = overrides.sameVerifierAsExecutor ? agentId : (overrides.verifierId ?? randomUUID());
   const authorization: AuthorizationPort = {
     authorize: vi.fn(async (request) => (overrides.allowed ?? true) && request.action !== overrides.denyAction),
   };
@@ -77,6 +80,7 @@ function harness(overrides: {
     authorization,
     execution,
     verification: {
+      verifier_id: verifierId,
       verify: async () => ({
         accepted: overrides.verified ?? true,
         reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
@@ -85,7 +89,7 @@ function harness(overrides: {
     },
     resolveAgent: async () => agentId,
   });
-  return { tasks, agentId, authorization, execution, kernel };
+  return { tasks, agentId, verifierId, authorization, execution, kernel };
 }
 
 describe('OrchestrationKernel', () => {
@@ -114,6 +118,26 @@ describe('OrchestrationKernel', () => {
     expect(h.execution.executeTask).toHaveBeenCalledTimes(2);
   });
 
+
+  it('refuses self-verification when the verifier identity matches an executor', async () => {
+    const h = harness({ sameVerifierAsExecutor: true });
+    const current = h.tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier must have a valid identity distinct/);
+    expect(h.tasks.getTask(current.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
+  it('requires the verifier to have explicit evidence-read permission', async () => {
+    const h = harness({ denyAction: 'read_evidence' });
+    const current = h.tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    await h.kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier .* not authorized to read the evidence/);
+    expect(h.tasks.getTask(current.entity_id)?.lifecycle_state).toBe('suspended');
+  });
 
   it('rejects empty and duplicate workflow steps before lifecycle changes', async () => {
     const h = harness();
