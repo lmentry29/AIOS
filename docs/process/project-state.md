@@ -9,7 +9,7 @@ Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, not merged. Do not merge while implementation and audit work remain.
-- Latest implementation head at snapshot: `252b49a6b5dd04442d7464fb910a744e2d4ed235`
+- Latest implementation head at snapshot: `3cc247bd764f966b15540d210ec8f0649bec1255`
 - The PR adds an MIT license and contributor/community files on its branch. The default branch's GitHub repository metadata still reports no recognized license until that change is merged.
 - No external adoption is claimed. Repository metadata at the last live read showed 1 star, 0 forks, 0 network forks, and 0 subscribers. Those are point-in-time counts, not measures of downstream impact.
 
@@ -42,12 +42,14 @@ Founder and Orchestration are not production-complete. Their interfaces are adap
 
 ## Validation evidence
 
-At commit `252b49a6b5dd04442d7464fb910a744e2d4ed235`, GitHub Actions reported:
+At commit `3cc247bd764f966b15540d210ec8f0649bec1255`, GitHub Actions reported:
 - CI: passed (`pnpm turbo lint typecheck test build`)
 - Conformance: passed
 - Schema Check: passed
 
-The verified suite includes a cross-package Founder → authorization → orchestration integration test using the real in-memory policy registry and authorization service, plus regression tests for human-only policy administration, immutable policy snapshots, policy identity matching, Founder collection isolation, and distinct authorized verifier identity. These are GitHub Actions results; no local-machine execution or production deployment is claimed.
+The verified suite includes a cross-package Founder → authorization → orchestration integration test using the real in-memory policy registry and authorization service, plus regression tests for human-only policy administration, immutable policy snapshots, policy identity matching, Founder collection isolation, and distinct authorized verifier identity. Conformance reports 107 passing tests across six files. Entity-specific lifecycle rules are covered: Agent substates are restricted to active; Task, Workflow, and Plugin substates are rejected where no vocabulary is ratified. No known conformance test remains deliberately failing.
+
+These are GitHub Actions results; no local-machine execution or production deployment is claimed.
 
 ## Production blockers — not optional
 
