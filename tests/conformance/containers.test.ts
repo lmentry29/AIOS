@@ -127,7 +127,12 @@ describe('Requirement Category: Behavioral — deleteProject is a soft delete al
     const deleted = store.deleteProject(created.entity_id, FOUNDER);
 
     expect(deleted.lifecycle_state).toBe('archived');
-    expect(deleted.lifecycle_history.map((h) => h.state)).toEqual(['archived']);
+    expect(deleted.lifecycle_history.map((h) => h.state)).toEqual([
+      'validated',
+      'active',
+      'completed',
+      'archived',
+    ]);
   });
 
   it('does not alter project_status or project_phase as a side effect of deletion', () => {
