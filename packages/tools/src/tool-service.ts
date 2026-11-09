@@ -20,6 +20,17 @@ export type PluginInstallSpec = Omit<
   'entity_id' | 'lifecycle_history' | 'install_status'
 >;
 
+function clonePlugin(plugin: PluginEntityType): PluginEntityType {
+  const cloneValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(cloneValue);
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]));
+    }
+    return value;
+  };
+  return cloneValue(plugin) as PluginEntityType;
+}
+
 /**
  * ToolAbstractionService — Plugin install / enable / disable, per
  * docs/engineering/runtime-interfaces.md §2.6.
@@ -74,7 +85,7 @@ export class ToolAbstractionService {
     }
 
     this.plugins.set(plugin.entity_id, plugin);
-    return plugin;
+    return clonePlugin(plugin);
   }
 
   async enable(pluginId: string): Promise<void> {
@@ -86,11 +97,12 @@ export class ToolAbstractionService {
   }
 
   get(pluginId: string): PluginEntityType | undefined {
-    return this.plugins.get(pluginId);
+    const plugin = this.plugins.get(pluginId);
+    return plugin ? clonePlugin(plugin) : undefined;
   }
 
   list(): PluginEntityType[] {
-    return Array.from(this.plugins.values());
+    return Array.from(this.plugins.values(), clonePlugin);
   }
 
   /**
@@ -112,6 +124,6 @@ export class ToolAbstractionService {
     });
 
     this.plugins.set(pluginId, updated);
-    return updated;
+    return clonePlugin(updated);
   }
 }
