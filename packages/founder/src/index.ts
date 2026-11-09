@@ -4,6 +4,7 @@ import { ArtifactEntity } from '@aios/core';
 import type { KnowledgeRecord, KnowledgeStage } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
 import type { AccessAction } from './authorization.js';
+import type { FounderEvidenceReadPort, VaultEvidenceRecord, VaultEvidenceWarning } from './obsidian-evidence.js';
 
 export interface CanonicalEntityReadPort {
   list(): CanonicalEntity[];
@@ -49,6 +50,14 @@ export interface FounderResponse {
   answer: string;
   matching_entities: CanonicalEntity[];
   matching_memories: KnowledgeRecord[];
+}
+
+export interface FounderEvidenceResponse {
+  question: string;
+  matching_evidence: VaultEvidenceRecord[];
+  warnings: VaultEvidenceWarning[];
+  total_files: number;
+  vault_resource_id: string;
 }
 
 function isActorReference(value: unknown): value is string {
@@ -103,6 +112,7 @@ export class FounderInterface {
     private readonly authorization: FounderAuthorizationPort,
     private readonly options: FounderInterfaceOptions,
     artifactStore?: FounderArtifactRepositoryPort,
+    private readonly evidence?: FounderEvidenceReadPort,
   ) {
     if (!options || typeof options.decisionCollectionId !== 'string' || !isUuid(options.decisionCollectionId)) {
       throw new FounderInputError('Founder decision collection requires a valid protected resource UUID.');
@@ -153,6 +163,33 @@ export class FounderInterface {
     ].join(' ');
 
     return { question, answer, matching_entities: matchingEntities, matching_memories: matchingMemories };
+  }
+
+
+  /**
+   * Read-only lexical search over an authorized Obsidian vault snapshot.
+   * The evidence port must authorize the vault collection before fetching note bodies.
+   * Results are evidence only; this method never promotes or writes permanent Memory.
+   */
+  async queryEvidence(question: string, actorId: string): Promise<FounderEvidenceResponse> {
+    if (typeof question !== 'string' || question.length > 2000) throw new FounderInputError('Founder evidence query must be a string of at most 2,000 characters.');
+    if (!isActorReference(actorId)) throw new FounderInputError('Founder evidence query requires a valid authenticated actor identifier.');
+    const terms = question.trim().toLocaleLowerCase().split(/\\s+/).filter(Boolean);
+    if (terms.length === 0) throw new FounderInputError('Founder evidence query must not be empty.');
+    if (terms.length > 40) throw new FounderInputError('Founder evidence query must contain no more than 40 terms.');
+    if (!this.evidence) throw new FounderInputError('Obsidian vault evidence reader is not configured.');
+
+    const inventory = await this.evidence.list(actorId);
+    const matchingEvidence = inventory.files.filter((record) => terms.every((term) =>
+      searchableText([record.path, record.name, record.folder ?? '', record.frontmatter, record.content]).includes(term),
+    ));
+    return {
+      question,
+      matching_evidence: matchingEvidence,
+      warnings: inventory.warnings,
+      total_files: inventory.total_files,
+      vault_resource_id: inventory.vault_resource_id,
+    };
   }
 
   async recordDecision(decision: FounderDecisionRecord, actorId: string): Promise<string> {
@@ -253,3 +290,4 @@ export class FounderInterface {
   }
 }
 export * from './authorization.js';
+export * from './obsidian-evidence.js';
