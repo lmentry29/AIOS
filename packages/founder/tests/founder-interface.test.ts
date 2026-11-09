@@ -186,6 +186,18 @@ describe('FounderInterface', () => {
     expect(await reader.listDecisions(FOUNDER)).toEqual([]);
   });
 
+  it('reserves decision capture and human review for human principals', async () => {
+    const api = founder(new ObjectStore(CanonicalEntity), new LearningService());
+    const agentId = randomUUID();
+    await expect(api.recordDecision({
+      title: 'Agent-authored governance',
+      decision: 'Grant access',
+      rationale: 'Agents cannot self-authorize governance decisions.',
+      decided_by: agentId,
+    }, agentId)).rejects.toBeInstanceOf(FounderInputError);
+    await expect(api.reviewQueue(agentId)).rejects.toBeInstanceOf(FounderInputError);
+  });
+
   it('rejects incomplete decisions instead of persisting empty artifacts', async () => {
     const api = founder(new ObjectStore(CanonicalEntity), new LearningService());
     await expect(api.recordDecision(null as never, FOUNDER)).rejects.toBeInstanceOf(FounderInputError);
