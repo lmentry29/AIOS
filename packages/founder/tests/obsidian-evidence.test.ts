@@ -66,6 +66,11 @@ describe('AuthorizedVaultEvidenceReader', () => {
       vaultResourceId,
     }, authorization)).toThrow(VaultEvidenceError);
     expect(() => new AuthorizedVaultEvidenceReader({
+      baseUrl: 'http://localhost:4444',
+      password,
+      vaultResourceId,
+    }, authorization)).toThrow(VaultEvidenceError);
+    expect(() => new AuthorizedVaultEvidenceReader({
       password: 'short',
       vaultResourceId,
     }, authorization)).toThrow(VaultEvidenceError);
