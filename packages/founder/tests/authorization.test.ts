@@ -125,6 +125,20 @@ describe('AuthorizationService', () => {
     ]);
   });
 
+  it('prevents Agent identities from becoming policy administrators', async () => {
+    const agentId = randomUUID();
+    const registry = new InMemoryPolicyRegistry();
+
+    expect(() => new PolicyAdministrationService(agentId, registry, registry))
+      .toThrow(PolicyAdministrationError);
+
+    const admin = new PolicyAdministrationService(actorId, registry, registry);
+    await expect(admin.publish(policy, agentId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+    await expect(admin.attach(resourceId, policyId, agentId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+    await expect(admin.revoke(resourceId, agentId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+    await expect(registry.publish(policy, agentId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+  });
+
   it('refuses to attach a policy that has not been published', async () => {
     const admin = new PolicyAdministrationService(actorId, new StaticAccessPolicyStore([policy]), {
       publish: async () => undefined,
