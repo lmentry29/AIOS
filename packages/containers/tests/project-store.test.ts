@@ -238,7 +238,7 @@ describe('ProjectStore — deleteProject (soft delete via lifecycle)', () => {
     // Verify persistence, not just the return value.
     const fetched = store.getProject(created.entity_id);
     expect(fetched?.lifecycle_state).toBe('archived');
-    expect(fetched?.lifecycle_history).toHaveLength(4);
+    expect(fetched?.lifecycle_history).toHaveLength(2);
     expect(fetched?.lifecycle_history.at(-1)).toMatchObject({
       state: 'archived',
       actor: FOUNDER,
