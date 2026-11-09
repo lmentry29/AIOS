@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity, LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
 import { ArtifactEntity as ArtifactSchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
-import { ObjectStore } from '@aios/objects';
+import { ObjectStore, type EntityPatch } from '@aios/objects';
 
 
 export interface TaskRepositoryPort {
   createTask(task: TaskEntity): TaskEntity;
   getTask(taskId: string): TaskEntity | undefined;
-  updateTask(taskId: string, patch: Partial<TaskEntity>): TaskEntity;
+  updateTask(taskId: string, patch: EntityPatch<TaskEntity>): TaskEntity;
   transitionTaskLifecycle(taskId: string, state: LifecycleState, actor: string): TaskEntity;
 }
 
