@@ -76,20 +76,21 @@ function harness(overrides: {
       evidence: overrides.evidence ?? ['coordination-report-1'],
     })),
   };
+  const verification = {
+    verifier_id: verifierId,
+    verify: vi.fn(async () => ({
+      accepted: overrides.verified ?? true,
+      reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+      evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+    })),
+  };
   const kernel = new OrchestrationKernel(tasks, {
     authorization,
     execution,
-    verification: {
-      verifier_id: verifierId,
-      verify: async () => ({
-        accepted: overrides.verified ?? true,
-        reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
-        evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
-      }),
-    },
+    verification,
     resolveAgent: async () => agentId,
   });
-  return { tasks, agentId, verifierId, authorization, execution, kernel };
+  return { tasks, agentId, verifierId, authorization, execution, verification, kernel };
 }
 
 describe('OrchestrationKernel', () => {
@@ -127,6 +128,7 @@ describe('OrchestrationKernel', () => {
 
     await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier must have a valid identity distinct/);
     expect(h.tasks.getTask(current.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(h.verification.verify).not.toHaveBeenCalled();
   });
 
   it('requires the verifier to have explicit evidence-read permission', async () => {
@@ -137,6 +139,7 @@ describe('OrchestrationKernel', () => {
 
     await expect(h.kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier .* not authorized to read the evidence/);
     expect(h.tasks.getTask(current.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(h.verification.verify).not.toHaveBeenCalled();
   });
 
   it('rejects empty and duplicate workflow steps before lifecycle changes', async () => {
