@@ -38,7 +38,7 @@ export interface TaskVerificationPort {
 
 export interface AuthorizationRequest {
   actor_id: string;
-  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status';
+  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status' | 'read_evidence';
   resource_id: string;
 }
 
@@ -268,8 +268,17 @@ export class OrchestrationKernel {
     return workflow.lifecycle_state;
   }
 
-  getExecutionEvidence(evidenceId: string): ArtifactEntity | undefined {
-    return this.evidence.get(evidenceId);
+  async getExecutionEvidence(evidenceId: string, actorId: string): Promise<ArtifactEntity> {
+    const evidence = this.evidence.get(evidenceId);
+    if (!evidence) throw new OrchestrationError(`Execution evidence "${evidenceId}" was not found.`);
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action: 'read_evidence',
+      resource_id: evidence.entity_id,
+    }))) {
+      throw new OrchestrationError('Execution evidence read denied by authorization policy.');
+    }
+    return evidence;
   }
 
   private persistExecutionEvidence(
