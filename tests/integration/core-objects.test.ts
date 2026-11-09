@@ -108,10 +108,11 @@ describe('core → objects: COM invariants enforced at the store', () => {
     agentStore.transitionLifecycle(agent.entity_id, 'validated', FOUNDER);
     const activeAgent = agentStore.transitionLifecycle(agent.entity_id, 'active', FOUNDER, 'planning');
     expect(activeAgent.lifecycle_substate).toBe('planning');
-    expect(activeAgent.lifecycle_history[0]?.substate).toBe('planning');
+    expect(activeAgent.lifecycle_history[1]?.substate).toBe('planning');
 
     const taskStore = new ObjectStore(TaskEntity);
     const task = taskStore.create(makeTask());
+    taskStore.transitionLifecycle(task.entity_id, 'validated', FOUNDER);
     expect(() => taskStore.transitionLifecycle(task.entity_id, 'active', FOUNDER, 'executing')).toThrow();
   });
 
