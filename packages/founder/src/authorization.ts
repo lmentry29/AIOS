@@ -78,12 +78,13 @@ export class AuthorizationService {
   ) {}
 
   async authorize(request: AccessRequest): Promise<boolean> {
+    if (!request || typeof request !== 'object') return false;
     if (!isActorRef(request.actor_id) || !isUuid(request.resource_id) || !isAccessAction(request.action)) return false;
     let policyId: string | undefined;
     let policy: AccessPolicy | undefined;
     try {
       policyId = await this.resolvePolicyId(request.resource_id);
-      if (!policyId) return false;
+      if (!policyId || !isUuid(policyId)) return false;
       policy = await this.policies.get(policyId);
     } catch {
       return false;
