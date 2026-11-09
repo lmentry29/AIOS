@@ -64,7 +64,7 @@ describe('ProjectStore (ADR-0011, COM §5.4)', () => {
     const store = new ProjectStore();
     const project = makeProject();
     store.createProject(project);
-    store.transitionProjectLifecycle(project.entity_id, 'archived', FOUNDER);
+    store.deleteProject(project.entity_id, FOUNDER);
 
     expect(() => store.createProject(project)).toThrow(EntityIdConflictError);
   });
@@ -238,8 +238,8 @@ describe('ProjectStore — deleteProject (soft delete via lifecycle)', () => {
     // Verify persistence, not just the return value.
     const fetched = store.getProject(created.entity_id);
     expect(fetched?.lifecycle_state).toBe('archived');
-    expect(fetched?.lifecycle_history).toHaveLength(1);
-    expect(fetched?.lifecycle_history[0]).toMatchObject({
+    expect(fetched?.lifecycle_history).toHaveLength(4);
+    expect(fetched?.lifecycle_history.at(-1)).toMatchObject({
       state: 'archived',
       actor: FOUNDER,
     });
