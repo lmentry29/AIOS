@@ -23,6 +23,8 @@ A policy contains explicit rules with:
 - exact action identifiers;
 - exact resource entity IDs.
 
+The initial action vocabulary includes `intake`, `dispatch`, `execute`, `coordinate`, `read_status`, and `read_evidence`. New action identifiers require explicit policy configuration and review; they do not create implicit grants.
+
 Wildcards, role expansion, group inheritance, and pattern-based resource grants are not part of v1. They require a separate ADR and security analysis.
 
 ### 3. Evaluation semantics
@@ -49,7 +51,7 @@ Every authorization decision and every policy lifecycle change MUST produce a du
 
 - The existing `AuthorizationService` in `@aios/founder` implements exact matching, default deny, deny-overrides, input validation, and fail-closed policy resolution.
 - The current implementation accepts immutable policy configuration at construction. It is an in-process evaluator, not yet a persistent policy registry or administration service.
-- Orchestration requires explicit requester identity and calls the authorization port for intake, dispatch, execution, coordination, and status reads.
+- Orchestration requires explicit requester identity and calls the authorization port for intake, dispatch, execution, coordination, status reads, and execution-evidence reads. Evidence reads are authorized against the parent Task's resource policy.
 - Production deployment remains blocked until authenticated identity, durable policy storage and administration, policy attachment/revocation controls, durable decision audit, and security testing are implemented.
 - The access-policy field remains a UUID reference; this ADR does not silently redefine Canonical Entity schemas or add an unreviewed persisted entity subtype.
 
