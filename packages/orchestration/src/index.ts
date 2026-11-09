@@ -19,6 +19,11 @@ export interface TaskExecutionResult {
   completed_actions?: TaskEntity['actions'];
 }
 
+export interface VerifiedExecution {
+  result: TaskExecutionResult;
+  decision: TaskVerificationDecision;
+}
+
 export interface TaskVerificationRequest {
   task: TaskEntity;
   agent_ids: string[];
@@ -198,11 +203,11 @@ export class OrchestrationKernel {
         task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
 
         const result = await this.options.execution.executeTask(item.agentId, task);
-        const verification = await this.verifyResult(result, task, [item.agentId]);
-        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], result, verification);
+        const verified = await this.verifyResult(result, task, [item.agentId]);
+        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.result, verified.decision);
         this.tasks.updateTask(task.entity_id, {
           audit_trail_ref: evidenceId,
-          ...(task.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
+          ...(task.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
         });
         this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', item.agentId);
       }
@@ -262,11 +267,11 @@ export class OrchestrationKernel {
     const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', actorId);
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
-      const verification = await this.verifyResult(result, active, uniqueAgents);
-      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, result, verification);
+      const verified = await this.verifyResult(result, active, uniqueAgents);
+      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.result, verified.decision);
       this.tasks.updateTask(active.entity_id, {
         audit_trail_ref: evidenceId,
-        ...(active.actions.length > 0 ? { actions: result.completed_actions ?? [] } : {}),
+        ...(active.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
       });
       this.tasks.transitionTaskLifecycle(current.entity_id, 'completed', actorId);
     } catch (error) {
@@ -369,7 +374,7 @@ export class OrchestrationKernel {
     result: TaskExecutionResult,
     task: TaskEntity,
     allowedExecutors: string[],
-  ): Promise<TaskVerificationDecision> {
+  ): Promise<VerifiedExecution> {
     if (!result || typeof result !== 'object'
       || typeof result.summary !== 'string'
       || !Array.isArray(result.evidence)
@@ -380,8 +385,20 @@ export class OrchestrationKernel {
         `Task "${task.entity_id}" was not completed: executor must return a summary and evidence.`,
       );
     }
+    const snapshot: TaskExecutionResult = {
+      summary: result.summary,
+      evidence: [...result.evidence],
+      ...(result.completed_actions ? { completed_actions: result.completed_actions.map((action) => ({ ...action })) } : {}),
+    };
+    Object.freeze(snapshot.evidence);
+    if (snapshot.completed_actions) {
+      for (const action of snapshot.completed_actions) Object.freeze(action);
+      Object.freeze(snapshot.completed_actions);
+    }
+    Object.freeze(snapshot);
+
     if (task.actions.length > 0) {
-    const completed = result.completed_actions;
+    const completed = snapshot.completed_actions;
     const expectedIds = new Set(task.actions.map((action) => action.action_id));
     if (expectedIds.size !== task.actions.length) {
       throw new OrchestrationError(`Task "${task.entity_id}" contains duplicate Action IDs.`);
@@ -404,7 +421,7 @@ export class OrchestrationKernel {
       verification = await this.options.verification.verify({
         task,
         agent_ids: [...allowedExecutors],
-        execution_result: result,
+        execution_result: snapshot,
       });
     } catch {
       throw new OrchestrationError(`Task "${task.entity_id}" verification service failed; work remains unverified.`);
@@ -418,6 +435,6 @@ export class OrchestrationKernel {
       || verification.evidence.some((item) => typeof item !== 'string' || !item.trim())) {
       throw new OrchestrationError(`Task "${task.entity_id}" was not completed: independent verification rejected or supplied no evidence.`);
     }
-    return verification;
+    return { result: snapshot, decision: verification };
   }
 }
