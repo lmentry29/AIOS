@@ -58,7 +58,7 @@ function isActorReference(value: unknown): value is string {
 }
 
 function isHumanPrincipal(value: string): boolean {
-  return typeof value === 'string' && /^human:[^\\s:*]+$/.test(value);
+  return typeof value === 'string' && /^human:[^\s:*]+$/.test(value);
 }
 
 function isUuid(value: string): boolean {
