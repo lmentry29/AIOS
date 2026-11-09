@@ -69,6 +69,9 @@ describe('core → objects: COM invariants enforced at the store', () => {
     const store = new ObjectStore();
     const entity = makeCanonicalObject();
     store.create(entity);
+    store.transitionLifecycle(entity.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(entity.entity_id, 'active', FOUNDER);
+    store.transitionLifecycle(entity.entity_id, 'completed', FOUNDER);
     store.transitionLifecycle(entity.entity_id, 'archived', FOUNDER);
 
     expect(() => store.create(entity)).toThrow(EntityIdConflictError);
@@ -102,6 +105,7 @@ describe('core → objects: COM invariants enforced at the store', () => {
   it('stores Agent-specific substates without allowing them on Tasks (COM §3.2, §4.1, §4.2)', () => {
     const agentStore = new ObjectStore(AgentEntity);
     const agent = agentStore.create(makeAgent());
+    agentStore.transitionLifecycle(agent.entity_id, 'validated', FOUNDER);
     const activeAgent = agentStore.transitionLifecycle(agent.entity_id, 'active', FOUNDER, 'planning');
     expect(activeAgent.lifecycle_substate).toBe('planning');
     expect(activeAgent.lifecycle_history[0]?.substate).toBe('planning');
@@ -117,6 +121,8 @@ describe('core → objects: COM invariants enforced at the store', () => {
     // makes it a boundary behavior by construction.
     const store = new ObjectStore(MemoryObjectEntity);
     const memory = store.create(makeMemoryObject());
+    store.transitionLifecycle(memory.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(memory.entity_id, 'active', FOUNDER);
     store.transitionLifecycle(memory.entity_id, 'completed', FOUNDER);
 
     expect(() => store.update(memory.entity_id, { name: 'edited after publication' })).toThrow(
@@ -129,6 +135,8 @@ describe('core → objects: COM invariants enforced at the store', () => {
     // this ever stops being true, the check has leaked across subtypes.
     const store = new ObjectStore(TaskEntity);
     const task = store.create(makeTask());
+    store.transitionLifecycle(task.entity_id, 'validated', FOUNDER);
+    store.transitionLifecycle(task.entity_id, 'active', FOUNDER);
     store.transitionLifecycle(task.entity_id, 'completed', FOUNDER);
 
     expect(() => store.update(task.entity_id, { name: 'renamed' })).not.toThrow();
