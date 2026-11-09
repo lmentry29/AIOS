@@ -174,7 +174,7 @@ export class FounderInterface {
   async queryEvidence(question: string, actorId: string): Promise<FounderEvidenceResponse> {
     if (typeof question !== 'string' || question.length > 2000) throw new FounderInputError('Founder evidence query must be a string of at most 2,000 characters.');
     if (!isActorReference(actorId)) throw new FounderInputError('Founder evidence query requires a valid authenticated actor identifier.');
-    const terms = question.trim().toLocaleLowerCase().split(/\\s+/).filter(Boolean);
+    const terms = question.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) throw new FounderInputError('Founder evidence query must not be empty.');
     if (terms.length > 40) throw new FounderInputError('Founder evidence query must contain no more than 40 terms.');
     if (!this.evidence) throw new FounderInputError('Obsidian vault evidence reader is not configured.');
