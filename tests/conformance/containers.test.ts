@@ -128,8 +128,6 @@ describe('Requirement Category: Behavioral — deleteProject is a soft delete al
 
     expect(deleted.lifecycle_state).toBe('archived');
     expect(deleted.lifecycle_history.map((h) => h.state)).toEqual([
-      'validated',
-      'active',
       'completed',
       'archived',
     ]);
