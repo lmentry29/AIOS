@@ -383,6 +383,9 @@ export class OrchestrationKernel {
     if (task.actions.length > 0) {
     const completed = result.completed_actions;
     const expectedIds = new Set(task.actions.map((action) => action.action_id));
+    if (expectedIds.size !== task.actions.length) {
+      throw new OrchestrationError(`Task "${task.entity_id}" contains duplicate Action IDs.`);
+    }
     if (!Array.isArray(completed) || completed.length !== task.actions.length) {
       throw new OrchestrationError(`Task "${task.entity_id}" requires a complete Action result set.`);
     }
