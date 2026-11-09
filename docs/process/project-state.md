@@ -9,7 +9,7 @@ Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, not merged. Do not merge while implementation and audit work remain.
-- Latest implementation head at snapshot: `bf674fc328ddb8be2ec5adc31a73154b20d094a6`
+- Latest implementation head at snapshot: `252b49a6b5dd04442d7464fb910a744e2d4ed235`
 - The PR adds an MIT license and contributor/community files on its branch. The default branch's GitHub repository metadata still reports no recognized license until that change is merged.
 - No external adoption is claimed. Repository metadata at the last live read showed 1 star, 0 forks, 0 network forks, and 0 subscribers. Those are point-in-time counts, not measures of downstream impact.
 
@@ -26,8 +26,8 @@ Nine planned workspace packages have source implementations, at different maturi
 | `@aios/agents` | Agent lifecycle/conformance runner; not a real tool-executing agent runtime |
 | `@aios/tools` | Plugin lifecycle management; adapter invocation remains deferred |
 | `@aios/learning` | Knowledge records and evolution stages |
-| `@aios/founder` | Early runtime: lexical knowledge query, ADR artifact capture, policy review queue, default-deny authorization and policy administration ports |
-| `@aios/orchestration` | Early runtime: authorized intake, ordered dispatch, multi-agent coordination, independent verification port, evidence artifacts, status/evidence reads |
+| `@aios/founder` | Early runtime: authorization-gated canonical/memory reads, human-only decision capture and review queue, collection-scoped decision artifacts, default-deny authorization, human-only policy administration |
+| `@aios/orchestration` | Early runtime: authorized intake, ordered dispatch, multi-agent coordination, distinct host-configured verifier identity with explicit evidence-read permission, evidence artifacts, status/evidence reads |
 
 Founder and Orchestration are not production-complete. Their interfaces are adapter-driven; in-memory implementations are for tests/development only.
 
@@ -42,12 +42,12 @@ Founder and Orchestration are not production-complete. Their interfaces are adap
 
 ## Validation evidence
 
-At commit `4b695174557b0b798c8929b49ae5af70f96d7a83`, GitHub Actions reported:
+At commit `252b49a6b5dd04442d7464fb910a744e2d4ed235`, GitHub Actions reported:
 - CI: passed (`pnpm turbo lint typecheck test build`)
 - Conformance: passed
 - Schema Check: passed
 
-A new cross-package integration test and workspace dependency/lockfile updates were added afterward. Their CI and Conformance runs were queued at the time of this snapshot; do not treat the earlier green runs as verification of the newer head. See the PR's Checks tab for current results.
+The verified suite includes a cross-package Founder → authorization → orchestration integration test using the real in-memory policy registry and authorization service, plus regression tests for human-only policy administration, immutable policy snapshots, policy identity matching, Founder collection isolation, and distinct authorized verifier identity. These are GitHub Actions results; no local-machine execution or production deployment is claimed.
 
 ## Production blockers — not optional
 
