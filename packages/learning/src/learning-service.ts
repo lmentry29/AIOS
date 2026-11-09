@@ -130,7 +130,7 @@ export class LearningService {
       })
     );
 
-    this.knowledge.set(memory.entity_id, {
+    this.knowledge.set(memory.entity_id, cloneKnowledge({
       id: memory.entity_id,
       stage: 'observation',
       subject: normalizedSubject,
