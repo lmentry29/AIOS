@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status';
 
 export interface AccessRule {
@@ -9,6 +11,7 @@ export interface AccessRule {
 
 export interface AccessPolicy {
   policy_id: string;
+  version: number;
   rules: readonly AccessRule[];
 }
 
@@ -16,13 +19,44 @@ export interface AccessRequest {
   actor_id: string;
   action: AccessAction;
   resource_id: string;
+  request_id?: string;
+}
+
+export interface AuthorizationDecisionAudit {
+  request_id: string;
+  actor_id: string | null;
+  action: string | null;
+  resource_id: string | null;
+  policy_id: string | null;
+  policy_version: number | null;
+  decision: 'allow' | 'deny';
+  reason: string;
+  timestamp: string;
 }
 
 export interface AccessPolicyStore {
   get(policyId: string): Promise<AccessPolicy | undefined>;
 }
 
+export interface AuthorizationAuditStore {
+  /** Append-only durable sink in production. Implementations must reject mutation/deletion. */
+  append(record: AuthorizationDecisionAudit): Promise<void>;
+}
+
 export type AccessPolicyResolver = (resourceId: string) => Promise<string | undefined>;
+
+/** In-memory test/development sink. Not a durable production audit store. */
+export class InMemoryAuthorizationAuditStore implements AuthorizationAuditStore {
+  private readonly records: AuthorizationDecisionAudit[] = [];
+
+  async append(record: AuthorizationDecisionAudit): Promise<void> {
+    this.records.push({ ...record });
+  }
+
+  list(): AuthorizationDecisionAudit[] {
+    return this.records.map((record) => ({ ...record }));
+  }
+}
 
 /** Immutable bootstrap policy store. A durable implementation can satisfy AccessPolicyStore. */
 export class StaticAccessPolicyStore implements AccessPolicyStore {
@@ -31,8 +65,13 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
   constructor(policies: readonly AccessPolicy[]) {
     for (const policy of policies) {
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
+      if (!Number.isSafeInteger(policy.version) || policy.version < 1) {
+        throw new Error(`Access policy "${policy.policy_id}" requires a positive integer version.`);
+      }
       if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
-      if (policy.rules.length === 0) throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
+      if (!Array.isArray(policy.rules) || policy.rules.length === 0) {
+        throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
+      }
       for (const rule of policy.rules) {
         if (rule.effect !== 'allow' && rule.effect !== 'deny') throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
         if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
@@ -47,6 +86,7 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
       }
       this.policies.set(policy.policy_id, Object.freeze({
         policy_id: policy.policy_id,
+        version: policy.version,
         rules: Object.freeze(policy.rules.map((rule) => Object.freeze({
           ...rule,
           subject_ids: Object.freeze([...rule.subject_ids]),
@@ -63,45 +103,86 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
 }
 
 /**
- * Exact-match authorization evaluator.
- *
- * Security semantics: no resource policy means deny; no matching allow means deny;
- * any matching deny overrides all matching allows. There are no wildcard subjects,
- * actions, resources, implicit owner bypasses, or role expansion. The policy store is
- * injected so production can replace the immutable bootstrap store with a durable,
- * audited implementation.
+ * Exact-match, default-deny authorization with mandatory decision auditing.
+ * Missing policies, invalid inputs, resolver failures, and audit-sink failures deny.
+ * Any matching deny overrides all matching allows; no owner or role bypass exists.
  */
 export class AuthorizationService {
   constructor(
     private readonly policies: AccessPolicyStore,
     private readonly resolvePolicyId: AccessPolicyResolver,
+    private readonly audit: AuthorizationAuditStore,
   ) {}
 
   async authorize(request: AccessRequest): Promise<boolean> {
-    if (!request || typeof request !== 'object') return false;
-    if (!isActorRef(request.actor_id) || !isUuid(request.resource_id) || !isAccessAction(request.action)) return false;
-    let policyId: string | undefined;
-    let policy: AccessPolicy | undefined;
-    try {
-      policyId = await this.resolvePolicyId(request.resource_id);
-      if (!policyId || !isUuid(policyId)) return false;
-      policy = await this.policies.get(policyId);
-    } catch {
-      return false;
-    }
-    if (!policy || !Array.isArray(policy.rules)) return false;
+    const requestId = request && typeof request.request_id === 'string' && isUuid(request.request_id)
+      ? request.request_id
+      : randomUUID();
+    const actorId = request && typeof request.actor_id === 'string' ? request.actor_id : null;
+    const action = request && typeof request.action === 'string' ? request.action : null;
+    const resourceId = request && typeof request.resource_id === 'string' ? request.resource_id : null;
+    let policyId: string | null = null;
+    let policyVersion: number | null = null;
+    let decision: 'allow' | 'deny' = 'deny';
+    let reason = 'invalid_request';
 
     try {
-      const matching = policy.rules.filter((rule) =>
-        rule.subject_ids.includes(request.actor_id)
-        && rule.actions.includes(request.action)
-        && rule.resource_ids.includes(request.resource_id),
-      );
-      if (matching.some((rule) => rule.effect === 'deny')) return false;
-      return matching.some((rule) => rule.effect === 'allow');
+      if (!request || typeof request !== 'object'
+        || !actorId || !isActorRef(actorId)
+        || !resourceId || !isUuid(resourceId)
+        || !action || !isAccessAction(action)) {
+        reason = 'invalid_request';
+      } else {
+        const resolved = await this.resolvePolicyId(resourceId);
+        if (!resolved || !isUuid(resolved)) {
+          reason = 'resource_policy_missing_or_invalid';
+        } else {
+          policyId = resolved;
+          const policy = await this.policies.get(resolved);
+          if (!policy || !Array.isArray(policy.rules) || !Number.isSafeInteger(policy.version)) {
+            reason = 'policy_missing_or_invalid';
+          } else {
+            policyVersion = policy.version;
+            const matching = policy.rules.filter((rule) =>
+              rule.subject_ids.includes(actorId)
+              && rule.actions.includes(action)
+              && rule.resource_ids.includes(resourceId),
+            );
+            if (matching.some((rule) => rule.effect === 'deny')) {
+              reason = 'explicit_deny';
+            } else if (matching.some((rule) => rule.effect === 'allow')) {
+              decision = 'allow';
+              reason = 'matching_allow';
+            } else {
+              reason = 'no_matching_allow';
+            }
+          }
+        }
+      }
     } catch {
+      decision = 'deny';
+      reason = 'policy_resolution_or_evaluation_error';
+    }
+
+    const auditRecord: AuthorizationDecisionAudit = {
+      request_id: requestId,
+      actor_id: actorId,
+      action,
+      resource_id: resourceId,
+      policy_id: policyId,
+      policy_version: policyVersion,
+      decision,
+      reason,
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      await this.audit.append(auditRecord);
+    } catch {
+      // An authorization decision without its mandatory audit record is not valid.
       return false;
     }
+    return decision === 'allow';
   }
 }
 
