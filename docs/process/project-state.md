@@ -34,6 +34,7 @@ Founder and Orchestration are not production-complete. Their interfaces are adap
 ## Authorization and architecture decisions
 
 - ADR-0013 — **Accepted (2026-11-08)**: resource-attached, exact-match, default-deny authorization; deny overrides allow; no wildcard or owner-implied grants; identity must come from a trusted host; policy lifecycle and decision auditing must be durable and append-only.
+- ADR-0014 — **Accepted (2026-08-17)**: Obsidian vault is the persistence substrate for Founder Intelligence; AIOS schemas validate managed records; no separate database for Founder Intelligence; AIOS reads and proposes by default; permanent Memory requires explicit human review and authorization.
 - ADR-0012 — **Proposed (2026-07-14)**: extends capability mediation to end-users and supersedes the plugin-ID-centric invocation shape. It remains unaccepted; the new capability-mediated runtime contract and Capability Registry schema are follow-on engineering work.
 - Organizational Containers — ADR-0011 promotes Project only. Eight other container types remain references because the certified source corpus does not define their fields. Do not invent schemas to make a checklist appear complete.
 - Plugin/Adapter execution — explicitly deferred until a real adapter integration exists.
@@ -50,10 +51,10 @@ A new cross-package integration test and workspace dependency/lockfile updates w
 
 ## Production blockers — not optional
 
-1. **Durability:** ObjectStore, TaskStore, Workflow storage, evidence storage, policy registry, and decision-audit examples are in-memory. There is no production database adapter, migration system, transactional consistency boundary, backup, or restore procedure.
+1. **Founder Intelligence persistence:** The accepted source of truth is the Obsidian vault, not a separate database. A read-only vault evidence adapter/VaultObjectStore is not yet implemented in AIOS. The completed read-only reconciliation found no notes explicitly managed as Founder canonical objects; none were hydrated or migrated, and proposed classifications remain pending human review. Do not bulk-migrate, reclassify, or write to the vault. The local Obsidian API must pass its separate authentication, loopback, path-containment, and dependency audit before AIOS connects. **Operational task/run state** (TaskStore, Workflow state, execution evidence, policy registry, authorization audit) remains in-memory; its durable storage contract is unresolved and must not be conflated with Founder Intelligence persistence.
 2. **Identity:** No authenticated identity/session subsystem exists. Actor IDs passed into the kernel are identifiers, not proof of identity. A production host must derive them from validated sessions/tokens and enforce authorization at every entry point.
 3. **Policy lifecycle:** ADR-0013 defines the semantics, but durable policy publication, attachment, replacement, revocation, trusted bootstrap, and atomic audit persistence have no production adapter.
-4. **Execution:** Orchestration has ports, not production model/tool adapters, sandbox isolation, secret brokering, execution quotas, or safe tool allowlists.
+4. **Execution:** Orchestration has ports, not production model/tool adapters, sandbox isolation, secret brokering, execution quotas, or safe tool allowlists. The verifier now has a distinct host-configured identity and must be authorized to read evidence; a distinct identifier alone does not prove independent provider/process isolation.
 5. **Verification:** The verifier is injected. There is no production-grade independent verifier or evidence provenance chain; an executor must never be able to self-attest.
 6. **Reliability:** No durable run journal, idempotency keys, leases, retry policy, compensation, crash recovery, or distributed concurrency control.
 7. **Capability mediation:** ADR-0012 is Proposed; the registry, capability model, provider selection, health/cost policy, and capability execution contract are not implemented.
@@ -66,8 +67,8 @@ A new cross-package integration test and workspace dependency/lockfile updates w
 1. Keep the PR draft and work on the implementation branch; do not claim production readiness.
 2. Verify the new founder→authorization→orchestration integration test and lockfile changes through CI.
 3. Resolve the founder decisions called out in ADR-0012 and the open container-model conflict without inventing source material.
-4. Design and implement a production persistence boundary compatible with orchestration's current synchronous repository interfaces, or explicitly migrate those interfaces to async with a tested compatibility plan.
-5. Add a trusted host identity boundary and a durable transactional policy/audit adapter.
+4. Implement the read-only Obsidian vault evidence adapter first. Preserve source provenance, validate only explicitly AIOS-managed records, and surface classifications as reviewable proposals. Do not add a separate Founder Intelligence database or write to the vault.
+5. Add a trusted host identity boundary and a durable policy/audit adapter for operational execution state, with transactional append-only behavior.
 6. Add a real sandboxed execution adapter and an independently operated verifier.
 7. Add run journaling, idempotency, recovery, observability, security review, and deployment/restore validation.
 8. Re-run a clean independent audit against the certified architecture and the actual deployed runtime.
