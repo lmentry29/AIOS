@@ -135,6 +135,7 @@ export class AgentRunner {
     this.transitionAgent(agentId, 'active', 'planning', actor);
     this.transitionAgent(agentId, 'active', 'reasoning', actor);
     this.transitionAgent(agentId, 'active', 'executing', actor);
+    this.taskStore.transitionTaskLifecycle(taskId, 'validated', actor);
     this.taskStore.transitionTaskLifecycle(taskId, 'active', actor);
 
     this.transitionAgent(agentId, 'active', 'monitoring', actor);
