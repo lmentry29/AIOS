@@ -61,6 +61,7 @@ function harness(options: {
   throwOnExecute?: boolean;
 } = {}) {
   const tasks = new TaskStore();
+  const verifierId = randomUUID();
   const calls: string[] = [];
   let allowed = options.allow ?? true;
   const authorization: AuthorizationPort = {
@@ -89,6 +90,7 @@ function harness(options: {
     authorization,
     execution,
     verification: {
+      verifier_id: verifierId,
       verify: async () => ({
         accepted: options.verified ?? true,
         reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
@@ -176,6 +178,7 @@ describe('OrchestrationKernel', () => {
         coordinate: async () => ({ summary: 'done', evidence: ['executor:result'] }),
       },
       verification: {
+        verifier_id: randomUUID(),
         verify: async (request) => {
           expect(() => { (request.task as { name: string }).name = 'tampered'; }).toThrow();
           expect(() => { (request.execution_result as { summary: string }).summary = 'forged'; }).toThrow();
