@@ -54,6 +54,7 @@ export class FounderInterface {
   }
 
   async query(question: string): Promise<FounderResponse> {
+    if (typeof question !== 'string') throw new FounderInputError('Founder query must be a string.');
     const terms = question.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) throw new FounderInputError('Founder query must not be empty.');
 
@@ -84,6 +85,11 @@ export class FounderInterface {
   }
 
   async recordDecision(decision: FounderDecisionRecord): Promise<string> {
+    if (!decision || typeof decision !== 'object') throw new FounderInputError('Decision payload is required.');
+    if (typeof decision.title !== 'string' || typeof decision.decision !== 'string' || typeof decision.rationale !== 'string') {
+      throw new FounderInputError('Decision title, decision, and rationale must be strings.');
+    }
+    if (typeof decision.decided_by !== 'string') throw new FounderInputError('Decision author is required.');
     const title = decision.title.trim();
     const body = decision.decision.trim();
     const rationale = decision.rationale.trim();
