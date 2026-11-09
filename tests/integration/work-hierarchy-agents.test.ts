@@ -75,7 +75,7 @@ describe('work-hierarchy → agents: the Agent Execution Loop over a real Task',
     const persisted = taskStore.getTask(task.entity_id);
     expect(persisted?.lifecycle_state).toBe('completed');
     expect(persisted?.lifecycle_substate).toBeUndefined();
-    expect(persisted?.lifecycle_history.map((h) => h.state)).toEqual(['active', 'completed']);
+    expect(persisted?.lifecycle_history.map((h) => h.state)).toEqual(['validated', 'active', 'completed']);
     expect(persisted?.lifecycle_history.every((h) => h.substate === undefined)).toBe(true);
   });
 
@@ -97,9 +97,9 @@ describe('work-hierarchy → agents: the Agent Execution Loop over a real Task',
     runner.runFullLifecycle(agent.entity_id, task.entity_id);
 
     const after = taskStore.getTask(task.entity_id);
-    // Three writes: assigned_agent, → active, → completed. COM §11's
+    // Four writes: assigned_agent, → validated, → active, → completed. COM §11's
     // atomic bump must hold for writes originating in another package.
-    expect(after?.version).toBe((before?.version ?? 0) + 3);
+    expect(after?.version).toBe((before?.version ?? 0) + 4);
   });
 
   it('leaves the Agent free of a Work Hierarchy position (COM §4.1)', () => {
