@@ -143,8 +143,10 @@ describe('AuthorizationService', () => {
       revoke: async () => undefined,
     });
 
+    const mutableRule = mutable.rules[0];
+    if (!mutableRule) throw new Error('Mutable policy fixture rule missing.');
     const pending = admin.publish(mutable, actorId);
-    mutable.rules[0]!.actions[0] = 'coordinate';
+    mutableRule.actions[0] = 'coordinate';
     await pending;
 
     expect(published?.rules[0]?.actions).toEqual(['execute']);
