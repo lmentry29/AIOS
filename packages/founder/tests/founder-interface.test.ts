@@ -44,6 +44,7 @@ describe('FounderInterface', () => {
   it('rejects empty queries', async () => {
     const founder = new FounderInterface(new ObjectStore(CanonicalEntity), new LearningService());
     await expect(founder.query('   ')).rejects.toBeInstanceOf(FounderInputError);
+    await expect(founder.query(null as never)).rejects.toBeInstanceOf(FounderInputError);
   });
 
   it('records decisions as retrievable ADR Artifacts', async () => {
@@ -63,6 +64,7 @@ describe('FounderInterface', () => {
 
   it('rejects incomplete decisions instead of persisting empty artifacts', async () => {
     const founder = new FounderInterface(new ObjectStore(CanonicalEntity), new LearningService());
+    await expect(founder.recordDecision(null as never)).rejects.toBeInstanceOf(FounderInputError);
     await expect(founder.recordDecision({
       title: 'Authorization boundary',
       decision: 'Deny by default',
