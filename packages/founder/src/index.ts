@@ -107,10 +107,11 @@ export class FounderInterface {
   }
 
   async query(question: string, actorId: string): Promise<FounderResponse> {
-    if (typeof question !== 'string') throw new FounderInputError('Founder query must be a string.');
+    if (typeof question !== 'string' || question.length > 2000) throw new FounderInputError('Founder query must be a string of at most 2,000 characters.');
     if (!isActorReference(actorId)) throw new FounderInputError('Founder query requires a valid authenticated actor identifier.');
     const terms = question.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) throw new FounderInputError('Founder query must not be empty.');
+    if (terms.length > 40) throw new FounderInputError('Founder query must contain no more than 40 terms.');
 
     const entities = this.objects.list();
     const authorizedEntities = await Promise.all(entities.map(async (entity) => ({
@@ -155,6 +156,9 @@ export class FounderInterface {
     if (typeof decision.title !== 'string' || typeof decision.decision !== 'string' || typeof decision.rationale !== 'string') {
       throw new FounderInputError('Decision title, decision, and rationale must be strings.');
     }
+    if (decision.title.length > 200 || decision.decision.length > 20000 || decision.rationale.length > 20000) {
+      throw new FounderInputError('Decision title is limited to 200 characters; decision and rationale are limited to 20,000 characters each.');
+    }
     if (!isActorReference(actorId)) throw new FounderInputError('Decision capture requires a valid authenticated actor identifier.');
     if (typeof decision.decided_by !== 'string' || decision.decided_by !== actorId) {
       throw new FounderInputError('Decision author must match the authenticated actor.');
@@ -165,8 +169,10 @@ export class FounderInterface {
     if (!title || !body || !rationale) {
       throw new FounderInputError('Decision title, decision, and rationale are required.');
     }
-    if (decision.evidence?.some((item) => typeof item !== 'string' || !item.trim())) {
-      throw new FounderInputError('Evidence references must be non-empty strings.');
+    if (decision.evidence !== undefined && (!Array.isArray(decision.evidence)
+      || decision.evidence.length > 50
+      || decision.evidence.some((item) => typeof item !== 'string' || !item.trim() || item.length > 1000))) {
+      throw new FounderInputError('Evidence must contain at most 50 non-empty string references of at most 1,000 characters each.');
     }
     if (!(await this.isAllowed(actorId, 'intake', this.options.decisionCollectionId))) {
       throw new FounderAuthorizationError('intake', this.options.decisionCollectionId);
@@ -184,6 +190,7 @@ export class FounderInterface {
         rationale,
         decided_by: actorId,
         evidence: decision.evidence ?? [],
+        decision_collection_id: this.options.decisionCollectionId,
       }),
       lifecycle_state: 'created',
       lifecycle_history: [],
@@ -210,16 +217,27 @@ export class FounderInterface {
   }
 
   async getDecision(decisionId: string, actorId: string): Promise<ArtifactEntityType | undefined> {
-    if (!isActorReference(actorId)) throw new FounderInputError('Decision reads require a valid authenticated actor identifier.');
+    if (!isActorReference(actorId) || !isUuid(decisionId)) throw new FounderInputError('Decision reads require valid decision and authenticated actor identifiers.');
     if (!(await this.isAllowed(actorId, 'read_evidence', this.options.decisionCollectionId))) return undefined;
-    return this.artifacts.get(decisionId);
+    const artifact = this.artifacts.get(decisionId);
+    return artifact && this.belongsToDecisionCollection(artifact) ? artifact : undefined;
   }
 
   async listDecisions(actorId: string): Promise<ArtifactEntityType[]> {
     if (!isActorReference(actorId)) throw new FounderInputError('Decision reads require a valid authenticated actor identifier.');
     if (!(await this.isAllowed(actorId, 'read_evidence', this.options.decisionCollectionId))) return [];
     return this.artifacts.list({ entityType: 'canonical_object' })
-      .filter((artifact) => artifact.entity_subtype === 'artifact' && artifact.artifact_kind === 'adr');
+      .filter((artifact) => this.belongsToDecisionCollection(artifact));
+  }
+
+  private belongsToDecisionCollection(artifact: ArtifactEntityType): boolean {
+    if (artifact.entity_subtype !== 'artifact' || artifact.artifact_kind !== 'adr') return false;
+    try {
+      const metadata = JSON.parse(artifact.description ?? '{}') as { decision_collection_id?: unknown };
+      return metadata.decision_collection_id === this.options.decisionCollectionId;
+    } catch {
+      return false;
+    }
   }
 
   private async isAllowed(actorId: string, action: AccessAction, resourceId: string): Promise<boolean> {
