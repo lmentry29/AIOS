@@ -12,7 +12,7 @@ describe('AuthorizationService', () => {
     rules: [{
       effect: 'allow',
       subject_ids: [actorId],
-      actions: ['execute'],
+      actions: ['execute', 'read_evidence'],
       resource_ids: [resourceId],
     }],
   };
@@ -23,6 +23,7 @@ describe('AuthorizationService', () => {
     expect(await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId })).toBe(false);
     expect(await auth.authorize({ actor_id: actorId, action: 'coordinate', resource_id: resourceId })).toBe(false);
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: randomUUID() })).toBe(false);
+    expect(await auth.authorize({ actor_id: actorId, action: 'read_evidence', resource_id: resourceId })).toBe(true);
   });
 
   it('denies when the resource has no policy or references an unknown policy', async () => {
