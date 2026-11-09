@@ -130,22 +130,31 @@ describe('OrchestrationKernel', () => {
   });
 
   it('fails closed when dispatch is denied and leaves Workflow and Tasks unchanged', async () => {
-    const { tasks, kernel } = harness();
+    const { tasks, kernel, setAllowed } = harness();
     const current = tasks.createTask(task());
     const wf = workflow([current.entity_id]);
     await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
-    const beforeTask = tasks.getTask(current.entity_id);
+    setAllowed(false);
 
-    const originalVersion = beforeTask?.version;
-    // Revoke the same kernel's dispatch grant after intake.
-    const sameKernel = harness();
-    const sameTask = sameKernel.tasks.createTask(task());
-    const sameWorkflow = workflow([sameTask.entity_id]);
-    await sameKernel.kernel.intake({ kind: 'workflow', workflow: sameWorkflow }, FOUNDER);
-    sameKernel.setAllowed(false);
-    await expect(sameKernel.kernel.dispatch(sameWorkflow, FOUNDER)).rejects.toBeInstanceOf(OrchestrationError);
-    expect(sameKernel.tasks.getTask(sameTask.entity_id)?.version).toBe(sameTask.version);
-    expect(originalVersion).toBe(beforeTask?.version);
+    await expect(kernel.dispatch(wf, FOUNDER)).rejects.toBeInstanceOf(OrchestrationError);
+    expect(tasks.getTask(current.entity_id)?.version).toBe(current.version);
+  });
+
+  it('does not dispatch a Workflow that bypassed authorized intake', async () => {
+    const { kernel } = harness();
+    const unaccepted = workflow([randomUUID()]);
+    await expect(kernel.dispatch(unaccepted, FOUNDER)).rejects.toThrow(/authorized intake/);
+  });
+
+  it('records execution evidence for coordinated work', async () => {
+    const { tasks, kernel } = harness();
+    const current = tasks.createTask(task());
+    await kernel.coordinate([randomUUID(), randomUUID()], current, FOUNDER);
+
+    const completed = tasks.getTask(current.entity_id);
+    expect(completed?.lifecycle_state).toBe('completed');
+    expect(completed?.audit_trail_ref).toBeTruthy();
+    expect(kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '')?.artifact_kind).toBe('test_report');
   });
 
   it('suspends active work instead of falsely completing it after executor failure', async () => {
