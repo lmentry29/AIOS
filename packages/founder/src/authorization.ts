@@ -173,6 +173,84 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
  * Missing policies, invalid inputs, resolver failures, and audit-sink failures deny.
  * Any matching deny overrides all matching allows; no owner or role bypass exists.
  */
+
+export interface PolicyLifecycleAuditEvent {
+  event_id: string;
+  operation: 'publish' | 'attach' | 'revoke';
+  actor_id: string;
+  policy_id: string;
+  policy_version: number;
+  resource_id?: string;
+  timestamp: string;
+}
+
+/** In-memory policy registry/attachment index for tests and local development only. */
+export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdministrationPort {
+  private readonly policies = new Map<string, AccessPolicy>();
+  private readonly resourcePolicies = new Map<string, string>();
+  private readonly events: PolicyLifecycleAuditEvent[] = [];
+
+  async get(policyId: string): Promise<AccessPolicy | undefined> {
+    return this.policies.get(policyId);
+  }
+
+  async resolve(resourceId: string): Promise<string | undefined> {
+    return this.resourcePolicies.get(resourceId);
+  }
+
+  async publish(policy: AccessPolicy, actorId: string): Promise<void> {
+    new StaticAccessPolicyStore([policy]);
+    if (this.policies.has(policy.policy_id)) {
+      throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID.');
+    }
+    this.policies.set(policy.policy_id, new StaticAccessPolicyStore([policy]).get(policy.policy_id) as AccessPolicy);
+    this.events.push({
+      event_id: randomUUID(),
+      operation: 'publish',
+      actor_id: actorId,
+      policy_id: policy.policy_id,
+      policy_version: policy.version,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
+    const policy = this.policies.get(policyId);
+    if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
+    this.resourcePolicies.set(resourceId, policyId);
+    this.events.push({
+      event_id: randomUUID(),
+      operation: 'attach',
+      actor_id: actorId,
+      policy_id: policyId,
+      policy_version: policy.version,
+      resource_id: resourceId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async revoke(resourceId: string, actorId: string): Promise<void> {
+    const policyId = this.resourcePolicies.get(resourceId);
+    if (!policyId) throw new PolicyAdministrationError('Resource has no attached policy to revoke.');
+    const policy = this.policies.get(policyId);
+    if (!policy) throw new PolicyAdministrationError('Attached policy is missing from the registry.');
+    this.resourcePolicies.delete(resourceId);
+    this.events.push({
+      event_id: randomUUID(),
+      operation: 'revoke',
+      actor_id: actorId,
+      policy_id: policyId,
+      policy_version: policy.version,
+      resource_id: resourceId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  listAudit(): PolicyLifecycleAuditEvent[] {
+    return this.events.map((event) => ({ ...event }));
+  }
+}
+
 export class AuthorizationService {
   constructor(
     private readonly policies: AccessPolicyStore,
