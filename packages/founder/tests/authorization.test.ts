@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { AuthorizationService, InMemoryAuthorizationAuditStore, StaticAccessPolicyStore, type AccessPolicy } from '../src/authorization.js';
+import { AuthorizationService, InMemoryAuthorizationAuditStore, PolicyAdministrationService, PolicyAdministrationError, StaticAccessPolicyStore, type AccessPolicy } from '../src/authorization.js';
 
 describe('AuthorizationService', () => {
   const policyId = randomUUID();
@@ -81,6 +81,37 @@ describe('AuthorizationService', () => {
   });
 
 
+
+
+  it('restricts policy lifecycle operations to the out-of-band bootstrap principal', async () => {
+    const events: string[] = [];
+    const admin = new PolicyAdministrationService(actorId, new StaticAccessPolicyStore([policy]), {
+      publish: async (next, actor) => { events.push(`publish:${next.policy_id}:${actor}`); },
+      attach: async (resource, id, actor) => { events.push(`attach:${resource}:${id}:${actor}`); },
+      revoke: async (resource, actor) => { events.push(`revoke:${resource}:${actor}`); },
+    });
+    const nextPolicy: AccessPolicy = { ...policy, policy_id: randomUUID(), version: 1 };
+
+    await expect(admin.publish(nextPolicy, 'human:attacker')).rejects.toBeInstanceOf(PolicyAdministrationError);
+    await admin.publish(nextPolicy, actorId);
+    await admin.attach(resourceId, policyId, actorId);
+    await admin.revoke(resourceId, actorId);
+
+    expect(events).toEqual([
+      `publish:${nextPolicy.policy_id}:${actorId}`,
+      `attach:${resourceId}:${policyId}:${actorId}`,
+      `revoke:${resourceId}:${actorId}`,
+    ]);
+  });
+
+  it('refuses to attach a policy that has not been published', async () => {
+    const admin = new PolicyAdministrationService(actorId, new StaticAccessPolicyStore([policy]), {
+      publish: async () => undefined,
+      attach: async () => undefined,
+      revoke: async () => undefined,
+    });
+    await expect(admin.attach(resourceId, randomUUID(), actorId)).rejects.toBeInstanceOf(PolicyAdministrationError);
+  });
 
   it('snapshots and freezes policy configuration at construction', async () => {
     const mutable = {
