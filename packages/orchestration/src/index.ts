@@ -332,7 +332,7 @@ export class OrchestrationKernel {
     if (task.actions.length > 0) {
     const completed = result.completed_actions;
     const expectedIds = new Set(task.actions.map((action) => action.action_id));
-    if (!completed || completed.length !== task.actions.length) {
+    if (!Array.isArray(completed) || completed.length !== task.actions.length) {
       throw new OrchestrationError(`Task "${task.entity_id}" requires a complete Action result set.`);
     }
     const receivedIds = new Set(completed.map((action) => action.action_id));
