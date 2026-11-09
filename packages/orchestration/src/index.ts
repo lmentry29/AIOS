@@ -35,6 +35,7 @@ export interface TaskExecutionResult {
 export interface VerifiedExecution {
   result: TaskExecutionResult;
   decision: TaskVerificationDecision;
+  verifier_id: string;
 }
 
 export interface TaskVerificationRequest {
@@ -51,6 +52,8 @@ export interface TaskVerificationDecision {
 
 /** Independent verifier; must not simply trust the executor's self-reported outcome. */
 export interface TaskVerificationPort {
+  /** Trusted verifier principal configured by the host, never supplied by the executor or requester. */
+  readonly verifier_id: string;
   verify(request: TaskVerificationRequest): Promise<TaskVerificationDecision>;
 }
 
@@ -233,7 +236,7 @@ export class OrchestrationKernel {
 
         const result = await this.options.execution.executeTask(item.agentId, task);
         const verified = await this.verifyResult(result, task, [item.agentId]);
-        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.result, verified.decision);
+        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.verifier_id, verified.result, verified.decision);
         this.tasks.updateTask(task.entity_id, {
           audit_trail_ref: evidenceId,
           ...(task.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
@@ -297,7 +300,7 @@ export class OrchestrationKernel {
     try {
       const result = await this.options.execution.coordinate(uniqueAgents, active);
       const verified = await this.verifyResult(result, active, uniqueAgents);
-      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.result, verified.decision);
+      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.verifier_id, verified.result, verified.decision);
       this.tasks.updateTask(active.entity_id, {
         audit_trail_ref: evidenceId,
         ...(active.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
@@ -360,6 +363,7 @@ export class OrchestrationKernel {
   private persistExecutionEvidence(
     task: TaskEntity,
     agentIds: string[],
+    verifierId: string,
     result: TaskExecutionResult,
     verification: TaskVerificationDecision,
   ): string {
@@ -377,6 +381,7 @@ export class OrchestrationKernel {
         agent_ids: agentIds,
         summary: result.summary,
         evidence: result.evidence,
+        verifier_id: verifierId,
         verifier_accepted: verification.accepted,
         verifier_reason: verification.reason,
         verifier_evidence: verification.evidence,
@@ -443,6 +448,22 @@ export class OrchestrationKernel {
       }
     }
 
+    const verifierId = this.options.verification.verifier_id;
+    if (!isActorIdentifier(verifierId) || allowedExecutors.includes(verifierId)) {
+      throw new OrchestrationError(
+        `Task "${task.entity_id}" was not completed: the verifier must have a valid identity distinct from every executor.`,
+      );
+    }
+    if (!(await this.options.authorization.authorize({
+      actor_id: verifierId,
+      action: 'read_evidence',
+      resource_id: task.entity_id,
+    }))) {
+      throw new OrchestrationError(
+        `Task "${task.entity_id}" was not completed: verifier "${verifierId}" is not authorized to read the evidence.`,
+      );
+    }
+
     let verification: TaskVerificationDecision;
     try {
       verification = await this.options.verification.verify({
@@ -462,6 +483,6 @@ export class OrchestrationKernel {
       || verification.evidence.some((item) => typeof item !== 'string' || !item.trim())) {
       throw new OrchestrationError(`Task "${task.entity_id}" was not completed: independent verification rejected or supplied no evidence.`);
     }
-    return { result: snapshot, decision: verification };
+    return { result: snapshot, decision: verification, verifier_id: verifierId };
   }
 }
