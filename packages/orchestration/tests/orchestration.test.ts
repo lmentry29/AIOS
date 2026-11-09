@@ -159,7 +159,7 @@ describe('OrchestrationKernel', () => {
     const completed = tasks.getTask(current.entity_id);
     expect(completed?.lifecycle_state).toBe('completed');
     expect(completed?.audit_trail_ref).toBeTruthy();
-    expect((await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', FOUNDER)).artifact_kind).toBe('test_report');
+    expect((await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', current.entity_id, FOUNDER)).artifact_kind).toBe('test_report');
   });
 
 
@@ -173,7 +173,7 @@ describe('OrchestrationKernel', () => {
     if (!evidenceId) throw new Error('Execution evidence was not linked to Task.');
     setAllowed(false);
 
-    await expect(kernel.getExecutionEvidence(evidenceId, FOUNDER)).rejects.toThrow(/read denied/);
+    await expect(kernel.getExecutionEvidence(evidenceId, current.entity_id, FOUNDER)).rejects.toThrow(/read denied/);
   });
 
   it('suspends active work instead of falsely completing it after executor failure', async () => {
