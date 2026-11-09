@@ -49,7 +49,7 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
 8. **`schemas/generated/**` is generated, never hand-edited.** Edit
    `packages/core/src/schema/*.ts` (Zod) instead and regenerate.
 9. **Commit convention:** Conventional Commits, plus an AI-attribution trailer on
-   AI-authored commits (`Implemented-by: Claude` or `Implemented-by: Ollama/<model>`),
+   AI-authored commits (`Implemented-by: GPT-6`, `Implemented-by: Claude`, or `Implemented-by: Ollama/<model>`),
    per `docs/process/ai-development-plan.md`.
 10. **A completed lifecycle state is not proof of completed work.** The current
     `AgentRunner` is a lifecycle/conformance harness, not a tool-executing agent. The
