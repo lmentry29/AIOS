@@ -144,7 +144,7 @@ function validateBaseUrl(value: string): URL {
   } catch {
     throw new VaultEvidenceError('Obsidian base URL must be a valid URL.');
   }
-  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1'
     || !url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
     throw new VaultEvidenceError('Obsidian API must use an explicit-port HTTP loopback URL with no credentials or extra path.');
   }
