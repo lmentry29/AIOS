@@ -57,6 +57,7 @@ describe('objects → containers: ObjectStore’s COM guarantees arrive intact',
     const store = new ProjectStore();
     const project = makeProject();
     store.createProject(project);
+    store.transitionProjectLifecycle(project.entity_id, 'completed', FOUNDER);
     store.transitionProjectLifecycle(project.entity_id, 'archived', FOUNDER);
 
     // ProjectStore does not implement this rule. It gets it from ObjectStore.
