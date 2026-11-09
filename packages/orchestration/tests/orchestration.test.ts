@@ -80,7 +80,6 @@ function harness(options: {
       };
     },
     coordinate: async (_agents, currentTask) => ({
-      verified: options.verified ?? true,
       summary: 'Coordinated acceptance criteria checked',
       evidence: ['review:passed'],
       completed_actions: currentTask.actions,
@@ -91,9 +90,9 @@ function harness(options: {
     execution,
     verification: {
       verify: async () => ({
-        accepted: options.verified ?? true,
-        reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
-        evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+        accepted: overrides.verified ?? true,
+        reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+        evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
       }),
     },
     resolveAgent: async () => randomUUID(),
