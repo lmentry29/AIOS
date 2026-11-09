@@ -127,6 +127,8 @@ describe('Mission → Objective → Task → Agent (playbook §8, Milestone 1 Do
 
     // The Objective's own status can move as work beneath it completes — Current Status
     // maps to lifecycle_state (COM §5.3) and lifecycle_history is append-only.
+    objectiveStore.transitionObjectiveLifecycle(objective.entity_id, 'validated', FOUNDER);
+    objectiveStore.transitionObjectiveLifecycle(objective.entity_id, 'active', FOUNDER);
     const completed = objectiveStore.transitionObjectiveLifecycle(
       objective.entity_id,
       'completed',
