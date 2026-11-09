@@ -234,8 +234,6 @@ importers:
       '@aios/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
-        specifier: workspace:*
-        version: link:../../packages/core
       '@aios/objects':
         specifier: workspace:*
         version: link:../../packages/objects
