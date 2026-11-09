@@ -64,6 +64,22 @@ export interface OrchestrationOptions {
   resolveAgent(task: TaskEntity): Promise<string>;
 }
 
+function clonePlain<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(clonePlain) as unknown as T;
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, clonePlain(nested)])) as T;
+  }
+  return value;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function isActorIdentifier(value: unknown): value is string {
   return typeof value === 'string'
     && (/^human:[^\s:*]+$/.test(value)
@@ -385,17 +401,15 @@ export class OrchestrationKernel {
         `Task "${task.entity_id}" was not completed: executor must return a summary and evidence.`,
       );
     }
-    const snapshot: TaskExecutionResult = {
-      summary: result.summary,
-      evidence: [...result.evidence],
-      ...(result.completed_actions ? { completed_actions: result.completed_actions.map((action) => ({ ...action })) } : {}),
-    };
-    Object.freeze(snapshot.evidence);
-    if (snapshot.completed_actions) {
-      for (const action of snapshot.completed_actions) Object.freeze(action);
-      Object.freeze(snapshot.completed_actions);
+    if (result.completed_actions !== undefined && !Array.isArray(result.completed_actions)) {
+      throw new OrchestrationError(`Task "${task.entity_id}" received a malformed Action result collection.`);
     }
-    Object.freeze(snapshot);
+    const snapshot = deepFreeze(clonePlain({
+      summary: result.summary,
+      evidence: result.evidence,
+      ...(result.completed_actions ? { completed_actions: result.completed_actions } : {}),
+    }));
+    const verificationTask = deepFreeze(clonePlain(task));
 
     if (task.actions.length > 0) {
     const completed = snapshot.completed_actions;
@@ -419,7 +433,7 @@ export class OrchestrationKernel {
     let verification: TaskVerificationDecision;
     try {
       verification = await this.options.verification.verify({
-        task,
+        task: verificationTask,
         agent_ids: [...allowedExecutors],
         execution_result: snapshot,
       });
