@@ -30,10 +30,12 @@ describe('LearningService — recordObservation (runtime-interfaces §2.7)', () 
     const svc = new LearningService();
     const content = { nested: { value: 42 } };
     const id = await svc.recordObservation('structured observation', content);
+    content.nested.value = 99;
 
     // The Memory Object is the canonical entity; the arbitrary content payload lives
-    // here because §5.1's schema has nowhere to put it. See learning-service.ts.
-    expect(svc.getKnowledge(id)?.content).toEqual(content);
+    // here because §5.1's schema has nowhere to put it. Caller mutation after write
+    // must not mutate the service's stored knowledge payload.
+    expect(svc.getKnowledge(id)?.content).toEqual({ nested: { value: 42 } });
   });
 
   it('gives each observation a distinct entity_id (COM §9)', async () => {
