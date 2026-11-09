@@ -319,7 +319,12 @@ export class OrchestrationKernel {
     task: TaskEntity,
     allowedExecutors: string[],
   ): Promise<TaskVerificationDecision> {
-    if (!result.summary.trim() || result.evidence.length === 0 || result.evidence.some((item) => !item.trim())) {
+    if (!result || typeof result !== 'object'
+      || typeof result.summary !== 'string'
+      || !Array.isArray(result.evidence)
+      || !result.summary.trim()
+      || result.evidence.length === 0
+      || result.evidence.some((item) => typeof item !== 'string' || !item.trim())) {
       throw new OrchestrationError(
         `Task "${task.entity_id}" was not completed: executor must return a summary and evidence.`,
       );
@@ -350,7 +355,13 @@ export class OrchestrationKernel {
     } catch {
       throw new OrchestrationError(`Task "${task.entity_id}" verification service failed; work remains unverified.`);
     }
-    if (!verification.accepted || !verification.reason.trim() || verification.evidence.length === 0 || verification.evidence.some((item) => !item.trim())) {
+    if (!verification || typeof verification !== 'object'
+      || verification.accepted !== true
+      || typeof verification.reason !== 'string'
+      || !verification.reason.trim()
+      || !Array.isArray(verification.evidence)
+      || verification.evidence.length === 0
+      || verification.evidence.some((item) => typeof item !== 'string' || !item.trim())) {
       throw new OrchestrationError(`Task "${task.entity_id}" was not completed: independent verification rejected or supplied no evidence.`);
     }
     return verification;
