@@ -41,7 +41,7 @@ The caller's authenticated identity MUST be established by a trusted host identi
 
 Policy creation, attachment, replacement, revocation, and audit are privileged operations. Policies are immutable once published; a policy change creates a new policy identity/version and changes the resource reference through the trusted administration path. There is no self-service or agent-controlled privilege escalation.
 
-The initial policy-administration principal and bootstrap mechanism MUST be configured out-of-band by the deployment owner. No universal in-band superuser or implicit founder bypass is defined.
+The initial policy-administration principal and bootstrap mechanism MUST be configured out-of-band by the deployment owner. The bootstrap principal MUST be a human principal, never an Agent UUID; an Agent must not publish, attach, replace, or revoke policies. No universal in-band superuser or implicit founder bypass is defined.
 
 ### 6. Audit
 
@@ -50,7 +50,8 @@ Every authorization decision and every policy lifecycle change MUST produce a du
 ## Implementation consequences
 
 - The existing `AuthorizationService` in `@aios/founder` implements exact matching, default deny, deny-overrides, input validation, and fail-closed policy resolution.
-- The current evaluator accepts immutable policy configuration at construction. `PolicyAdministrationService` now restricts publish/attach/revoke calls to an out-of-band configured bootstrap principal and delegates each operation to a port whose implementation must atomically persist state and append audit. No concrete durable administration port is supplied yet; the evaluator is not a persistent policy registry.
+- The current evaluator accepts immutable policy configuration at construction. `PolicyAdministrationService` restricts publish/attach/revoke to a configured human bootstrap principal; Agent UUIDs are rejected. It delegates each operation to a port whose implementation must atomically persist state and append audit. No concrete durable administration port is supplied yet; the evaluator is not a persistent policy registry.
+- `FounderInterface` authorizes canonical-entity and learning-memory content reads with `read_evidence`; decision creation requires `intake` on a configured protected decision-collection resource; decision reads require `read_evidence` on that collection. Denied reads return no protected records, and denied writes fail closed.
 - Orchestration requires explicit requester identity and calls the authorization port for intake, dispatch, execution, coordination, status reads, and execution-evidence reads. Evidence reads are authorized against the parent Task's resource policy.
 - Production deployment remains blocked until authenticated identity, durable policy storage and administration, policy attachment/revocation controls, durable decision audit, and security testing are implemented.
 - The access-policy field remains a UUID reference; this ADR does not silently redefine Canonical Entity schemas or add an unreviewed persisted entity subtype.
