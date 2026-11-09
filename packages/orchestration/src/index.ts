@@ -2,7 +2,20 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity, LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
 import { ArtifactEntity as ArtifactSchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
-import type { TaskStore } from '@aios/work-hierarchy';
+
+
+export interface TaskRepositoryPort {
+  createTask(task: TaskEntity): TaskEntity;
+  getTask(taskId: string): TaskEntity | undefined;
+  updateTask(taskId: string, patch: Partial<TaskEntity>): TaskEntity;
+  transitionTaskLifecycle(taskId: string, state: LifecycleState, actor: string): TaskEntity;
+}
+
+export interface EntityRepositoryPort<T extends { entity_id: string }> {
+  create(entity: T): T;
+  get(entityId: string): T | undefined;
+  transitionLifecycle(entityId: string, state: LifecycleState, actor: string): T;
+}
 
 export interface WorkflowRunHandle {
   workflow_id: string;
@@ -111,14 +124,14 @@ export class OrchestrationError extends Error {
  * still required before deploying this kernel in production.
  */
 export class OrchestrationKernel {
-  private readonly workflows: ObjectStore<WorkflowEntity>;
-  private readonly evidence: ObjectStore<ArtifactEntity>;
+  private readonly workflows: EntityRepositoryPort<WorkflowEntity>;
+  private readonly evidence: EntityRepositoryPort<ArtifactEntity>;
 
   constructor(
-    private readonly tasks: TaskStore,
+    private readonly tasks: TaskRepositoryPort,
     private readonly options: OrchestrationOptions,
-    workflowStore?: ObjectStore<WorkflowEntity>,
-    evidenceStore?: ObjectStore<ArtifactEntity>,
+    workflowStore?: EntityRepositoryPort<WorkflowEntity>,
+    evidenceStore?: EntityRepositoryPort<ArtifactEntity>,
   ) {
     this.workflows = workflowStore ?? new ObjectStore<WorkflowEntity>(WorkflowSchema);
     this.evidence = evidenceStore ?? new ObjectStore<ArtifactEntity>(ArtifactSchema);
