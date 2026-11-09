@@ -96,7 +96,10 @@ export class PolicyAdministrationService {
       throw new PolicyAdministrationError('Policy attachment requires valid resource and policy UUIDs.');
     }
     const policy = await this.policies.get(policyId);
-    if (!policy) throw new PolicyAdministrationError(`Policy "${policyId}" does not exist.`);
+    if (!policy || policy.policy_id !== policyId || !isUuid(policy.policy_id)
+      || !Number.isSafeInteger(policy.version) || policy.version < 1) {
+      throw new PolicyAdministrationError('Cannot attach a missing, mismatched, or invalid published policy.');
+    }
     await this.administration.attach(resourceId, policyId, actorId);
   }
 
