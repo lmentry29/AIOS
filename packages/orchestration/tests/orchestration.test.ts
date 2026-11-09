@@ -192,9 +192,6 @@ describe('OrchestrationKernel', () => {
   });
 
   it('does not expose Workflow status to an unauthorized caller', async () => {
-    const { kernel } = harness();
-    const wf = workflow([randomUUID()]);
-    await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
     const { kernel, setAllowed } = harness();
     const storedWorkflow = workflow([randomUUID()]);
     await kernel.intake({ kind: 'workflow', workflow: storedWorkflow }, FOUNDER);
