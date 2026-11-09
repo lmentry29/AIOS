@@ -181,6 +181,7 @@ export interface PolicyLifecycleAuditEvent {
   policy_id: string;
   policy_version: number;
   resource_id?: string;
+  previous_policy_id?: string;
   timestamp: string;
 }
 
@@ -228,6 +229,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
     if (!isActorRef(actorId)) throw new PolicyAdministrationError('Invalid policy administrator identity.');
     const policy = this.policies.get(policyId);
     if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
+    const previousPolicyId = this.resourcePolicies.get(resourceId);
     this.resourcePolicies.set(resourceId, policyId);
     this.events.push({
       event_id: randomUUID(),
@@ -236,6 +238,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       policy_id: policyId,
       policy_version: policy.version,
       resource_id: resourceId,
+      ...(previousPolicyId ? { previous_policy_id: previousPolicyId } : {}),
       timestamp: new Date().toISOString(),
     });
   }
