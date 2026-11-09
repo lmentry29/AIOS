@@ -64,10 +64,10 @@ describe('FounderInterface', () => {
   it('rejects incomplete decisions instead of persisting empty artifacts', async () => {
     const founder = new FounderInterface(new ObjectStore(CanonicalEntity), new LearningService());
     await expect(founder.recordDecision({
-      title: ' ',
+      title: 'Authorization boundary',
       decision: 'Deny by default',
       rationale: 'Because',
-      decided_by: 'human:founder',
+      decided_by: 'not-an-actor',
     })).rejects.toBeInstanceOf(FounderInputError);
   });
 
