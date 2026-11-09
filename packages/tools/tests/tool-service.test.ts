@@ -91,6 +91,30 @@ describe('ToolAbstractionService — enable / disable', () => {
     expect(plugin?.install_status).toBe('disabled');
   });
 
+
+  it('returns detached Plugin snapshots that cannot bypass validation or versioning', async () => {
+    const svc = new ToolAbstractionService();
+    const installed = await svc.install(pluginSpec());
+    installed.name = 'mutated install result';
+    installed.relationships.push({
+      relationship_type: 'depends_on',
+      direction: 'outbound',
+      target_entity_id: crypto.randomUUID(),
+      target_entity_type: 'plugin',
+    } as never);
+
+    const fetched = svc.get(installed.entity_id);
+    if (!fetched) throw new Error('Installed Plugin was not retrievable.');
+    fetched.name = 'mutated get result';
+    const listed = svc.list()[0];
+    if (!listed) throw new Error('Installed Plugin was not listed.');
+    listed.name = 'mutated list result';
+
+    expect(svc.get(installed.entity_id)?.name).toBe('test plugin');
+    expect(svc.get(installed.entity_id)?.relationships).toEqual([]);
+    expect(svc.get(installed.entity_id)?.version).toBe(1);
+  });
+
   it('throws PluginNotFoundError for an unknown id', async () => {
     const svc = new ToolAbstractionService();
     await expect(svc.enable(crypto.randomUUID())).rejects.toThrow(PluginNotFoundError);
