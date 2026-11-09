@@ -143,7 +143,7 @@ export class ProjectStatusTransitionError extends Error {
 export class AccessPolicyMutationError extends Error {
   constructor(entityId: string) {
     super(
-      `update() cannot modify access_policy on entity_id "${entityId}" — policy attachment and revocation require the trusted authorization-administration path.`,
+      `ordinary writes cannot attach or modify access_policy on entity_id "${entityId}" — policy attachment and revocation require the trusted authorization-administration path.`,
     );
     this.name = 'AccessPolicyMutationError';
   }
