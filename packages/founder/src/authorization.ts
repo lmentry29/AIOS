@@ -45,6 +45,69 @@ export interface AuthorizationAuditStore {
 
 export type AccessPolicyResolver = (resourceId: string) => Promise<string | undefined>;
 
+export interface PolicyAdministrationPort {
+  /** Implementations must atomically persist the immutable policy and its audit event. */
+  publish(policy: AccessPolicy, actorId: string): Promise<void>;
+  /** Implementations must atomically attach the policy reference and append its audit event. */
+  attach(resourceId: string, policyId: string, actorId: string): Promise<void>;
+  /** Implementations must atomically remove the resource reference and append its audit event. */
+  revoke(resourceId: string, actorId: string): Promise<void>;
+}
+
+export class PolicyAdministrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PolicyAdministrationError';
+  }
+}
+
+/**
+ * Privileged policy lifecycle facade. The configured bootstrap principal must be
+ * provisioned out-of-band; actorId must come from a trusted host identity subsystem.
+ * Storage and audit are delegated to one transactional administration port.
+ */
+export class PolicyAdministrationService {
+  constructor(
+    private readonly bootstrapPrincipalId: string,
+    private readonly policies: AccessPolicyStore,
+    private readonly administration: PolicyAdministrationPort,
+  ) {
+    if (!isActorRef(bootstrapPrincipalId)) {
+      throw new PolicyAdministrationError('Bootstrap principal must be a valid actor identifier.');
+    }
+  }
+
+  async publish(policy: AccessPolicy, actorId: string): Promise<void> {
+    this.assertBootstrapPrincipal(actorId);
+    // Reuse the strict immutable-policy validator before handing policy to storage.
+    new StaticAccessPolicyStore([policy]);
+    await this.administration.publish(policy, actorId);
+  }
+
+  async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
+    this.assertBootstrapPrincipal(actorId);
+    if (!isUuid(resourceId) || !isUuid(policyId)) {
+      throw new PolicyAdministrationError('Policy attachment requires valid resource and policy UUIDs.');
+    }
+    const policy = await this.policies.get(policyId);
+    if (!policy) throw new PolicyAdministrationError(`Policy "${policyId}" does not exist.`);
+    await this.administration.attach(resourceId, policyId, actorId);
+  }
+
+  async revoke(resourceId: string, actorId: string): Promise<void> {
+    this.assertBootstrapPrincipal(actorId);
+    if (!isUuid(resourceId)) throw new PolicyAdministrationError('Policy revocation requires a valid resource UUID.');
+    await this.administration.revoke(resourceId, actorId);
+  }
+
+  private assertBootstrapPrincipal(actorId: string): void {
+    if (!isActorRef(actorId) || actorId !== this.bootstrapPrincipalId) {
+      throw new PolicyAdministrationError('Policy lifecycle changes are restricted to the configured bootstrap principal.');
+    }
+  }
+}
+
+
 /** In-memory test/development sink. Not a durable production audit store. */
 export class InMemoryAuthorizationAuditStore implements AuthorizationAuditStore {
   private readonly records: AuthorizationDecisionAudit[] = [];
