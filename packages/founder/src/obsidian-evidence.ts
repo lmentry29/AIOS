@@ -187,7 +187,7 @@ function parseMetadata(value: unknown, vaultResourceId: string, maxFileBytes: nu
   };
 }
 
-export class ObsidianVaultEvidenceAdapter {
+class ObsidianVaultEvidenceAdapter {
   readonly vaultResourceId: string;
   readonly maxFiles: number;
   readonly maxFileBytes: number;
@@ -296,10 +296,18 @@ export class ObsidianVaultEvidenceAdapter {
 }
 
 export class AuthorizedVaultEvidenceReader implements FounderEvidenceReadPort {
+  private readonly adapter: ObsidianVaultEvidenceAdapter;
+
   constructor(
-    private readonly adapter: ObsidianVaultEvidenceAdapter,
+    options: ObsidianVaultEvidenceAdapterOptions,
     private readonly authorization: FounderAuthorizationPort,
-  ) {}
+  ) {
+    this.adapter = new ObsidianVaultEvidenceAdapter(options);
+  }
+
+  get vaultResourceId(): string {
+    return this.adapter.vaultResourceId;
+  }
 
   async list(actorId: string): Promise<AuthorizedVaultEvidenceInventory> {
     if (!isActorReference(actorId)) throw new VaultEvidenceError('Vault evidence reads require a valid authenticated actor identifier.');
