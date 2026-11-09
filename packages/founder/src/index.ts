@@ -1,8 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity as ArtifactEntityType, CanonicalEntity } from '@aios/core';
 import { ArtifactEntity } from '@aios/core';
-import type { LearningService } from '@aios/learning';
+import type { KnowledgeRecord, KnowledgeStage, LearningService } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
+
+export interface CanonicalEntityReadPort {
+  list(): CanonicalEntity[];
+}
+
+export interface FounderArtifactRepositoryPort {
+  create(artifact: ArtifactEntityType): ArtifactEntityType;
+  get(entityId: string): ArtifactEntityType | undefined;
+  list(filter?: { entityType?: CanonicalEntity['entity_type'] }): ArtifactEntityType[];
+}
+
+export interface FounderKnowledgeReadPort {
+  listByStage(stage: KnowledgeStage): KnowledgeRecord[];
+}
 
 export interface FounderDecisionRecord {
   title: string;
@@ -43,12 +57,12 @@ export class FounderInputError extends Error {
  * surfaced for human review; this class does not grant or infer permissions.
  */
 export class FounderInterface {
-  private readonly artifacts: ObjectStore<ArtifactEntityType>;
+  private readonly artifacts: FounderArtifactRepositoryPort;
 
   constructor(
-    private readonly objects: ObjectStore<CanonicalEntity>,
-    private readonly learning: LearningService,
-    artifactStore?: ObjectStore<ArtifactEntityType>,
+    private readonly objects: CanonicalEntityReadPort,
+    private readonly learning: FounderKnowledgeReadPort,
+    artifactStore?: FounderArtifactRepositoryPort,
   ) {
     this.artifacts = artifactStore ?? new ObjectStore<ArtifactEntityType>(ArtifactEntity);
   }
