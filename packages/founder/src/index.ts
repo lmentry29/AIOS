@@ -57,6 +57,7 @@ export interface FounderEvidenceResponse {
   matching_evidence: VaultEvidenceRecord[];
   warnings: VaultEvidenceWarning[];
   total_files: number;
+  last_updated: string;
   vault_resource_id: string;
 }
 
@@ -190,6 +191,7 @@ export class FounderInterface {
       matching_evidence: matchingEvidence,
       warnings: inventory.warnings,
       total_files: inventory.total_files,
+      last_updated: inventory.last_updated,
       vault_resource_id: inventory.vault_resource_id,
     };
   }
