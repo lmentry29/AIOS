@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status' | 'read_evidence';
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
@@ -192,7 +192,7 @@ function isActorRef(value: string): boolean {
 }
 
 function isAccessAction(value: string): value is AccessAction {
-  return ['intake', 'dispatch', 'execute', 'coordinate', 'read_status'].includes(value);
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'read_status', 'read_evidence'].includes(value);
 }
 
 function isUuid(value: string): boolean {
