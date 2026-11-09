@@ -193,6 +193,9 @@ export class OrchestrationKernel {
     if (!current || current.lifecycle_state !== 'created') {
       throw new OrchestrationError('Coordination requires an existing Task in created state.');
     }
+    if (current.assigned_agent || current.assigned_workflow) {
+      throw new OrchestrationError('Coordination cannot take a Task already assigned to an Agent or Workflow.');
+    }
 
     if (!(await this.options.authorization.authorize({ actor_id: actorId, action: 'coordinate', resource_id: current.entity_id }))) {
       throw new OrchestrationError('Coordination request denied by authorization policy.');
@@ -211,6 +214,9 @@ export class OrchestrationKernel {
       }
     }
 
+    const primaryAgentId = uniqueAgents[0];
+    if (!primaryAgentId) throw new OrchestrationError('Coordination requires at least one Agent.');
+    this.tasks.updateTask(current.entity_id, { assigned_agent: primaryAgentId });
     this.tasks.transitionTaskLifecycle(current.entity_id, 'validated', actorId);
     const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', actorId);
     try {
