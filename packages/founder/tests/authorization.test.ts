@@ -94,7 +94,9 @@ describe('AuthorizationService', () => {
       }],
     };
     const store = new StaticAccessPolicyStore([mutable]);
-    mutable.rules[0].effect = 'deny';
+    const mutableRule = mutable.rules[0];
+    if (!mutableRule) throw new Error('Policy fixture rule missing.');
+    mutableRule.effect = 'deny';
     const stored = await store.get(mutable.policy_id);
 
     expect(stored?.rules[0]?.effect).toBe('allow');
