@@ -128,7 +128,7 @@ describe('OrchestrationKernel', () => {
       const completed = tasks.getTask(id);
       expect(completed?.lifecycle_state).toBe('completed');
       expect(completed?.audit_trail_ref).toBeTruthy();
-      const evidence = kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '');
+      const evidence = await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', FOUNDER);
       expect(evidence?.artifact_kind).toBe('test_report');
       expect(evidence?.lifecycle_state).toBe('completed');
     }
@@ -159,7 +159,7 @@ describe('OrchestrationKernel', () => {
     const completed = tasks.getTask(current.entity_id);
     expect(completed?.lifecycle_state).toBe('completed');
     expect(completed?.audit_trail_ref).toBeTruthy();
-    expect(kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '')?.artifact_kind).toBe('test_report');
+    expect((await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', FOUNDER)).artifact_kind).toBe('test_report');
   });
 
   it('suspends active work instead of falsely completing it after executor failure', async () => {
