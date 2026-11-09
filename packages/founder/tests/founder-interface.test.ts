@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { CanonicalEntity } from '@aios/core';
+import { ArtifactEntity, CanonicalEntity } from '@aios/core';
 import { LearningService } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
 import {
@@ -63,8 +63,8 @@ describe('FounderInterface', () => {
   });
 
   it('does not return protected entities or memories to an unauthorized actor', async () => {
-    const objects = new ObjectStore(CanonicalEntity);
-    const protectedEntity = objects.create(entity({ name: 'Confidential acquisition plan' }));
+    const objects = new ObjectStore(CanonicalEntity, { allowAccessPolicyOnCreate: true });
+    const protectedEntity = objects.create(entity({ name: 'Confidential acquisition plan', access_policy: randomUUID() }));
     const learning = new LearningService();
     await learning.recordObservation('Confidential acquisition plan', 'Unreleased transaction details');
     const api = founder(objects, learning, async () => false);
@@ -117,6 +117,35 @@ describe('FounderInterface', () => {
       rationale: 'Caller-supplied identity is not authority.',
       decided_by: 'human:other',
     }, FOUNDER)).rejects.toBeInstanceOf(FounderInputError);
+  });
+
+  it('hides existing decision artifacts from actors denied collection evidence access', async () => {
+    const objects = new ObjectStore(CanonicalEntity);
+    const learning = new LearningService();
+    const artifactStore = new ObjectStore(ArtifactEntity);
+    const writer = new FounderInterface(
+      objects,
+      learning,
+      { authorize: async () => true },
+      { decisionCollectionId: DECISION_COLLECTION_ID },
+      artifactStore,
+    );
+    const id = await writer.recordDecision({
+      title: 'Protected decision',
+      decision: 'Keep access restricted',
+      rationale: 'Decision artifacts are protected evidence.',
+      decided_by: FOUNDER,
+    }, FOUNDER);
+    const reader = new FounderInterface(
+      objects,
+      learning,
+      { authorize: async () => false },
+      { decisionCollectionId: DECISION_COLLECTION_ID },
+      artifactStore,
+    );
+
+    expect(await reader.getDecision(id, FOUNDER)).toBeUndefined();
+    expect(await reader.listDecisions(FOUNDER)).toEqual([]);
   });
 
   it('rejects incomplete decisions instead of persisting empty artifacts', async () => {
