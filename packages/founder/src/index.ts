@@ -20,6 +20,16 @@ export interface FounderResponse {
   matching_memories: ReturnType<LearningService['getKnowledge']>[];
 }
 
+function isActorReference(value: string): boolean {
+  return /^human:[^\\s:*]+$/.test(value) || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function searchableText(value: unknown): string {
+  if (typeof value === 'string') return value.toLocaleLowerCase();
+  try { return (JSON.stringify(value) ?? '').toLocaleLowerCase(); }
+  catch { return ''; }
+}
+
 export class FounderInputError extends Error {
   constructor(message: string) {
     super(message);
@@ -44,14 +54,13 @@ export class FounderInterface {
   }
 
   async query(question: string): Promise<FounderResponse> {
-    const normalized = question.trim().toLocaleLowerCase();
-    if (!normalized) throw new FounderInputError('Founder query must not be empty.');
+    const terms = question.trim().toLocaleLowerCase().split(/\\s+/).filter(Boolean);
+    if (terms.length === 0) throw new FounderInputError('Founder query must not be empty.');
 
-    const matchingEntities = this.objects.list().filter((entity) =>
-      [entity.name, entity.description ?? ''].some((value) =>
-        value.toLocaleLowerCase().includes(normalized),
-      ),
-    );
+    const matchingEntities = this.objects.list().filter((entity) => {
+      const haystack = searchableText([entity.name, entity.description ?? '']);
+      return terms.every((term) => haystack.includes(term));
+    });
     const matchingMemories = this.learning
       .listByStage('observation')
       .concat(
@@ -62,8 +71,7 @@ export class FounderInterface {
         this.learning.listByStage('historical_archive'),
       )
       .filter((record) =>
-        [record.subject, typeof record.content === 'string' ? record.content : (JSON.stringify(record.content) ?? '')]
-          .some((value) => value.toLocaleLowerCase().includes(normalized)),
+        terms.every((term) => `${record.subject} ${searchableText(record.content)}`.toLocaleLowerCase().includes(term)),
       )
       .map((record) => ({ ...record }));
 
@@ -82,8 +90,11 @@ export class FounderInterface {
     if (!title || !body || !rationale) {
       throw new FounderInputError('Decision title, decision, and rationale are required.');
     }
-    if (!decision.decided_by.trim()) {
-      throw new FounderInputError('Decision author is required.');
+    if (!isActorReference(decision.decided_by)) {
+      throw new FounderInputError('Decision author must be a valid human reference or Agent UUID.');
+    }
+    if (decision.evidence?.some((item) => typeof item !== 'string' || !item.trim())) {
+      throw new FounderInputError('Evidence references must be non-empty strings.');
     }
 
     const now = new Date().toISOString();
