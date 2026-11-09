@@ -81,6 +81,9 @@ export class PolicyAdministrationService {
     this.assertBootstrapPrincipal(actorId);
     // Reuse the strict immutable-policy validator before handing policy to storage.
     new StaticAccessPolicyStore([policy]);
+    if (await this.policies.get(policy.policy_id)) {
+      throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID for every change.');
+    }
     await this.administration.publish(policy, actorId);
   }
 
