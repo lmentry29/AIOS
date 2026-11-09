@@ -162,6 +162,20 @@ describe('OrchestrationKernel', () => {
     expect((await kernel.getExecutionEvidence(completed?.audit_trail_ref ?? '', FOUNDER)).artifact_kind).toBe('test_report');
   });
 
+
+  it('denies execution evidence reads after authorization is revoked', async () => {
+    const { tasks, kernel, setAllowed } = harness();
+    const current = tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
+    await kernel.dispatch(wf, FOUNDER);
+    const evidenceId = tasks.getTask(current.entity_id)?.audit_trail_ref;
+    if (!evidenceId) throw new Error('Execution evidence was not linked to Task.');
+    setAllowed(false);
+
+    await expect(kernel.getExecutionEvidence(evidenceId, FOUNDER)).rejects.toThrow(/read denied/);
+  });
+
   it('suspends active work instead of falsely completing it after executor failure', async () => {
     const { tasks, kernel } = harness({ throwOnExecute: true });
     const current = tasks.createTask(task());
