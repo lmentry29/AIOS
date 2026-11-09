@@ -59,6 +59,17 @@ export interface OrchestrationOptions {
   resolveAgent(task: TaskEntity): Promise<string>;
 }
 
+function isActorIdentifier(value: unknown): value is string {
+  return typeof value === 'string'
+    && (/^human:[^\\s:*]+$/.test(value)
+      || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+function isEntityIdentifier(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export class OrchestrationError extends Error {
   constructor(message: string) {
     super(message);
@@ -93,7 +104,12 @@ export class OrchestrationKernel {
   }
 
   async intake(request: WorkIntakeRequest, actorId: string): Promise<TaskEntity | WorkflowEntity> {
+    if (!isActorIdentifier(actorId)) throw new OrchestrationError('Intake requires a valid authenticated actor identifier.');
+    if (!request || typeof request !== 'object' || (request.kind !== 'task' && request.kind !== 'workflow')) {
+      throw new OrchestrationError('Work intake request must specify either a Task or Workflow.');
+    }
     if (request.kind === 'task') {
+      if (!request.task || !isEntityIdentifier(request.task.entity_id)) throw new OrchestrationError('Task intake requires a valid Task entity.');
       if (request.task.created_by !== actorId || request.task.owner_id !== actorId) {
         throw new OrchestrationError('Task intake provenance and ownership must match the authenticated requester.');
       }
@@ -105,6 +121,7 @@ export class OrchestrationKernel {
       if (!allowed) throw new OrchestrationError('Task intake denied by authorization policy.');
       return this.tasks.createTask(request.task);
     }
+    if (!request.workflow || !isEntityIdentifier(request.workflow.entity_id)) throw new OrchestrationError('Workflow intake requires a valid Workflow entity.');
     if (request.workflow.created_by !== actorId || request.workflow.owner_id !== actorId) {
       throw new OrchestrationError('Workflow intake provenance and ownership must match the authenticated requester.');
     }
@@ -118,6 +135,9 @@ export class OrchestrationKernel {
   }
 
   async dispatch(workflow: WorkflowEntity, actorId: string): Promise<WorkflowRunHandle> {
+    if (!workflow || !isEntityIdentifier(workflow.entity_id) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Workflow dispatch requires a valid Workflow and actor identifier.');
+    }
     if (!(await this.options.authorization.authorize({
       actor_id: actorId,
       action: 'dispatch',
@@ -201,6 +221,9 @@ export class OrchestrationKernel {
   }
 
   async coordinate(agents: string[], task: TaskEntity, actorId: string): Promise<void> {
+    if (!Array.isArray(agents) || !task || !isEntityIdentifier(task.entity_id) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Coordination requires Agent IDs, a valid Task, and a valid actor identifier.');
+    }
     const uniqueAgents = [...new Set(agents)];
     if (uniqueAgents.length < 2 || uniqueAgents.length !== agents.length) {
       throw new OrchestrationError('Coordination requires at least two distinct Agent IDs.');
@@ -251,6 +274,9 @@ export class OrchestrationKernel {
   }
 
   async getWorkflow(workflowId: string, actorId: string): Promise<WorkflowEntity> {
+    if (!isEntityIdentifier(workflowId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Workflow reads require valid Workflow and actor identifiers.');
+    }
     const workflow = this.workflows.get(workflowId);
     if (!workflow) throw new OrchestrationError(`Workflow "${workflowId}" was not found.`);
     if (!(await this.options.authorization.authorize({
@@ -269,6 +295,9 @@ export class OrchestrationKernel {
   }
 
   async getExecutionEvidence(evidenceId: string, taskId: string, actorId: string): Promise<ArtifactEntity> {
+    if (!isEntityIdentifier(evidenceId) || !isEntityIdentifier(taskId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Execution evidence reads require valid evidence, Task, and actor identifiers.');
+    }
     const evidence = this.evidence.get(evidenceId);
     if (!evidence) throw new OrchestrationError(`Execution evidence "${evidenceId}" was not found.`);
     const task = this.tasks.getTask(taskId);
