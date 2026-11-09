@@ -58,14 +58,22 @@ export interface KnowledgeRecord {
  * two things the ratified model has no field for, keyed by that entity's id.
  */
 function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
+  const seen = new WeakMap<object, unknown>();
   const cloneValue = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(cloneValue);
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
-      );
+    if (value === null || typeof value !== 'object') return value;
+    const existing = seen.get(value);
+    if (existing !== undefined) return existing;
+    if (value instanceof Date) return new Date(value.getTime());
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      seen.set(value, result);
+      for (const item of value) result.push(cloneValue(item));
+      return result;
     }
-    return value;
+    const result: Record<string, unknown> = {};
+    seen.set(value, result);
+    for (const [key, nested] of Object.entries(value)) result[key] = cloneValue(nested);
+    return result;
   };
   return cloneValue(record) as KnowledgeRecord;
 }
@@ -88,6 +96,8 @@ export class LearningService {
     content: unknown,
     options: ObservationOptions = {}
   ): Promise<string> {
+    const normalizedSubject = subject.trim();
+    if (!normalizedSubject) throw new Error('Knowledge subject must not be empty.');
     const now = new Date().toISOString();
     const owner_id = options.owner_id ?? 'human:founder';
 
@@ -96,7 +106,7 @@ export class LearningService {
         entity_id: randomUUID(),
         entity_type: 'canonical_object',
         entity_subtype: 'memory_object',
-        name: subject,
+        name: normalizedSubject,
         // 'episodic' — an observation is a record of something that happened
         // (Part VIII Ch.6's Memory Domains). Overridable; not a claim that every
         // observation is episodic.
@@ -123,9 +133,9 @@ export class LearningService {
     this.knowledge.set(memory.entity_id, {
       id: memory.entity_id,
       stage: 'observation',
-      subject,
+      subject: normalizedSubject,
       content,
-    });
+    }));
 
     return memory.entity_id;
   }
