@@ -72,7 +72,7 @@ export class PolicyAdministrationService {
     private readonly policies: AccessPolicyStore,
     private readonly administration: PolicyAdministrationPort,
   ) {
-    if (!isActorRef(bootstrapPrincipalId)) {
+    if (!isHumanPrincipal(bootstrapPrincipalId)) {
       throw new PolicyAdministrationError('Bootstrap principal must be a valid actor identifier.');
     }
   }
@@ -104,7 +104,7 @@ export class PolicyAdministrationService {
   }
 
   private assertBootstrapPrincipal(actorId: string): void {
-    if (!isActorRef(actorId) || actorId !== this.bootstrapPrincipalId) {
+    if (!isHumanPrincipal(actorId) || actorId !== this.bootstrapPrincipalId) {
       throw new PolicyAdministrationError('Policy lifecycle changes are restricted to the configured bootstrap principal.');
     }
   }
@@ -200,7 +200,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async publish(policy: AccessPolicy, actorId: string): Promise<void> {
-    if (!isActorRef(actorId)) throw new PolicyAdministrationError('Invalid policy publisher identity.');
+    if (!isHumanPrincipal(actorId)) throw new PolicyAdministrationError('Policy publication requires an authenticated human administrator.');
     new StaticAccessPolicyStore([policy]);
     if (this.policies.has(policy.policy_id)) {
       throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID.');
@@ -226,7 +226,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
-    if (!isActorRef(actorId)) throw new PolicyAdministrationError('Invalid policy administrator identity.');
+    if (!isHumanPrincipal(actorId)) throw new PolicyAdministrationError('Policy attachment requires an authenticated human administrator.');
     const policy = this.policies.get(policyId);
     if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
     const previousPolicyId = this.resourcePolicies.get(resourceId);
@@ -244,7 +244,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async revoke(resourceId: string, actorId: string): Promise<void> {
-    if (!isActorRef(actorId) || !isUuid(resourceId)) throw new PolicyAdministrationError('Invalid policy revocation request.');
+    if (!isHumanPrincipal(actorId) || !isUuid(resourceId)) throw new PolicyAdministrationError('Policy revocation requires an authenticated human administrator and valid resource UUID.');
     const policyId = this.resourcePolicies.get(resourceId);
     if (!policyId) throw new PolicyAdministrationError('Resource has no attached policy to revoke.');
     const policy = this.policies.get(policyId);
@@ -347,7 +347,11 @@ export class AuthorizationService {
 }
 
 function isActorRef(value: string): boolean {
-  return isUuid(value) || /^human:[^\s:*]+$/.test(value);
+  return isUuid(value) || isHumanPrincipal(value);
+}
+
+function isHumanPrincipal(value: string): boolean {
+  return /^human:[^\s:*]+$/.test(value);
 }
 
 function isAccessAction(value: string): value is AccessAction {
