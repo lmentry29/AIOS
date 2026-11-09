@@ -27,6 +27,37 @@ export interface KnowledgeRecord {
   content: unknown;
 }
 
+export interface KnowledgeRepositoryPort {
+  create(record: KnowledgeRecord): void;
+  get(id: string): KnowledgeRecord | undefined;
+  update(record: KnowledgeRecord): void;
+  listByStage(stage: KnowledgeStage): KnowledgeRecord[];
+}
+
+/** In-memory adapter for tests and single-process development; not durable. */
+export class InMemoryKnowledgeRepository implements KnowledgeRepositoryPort {
+  private readonly records = new Map<string, KnowledgeRecord>();
+
+  create(record: KnowledgeRecord): void {
+    if (this.records.has(record.id)) throw new Error(`Knowledge record "${record.id}" already exists.`);
+    this.records.set(record.id, cloneKnowledge(record));
+  }
+
+  get(id: string): KnowledgeRecord | undefined {
+    const record = this.records.get(id);
+    return record ? cloneKnowledge(record) : undefined;
+  }
+
+  update(record: KnowledgeRecord): void {
+    if (!this.records.has(record.id)) throw new KnowledgeNotFoundError(record.id);
+    this.records.set(record.id, cloneKnowledge(record));
+  }
+
+  listByStage(stage: KnowledgeStage): KnowledgeRecord[] {
+    return [...this.records.values()].filter((record) => record.stage === stage).map(cloneKnowledge);
+  }
+}
+
 /**
  * LearningService — the Knowledge Evolution lifecycle, per
  * docs/engineering/runtime-interfaces.md §2.7.
@@ -85,10 +116,11 @@ function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
 
 export class LearningService {
   private readonly memories: MemoryObjectRepositoryPort;
-  private readonly knowledge = new Map<string, KnowledgeRecord>();
+  private readonly knowledge: KnowledgeRepositoryPort;
 
-  constructor(store?: MemoryObjectRepositoryPort) {
+  constructor(store?: MemoryObjectRepositoryPort, knowledgeStore?: KnowledgeRepositoryPort) {
     this.memories = store ?? new ObjectStore<MemoryObjectEntityType>(MemoryObjectEntity);
+    this.knowledge = knowledgeStore ?? new InMemoryKnowledgeRepository();
   }
 
   /**
@@ -135,7 +167,7 @@ export class LearningService {
       })
     );
 
-    this.knowledge.set(memory.entity_id, cloneKnowledge({
+    this.knowledge.create(cloneKnowledge({
       id: memory.entity_id,
       stage: 'observation',
       subject: normalizedSubject,
@@ -163,13 +195,13 @@ export class LearningService {
       throw new InvalidStagePromotionError(observationId, record.stage, toStage);
     }
 
-    this.knowledge.set(observationId, { ...record, stage: toStage });
+    this.knowledge.update({ ...record, stage: toStage });
   }
 
   /** Moves a record to 'historical_archive', the terminal stage of the axis (§2.7). */
   async archiveKnowledge(id: string): Promise<void> {
     const record = this.require(id);
-    this.knowledge.set(id, { ...record, stage: 'historical_archive' });
+    this.knowledge.update({ ...record, stage: 'historical_archive' });
   }
 
   getKnowledge(id: string): KnowledgeRecord | undefined {
@@ -183,9 +215,7 @@ export class LearningService {
   }
 
   listByStage(stage: KnowledgeStage): KnowledgeRecord[] {
-    return Array.from(this.knowledge.values())
-      .filter((record) => record.stage === stage)
-      .map(cloneKnowledge);
+    return this.knowledge.listByStage(stage).map(cloneKnowledge);
   }
 
   private require(id: string): KnowledgeRecord {
