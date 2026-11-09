@@ -9,7 +9,7 @@ Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, not merged. Do not merge while implementation and audit work remain.
-- Latest implementation head at snapshot: `3cc247bd764f966b15540d210ec8f0649bec1255`
+- Latest implementation head at snapshot: `c6a62eac37c6204e7e8e24d7f5a1a871d542e35d`
 - The PR adds an MIT license and contributor/community files on its branch. The default branch's GitHub repository metadata still reports no recognized license until that change is merged.
 - No external adoption is claimed. Repository metadata at the last live read showed 1 star, 0 forks, 0 network forks, and 0 subscribers. Those are point-in-time counts, not measures of downstream impact.
 
@@ -42,7 +42,7 @@ Founder and Orchestration are not production-complete. Their interfaces are adap
 
 ## Validation evidence
 
-At commit `3cc247bd764f966b15540d210ec8f0649bec1255`, GitHub Actions reported:
+At commit `c6a62eac37c6204e7e8e24d7f5a1a871d542e35d`, GitHub Actions reported:
 - CI: passed (`pnpm turbo lint typecheck test build`)
 - Conformance: passed
 - Schema Check: passed
