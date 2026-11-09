@@ -143,7 +143,8 @@ export class AuthorizationService {
             reason = 'policy_missing_or_invalid';
           } else {
             policyVersion = policy.version;
-            const matching = policy.rules.filter((rule) =>
+            const rules = policy.rules as readonly AccessRule[];
+            const matching = rules.filter((rule: AccessRule) =>
               rule.subject_ids.includes(actorId)
               && rule.actions.includes(action)
               && rule.resource_ids.includes(resourceId),
