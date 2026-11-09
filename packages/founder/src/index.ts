@@ -95,9 +95,11 @@ export class FounderAuthorizationError extends Error {
 }
 
 /**
- * Founder Interface: authorization-gated synthesis over canonical records and learning
- * records, plus protected Artifact-backed decision capture. Actor IDs must be supplied
- * by a trusted host identity subsystem; this package does not authenticate callers.
+ * Founder Interface: authorization-gated synthesis over canonical records, learning
+ * records, and read-only Obsidian vault evidence, plus protected Artifact-backed decision
+ * capture. Actor IDs must be supplied by a trusted host identity subsystem; this package
+ * does not authenticate callers. Vault evidence is read-only and never promoted to
+ * permanent Memory by a query.
  *
  * Resource reads are filtered through the authorization port before any result is
  * returned. Decision operations are scoped to a configured, policy-protected collection.
