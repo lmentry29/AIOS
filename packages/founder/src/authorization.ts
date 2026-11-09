@@ -203,7 +203,16 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
     if (this.policies.has(policy.policy_id)) {
       throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID.');
     }
-    this.policies.set(policy.policy_id, new StaticAccessPolicyStore([policy]).get(policy.policy_id) as AccessPolicy);
+    this.policies.set(policy.policy_id, Object.freeze({
+      policy_id: policy.policy_id,
+      version: policy.version,
+      rules: Object.freeze(policy.rules.map((rule) => Object.freeze({
+        ...rule,
+        subject_ids: Object.freeze([...rule.subject_ids]),
+        actions: Object.freeze([...rule.actions]),
+        resource_ids: Object.freeze([...rule.resource_ids]),
+      }))),
+    }));
     this.events.push({
       event_id: randomUUID(),
       operation: 'publish',
