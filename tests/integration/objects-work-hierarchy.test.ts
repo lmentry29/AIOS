@@ -95,6 +95,9 @@ describe('objects → work-hierarchy: ObjectStore’s COM guarantees arrive inta
     const store = new TaskStore();
     const task = makeTask();
     store.createTask(task);
+    store.transitionTaskLifecycle(task.entity_id, 'validated', FOUNDER);
+    store.transitionTaskLifecycle(task.entity_id, 'active', FOUNDER);
+    store.transitionTaskLifecycle(task.entity_id, 'completed', FOUNDER);
     store.transitionTaskLifecycle(task.entity_id, 'archived', FOUNDER);
 
     // TaskStore does not implement this rule. It gets it from ObjectStore, and this
