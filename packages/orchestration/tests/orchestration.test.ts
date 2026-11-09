@@ -163,6 +163,34 @@ describe('OrchestrationKernel', () => {
   });
 
 
+
+  it('isolates immutable Task and executor snapshots passed to the verifier', async () => {
+    const tasks = new TaskStore();
+    const current = tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    const kernel = new OrchestrationKernel(tasks, {
+      authorization: { authorize: async () => true },
+      execution: {
+        validateAgent: async () => true,
+        executeTask: async () => ({ summary: 'done', evidence: ['executor:result'] }),
+        coordinate: async () => ({ summary: 'done', evidence: ['executor:result'] }),
+      },
+      verification: {
+        verify: async (request) => {
+          expect(() => { (request.task as { name: string }).name = 'tampered'; }).toThrow();
+          expect(() => { (request.execution_result as { summary: string }).summary = 'forged'; }).toThrow();
+          return { accepted: true, reason: 'verified', evidence: ['verifier:checked'] };
+        },
+      },
+      resolveAgent: async () => randomUUID(),
+    });
+    await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
+    await kernel.dispatch(wf, FOUNDER);
+
+    expect(tasks.getTask(current.entity_id)?.name).toBe(current.name);
+    expect(tasks.getTask(current.entity_id)?.lifecycle_state).toBe('completed');
+  });
+
   it('denies execution evidence reads after authorization is revoked', async () => {
     const { tasks, kernel, setAllowed } = harness();
     const current = tasks.createTask(task());
