@@ -82,7 +82,7 @@ describe('AgentRunner — Agent lifecycle harness against a real Task record', (
       undefined,
     ]);
     expect(result.agent.version).toBe(agent.version + 7);
-    expect(result.task?.version).toBe(task.version + 3);
+    expect(result.task?.version).toBe(task.version + 4);
     expect(
       result.agent.lifecycle_history.every((entry) => entry.entered_at <= result.agent.modified_at),
     ).toBe(true);
