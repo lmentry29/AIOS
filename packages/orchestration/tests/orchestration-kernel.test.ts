@@ -106,7 +106,7 @@ describe('OrchestrationKernel', () => {
     expect(h.tasks.getTask(first.entity_id)?.assigned_agent).toBe(h.agentId);
     const evidenceId = h.tasks.getTask(first.entity_id)?.audit_trail_ref;
     expect(evidenceId).toBeDefined();
-    const evidence = evidenceId ? h.kernel.getExecutionEvidence(evidenceId) : undefined;
+    const evidence = evidenceId ? h.kernel.getExecutionEvidence(evidenceId, 'human:founder') : undefined;
     expect(evidence?.artifact_kind).toBe('test_report');
     expect(evidence?.lifecycle_state).toBe('completed');
     expect(evidence?.lifecycle_history).toHaveLength(3);
