@@ -4,7 +4,7 @@
 
 The goal is not to create an unsupervised company-in-a-box. The goal is to make agentic engineering work more inspectable, repeatable, testable, and accountable to human operators.
 
-> **Project status: early-stage / not production-ready.** Seven packages have established domain runtime implementations. `orchestration` and `founder` now contain early runtime implementations, but neither is complete: execution and authorization are adapter-driven, policy management is not durable, and orchestration persistence is in-memory. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
+> **Project status: early-stage / not production-ready.** Seven packages have established domain runtime implementations. `orchestration` and `founder` now contain early runtime implementations, but neither is complete: execution is adapter-driven, policy and audit storage are not durable, the Obsidian evidence adapter has not been connected to a live vault, and orchestration persistence is in-memory. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
 
 ## Who this is for
 
@@ -65,11 +65,16 @@ AIOS is experimental software. In particular:
 - Run experiments in isolated environments with least-privilege credentials and disposable test data.
 - Treat repository content, issues, external documents, and tool output as untrusted input.
 - Keep a human responsible for reviewing changes and consequential actions.
-- Authorization semantics are ratified by ADR-0013. Ordinary ObjectStore writes reject access-policy attachment; a privileged bootstrap option can seed policy-bearing records, but there is no runtime policy-administration/attachment/revocation service. Identity authentication, durable policy storage, and durable decision auditing are not implemented. Do not treat the current in-process evaluator as a complete security boundary.
+- Authorization semantics are ratified by ADR-0013. Founder includes a human-only policy-administration facade and an in-memory registry for development; no durable transactional policy store or append-only production audit sink exists. Ordinary ObjectStore writes reject access-policy attachment. Identity authentication remains the trusted host's responsibility. Do not treat the current in-process evaluator as a complete security boundary.
 - The current `AgentRunner` is a lifecycle/conformance harness: it records Agent and Task state transitions but does not invoke tools, execute Task actions, or verify task outcomes. Its transition to `completed` is not proof that work was performed.
 - Do not use this project with sensitive personal, customer, regulated, or confidential data unless you have independently assessed the risks.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and [SUPPORT.md](SUPPORT.md) for help.
+
+
+## Founder Intelligence persistence
+
+ADR-0014 is Accepted: the Obsidian vault is the persistence substrate for Founder Intelligence; AIOS validates canonical records; no separate database is introduced for this domain. The Founder package includes a read-only Obsidian evidence adapter that requires an explicit collection-level `read_evidence` grant before it reads note bodies, verifies source hashes, and exposes raw notes as evidence. It does not hydrate unmarked Markdown into canonical objects or write to the vault. The adapter is tested against mocked HTTP responses and is not connected to a live vault; see [the adapter contract](docs/architecture/obsidian-founder-evidence-adapter.md).
 
 ## Contributing
 
