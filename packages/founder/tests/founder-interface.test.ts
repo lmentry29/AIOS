@@ -98,6 +98,44 @@ describe('FounderInterface', () => {
     expect((await api.listDecisions(FOUNDER)).map((item) => item.entity_id)).toContain(id);
   });
 
+  it('isolates decision artifacts between protected Founder collections', async () => {
+    const objects = new ObjectStore(CanonicalEntity);
+    const learning = new LearningService();
+    const artifactStore = new ObjectStore(ArtifactEntity);
+    const firstCollection = randomUUID();
+    const secondCollection = randomUUID();
+    const first = new FounderInterface(
+      objects,
+      learning,
+      { authorize: async () => true },
+      { decisionCollectionId: firstCollection },
+      artifactStore,
+    );
+    const second = new FounderInterface(
+      objects,
+      learning,
+      { authorize: async () => true },
+      { decisionCollectionId: secondCollection },
+      artifactStore,
+    );
+    const firstId = await first.recordDecision({
+      title: 'First collection decision',
+      decision: 'Keep records scoped',
+      rationale: 'A collection grant must not expose another collection.',
+      decided_by: FOUNDER,
+    }, FOUNDER);
+    const secondId = await second.recordDecision({
+      title: 'Second collection decision',
+      decision: 'Keep records isolated',
+      rationale: 'Each collection has an independent policy boundary.',
+      decided_by: FOUNDER,
+    }, FOUNDER);
+
+    expect((await first.listDecisions(FOUNDER)).map((item) => item.entity_id)).toEqual([firstId]);
+    expect((await second.listDecisions(FOUNDER)).map((item) => item.entity_id)).toEqual([secondId]);
+    expect(await second.getDecision(firstId, FOUNDER)).toBeUndefined();
+  });
+
   it('denies decision capture when collection authorization is missing', async () => {
     const api = founder(new ObjectStore(CanonicalEntity), new LearningService(), async () => false);
     await expect(api.recordDecision({
