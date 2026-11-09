@@ -50,7 +50,7 @@ Every authorization decision and every policy lifecycle change MUST produce a du
 ## Implementation consequences
 
 - The existing `AuthorizationService` in `@aios/founder` implements exact matching, default deny, deny-overrides, input validation, and fail-closed policy resolution.
-- The current implementation accepts immutable policy configuration at construction. It is an in-process evaluator, not yet a persistent policy registry or administration service.
+- The current evaluator accepts immutable policy configuration at construction. `PolicyAdministrationService` now restricts publish/attach/revoke calls to an out-of-band configured bootstrap principal and delegates each operation to a port whose implementation must atomically persist state and append audit. No concrete durable administration port is supplied yet; the evaluator is not a persistent policy registry.
 - Orchestration requires explicit requester identity and calls the authorization port for intake, dispatch, execution, coordination, status reads, and execution-evidence reads. Evidence reads are authorized against the parent Task's resource policy.
 - Production deployment remains blocked until authenticated identity, durable policy storage and administration, policy attachment/revocation controls, durable decision audit, and security testing are implemented.
 - The access-policy field remains a UUID reference; this ADR does not silently redefine Canonical Entity schemas or add an unreviewed persisted entity subtype.
