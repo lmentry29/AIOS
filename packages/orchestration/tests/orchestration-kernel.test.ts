@@ -65,7 +65,6 @@ function harness(overrides: {
   const execution: AgentExecutionPort = {
     validateAgent: vi.fn(async () => true),
     executeTask: vi.fn(async () => ({
-      verified: overrides.verified ?? true,
       summary: 'Acceptance criteria checked',
       evidence: overrides.evidence ?? ['test-report-1'],
     })),
@@ -78,6 +77,13 @@ function harness(overrides: {
   const kernel = new OrchestrationKernel(tasks, {
     authorization,
     execution,
+    verification: {
+      verify: async () => ({
+        accepted: options.verified ?? true,
+        reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+        evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+      }),
+    },
     resolveAgent: async () => agentId,
   });
   return { tasks, agentId, authorization, execution, kernel };
