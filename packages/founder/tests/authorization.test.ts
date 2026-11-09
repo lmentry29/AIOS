@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { AuthorizationService, InMemoryAuthorizationAuditStore, PolicyAdministrationService, PolicyAdministrationError, StaticAccessPolicyStore, type AccessPolicy } from '../src/authorization.js';
+import { AuthorizationService, InMemoryAuthorizationAuditStore, PolicyAdministrationService, PolicyAdministrationError, InMemoryPolicyRegistry, StaticAccessPolicyStore, type AccessPolicy } from '../src/authorization.js';
 
 describe('AuthorizationService', () => {
   const policyId = randomUUID();
@@ -82,6 +82,22 @@ describe('AuthorizationService', () => {
 
 
 
+
+
+  it('publishes, attaches, authorizes, and revokes through the in-memory admin registry', async () => {
+    const registry = new InMemoryPolicyRegistry();
+    const admin = new PolicyAdministrationService(actorId, registry, registry);
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(registry, (id) => registry.resolve(id), audit);
+
+    await admin.publish(policy, actorId);
+    await admin.attach(resourceId, policyId, actorId);
+    expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(true);
+
+    await admin.revoke(resourceId, actorId);
+    expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(false);
+    expect(registry.listAudit().map((event) => event.operation)).toEqual(['publish', 'attach', 'revoke']);
+  });
 
   it('restricts policy lifecycle operations to the out-of-band bootstrap principal', async () => {
     const events: string[] = [];
