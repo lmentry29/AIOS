@@ -66,7 +66,7 @@ The host must validate required environment variables at startup and must not lo
 
 ## Snapshot integrity and limits
 
-- Default API origin: http://127.0.0.1:4444; localhost is accepted only with an explicit port.
+- Default and only accepted API origin: http://127.0.0.1:4444. The adapter rejects localhost, IPv6 loopback, LAN, and remote hosts.
 - Basic Authentication is sent only to the configured loopback origin.
 - Redirects are rejected and responses are not cached.
 - Request timeout: 10 seconds.
@@ -79,7 +79,7 @@ The host must validate required environment variables at startup and must not lo
 
 ## Query behavior
 
-FounderInterface.queryEvidence performs deterministic all-term lexical matching over path, title, folder, frontmatter, and note body. It returns matching source records plus inventory warnings. It does not synthesize or promote memories. Semantic retrieval, embeddings, summarization, contradiction resolution, and classification approval are not implemented by this adapter.
+FounderInterface.queryEvidence performs deterministic all-term lexical matching over path, title, folder, frontmatter, and note body. It returns matching source records, inventory warnings, the inventory timestamp, and the total file count. It does not synthesize or promote memories. Semantic retrieval, embeddings, summarization, contradiction resolution, and classification approval are not implemented by this adapter.
 
 ## Verification status
 
