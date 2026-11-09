@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   AuthorizedVaultEvidenceReader,
-  ObsidianVaultEvidenceAdapter,
   VaultEvidenceAuthorizationError,
   VaultEvidenceChangedError,
   VaultEvidenceError,
@@ -12,6 +11,7 @@ import { FounderInterface } from '../src/index.js';
 
 const vaultResourceId = randomUUID();
 const password = 'a'.repeat(43);
+const authorization = { authorize: vi.fn().mockResolvedValue(true) };
 
 function metadata(path: string, content: string) {
   return {
@@ -53,36 +53,42 @@ function makeFetcher(contentByPath: Record<string, string>) {
   return { fetcher, calls };
 }
 
-describe('ObsidianVaultEvidenceAdapter', () => {
+describe('AuthorizedVaultEvidenceReader', () => {
   it('accepts only authenticated explicit-port loopback URLs and strong local passwords', () => {
-    expect(() => new ObsidianVaultEvidenceAdapter({
+    expect(() => new AuthorizedVaultEvidenceReader({
       baseUrl: 'https://example.com',
       password,
       vaultResourceId,
-    })).toThrow(VaultEvidenceError);
-    expect(() => new ObsidianVaultEvidenceAdapter({
+    }, authorization)).toThrow(VaultEvidenceError);
+    expect(() => new AuthorizedVaultEvidenceReader({
       baseUrl: 'http://192.168.1.20:4444',
       password,
       vaultResourceId,
-    })).toThrow(VaultEvidenceError);
-    expect(() => new ObsidianVaultEvidenceAdapter({
+    }, authorization)).toThrow(VaultEvidenceError);
+    expect(() => new AuthorizedVaultEvidenceReader({
       password: 'short',
       vaultResourceId,
-    })).toThrow(VaultEvidenceError);
+    }, authorization)).toThrow(VaultEvidenceError);
   });
 
-  it('lists metadata and reads note bodies only through authenticated loopback GET requests', async () => {
-    const note = '---\ntype: candidate-memory\n---\n# Founder memory evidence';
-    const { fetcher, calls } = makeFetcher({ '11 AI Memory/founder.md': note });
-    const adapter = new ObsidianVaultEvidenceAdapter({ password, vaultResourceId, fetch: fetcher });
-    const inventory = await adapter.listEvidence();
+  it('authorizes the vault collection before listing metadata or reading note bodies', async () => {
+    const { fetcher, calls } = makeFetcher({ '11 AI Memory/founder.md': '# Founder memory' });
+    const deniedAuthorization = { authorize: vi.fn().mockResolvedValue(false) };
+    const deniedReader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: fetcher }, deniedAuthorization);
+    await expect(deniedReader.list('human:founder')).rejects.toThrow(VaultEvidenceAuthorizationError);
+    expect(deniedAuthorization.authorize).toHaveBeenCalledWith({
+      actor_id: 'human:founder',
+      action: 'read_evidence',
+      resource_id: vaultResourceId,
+    });
+    expect(calls).toHaveLength(0);
 
-    expect(inventory.total_files).toBe(1);
+    const allowedAuthorization = { authorize: vi.fn().mockResolvedValue(true) };
+    const allowedReader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: fetcher }, allowedAuthorization);
+    const inventory = await allowedReader.list('human:founder');
+    expect(inventory.files).toHaveLength(1);
+    expect(inventory.files[0]?.content).toBe('# Founder memory');
     expect(inventory.files[0]?.source_id).toBe(vaultEvidenceSourceId(vaultResourceId, '11 AI Memory/founder.md'));
-    expect(inventory.files[0]?.frontmatter.type).toBe('candidate-memory');
-
-    const record = await adapter.readEvidence(inventory.files[0]!);
-    expect(record.content).toBe(note);
     expect(calls).toHaveLength(2);
     for (const call of calls) {
       expect(call.url.origin).toBe('http://127.0.0.1:4444');
@@ -94,43 +100,39 @@ describe('ObsidianVaultEvidenceAdapter', () => {
     }
   });
 
-  it('rejects traversal paths, duplicate paths, and content that changed after inventory', async () => {
+  it('rejects traversal paths and detects notes changed after the metadata snapshot', async () => {
     const traversalFetcher = vi.fn(async () => response({
-      files: [{ ...metadata('../outside.md', 'x') }],
+      files: [metadata('../outside.md', 'x')],
       warnings: [],
       totalFiles: 1,
       lastUpdated: '2026-11-09T12:00:00.000Z',
     })) as unknown as typeof fetch;
-    const traversalAdapter = new ObsidianVaultEvidenceAdapter({ password, vaultResourceId, fetch: traversalFetcher });
-    await expect(traversalAdapter.listEvidence()).rejects.toThrow(VaultEvidenceError);
+    const traversalReader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: traversalFetcher }, authorization);
+    await expect(traversalReader.list('human:founder')).rejects.toThrow(VaultEvidenceError);
 
-    const note = '# original';
-    const { fetcher } = makeFetcher({ '00 Home/note.md': note });
-    const adapter = new ObsidianVaultEvidenceAdapter({ password, vaultResourceId, fetch: fetcher });
-    const inventory = await adapter.listEvidence();
-    const tampered = { ...inventory.files[0]!, content_hash: '0'.repeat(64) };
-    await expect(adapter.readEvidence(tampered)).rejects.toThrow(VaultEvidenceChangedError);
+    const original = '# original';
+    const changedFetcher = (async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof URL ? input.toString() : String(input));
+      if (url.pathname === '/api/vault/evidence') {
+        const files = [metadata('00 Home/note.md', original)];
+        return response({ files, warnings: [], totalFiles: 1, lastUpdated: '2026-11-09T12:00:00.000Z' });
+      }
+      return response({ path: '00 Home/note.md', content: '# changed' });
+    }) as typeof fetch;
+    const changedReader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: changedFetcher }, authorization);
+    await expect(changedReader.list('human:founder')).rejects.toThrow(VaultEvidenceChangedError);
   });
 
-  it('authorizes the vault collection before listing metadata or reading note bodies', async () => {
-    const { fetcher, calls } = makeFetcher({ '11 AI Memory/founder.md': '# Founder memory' });
-    const adapter = new ObsidianVaultEvidenceAdapter({ password, vaultResourceId, fetch: fetcher });
-    const deniedAuthorization = { authorize: vi.fn().mockResolvedValue(false) };
-    const deniedReader = new AuthorizedVaultEvidenceReader(adapter, deniedAuthorization);
-    await expect(deniedReader.list('human:founder')).rejects.toThrow(VaultEvidenceAuthorizationError);
-    expect(deniedAuthorization.authorize).toHaveBeenCalledWith({
-      actor_id: 'human:founder',
-      action: 'read_evidence',
-      resource_id: vaultResourceId,
-    });
-    expect(calls).toHaveLength(0);
-
-    const allowedAuthorization = { authorize: vi.fn().mockResolvedValue(true) };
-    const allowedReader = new AuthorizedVaultEvidenceReader(adapter, allowedAuthorization);
-    const inventory = await allowedReader.list('human:founder');
-    expect(inventory.files).toHaveLength(1);
-    expect(inventory.files[0]?.content).toBe('# Founder memory');
-    expect(calls).toHaveLength(2);
+  it('rejects duplicate paths in an evidence inventory', async () => {
+    const note = '# duplicate';
+    const duplicateFetcher = vi.fn(async () => response({
+      files: [metadata('00 Home/note.md', note), metadata('00 Home/note.md', note)],
+      warnings: [],
+      totalFiles: 2,
+      lastUpdated: '2026-11-09T12:00:00.000Z',
+    })) as unknown as typeof fetch;
+    const reader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: duplicateFetcher }, authorization);
+    await expect(reader.list('human:founder')).rejects.toThrow(/duplicate path/i);
   });
 });
 
