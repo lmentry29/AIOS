@@ -31,19 +31,35 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
    touching the same variable, that's a defect, not a style preference.
 5. **Never write to `lifecycle_history` or `relationships` in place.** Both are append-only.
    An in-place edit to either is a data-integrity bug, not a valid optimization.
-6. **`access_policy` is an unimplemented dependency, not a TODO to fill in casually.**
-   No governance/authorization model is ratified. If a change needs real authorization
-   logic, that's a signal to raise a founder-level product decision, not to invent a
-   permission model inline.
-7. **Plugin-related code should be written expecting change.** It's the lowest-confidence
-   entity in the model — no source specification for it exists anywhere in the certified
-   corpus. Don't build multiple Plugins against the current contract before it's validated
-   against one real implementation.
+6. **Authorization semantics are ratified by ADR-0013.** Protected operations use
+   resource-attached, exact-match, default-deny policies; explicit deny overrides allow;
+   there are no wildcard grants, role expansion, or owner-implied permissions. Identity
+   must come from a trusted host identity subsystem — a caller-supplied actor string is
+   not authentication. Policy publication/attachment/revocation and authorization
+   decisions require durable, append-only audit. The current evaluator and in-memory
+   registry are test/development components, not a production security boundary. Do not
+   change authorization semantics without an amending ADR, and do not claim production
+   security until the host identity and durable policy/audit implementations exist.
+7. **Plugin/Adapter execution remains deferred.** ADR-0012 is Proposed and establishes
+   capability mediation as the intended requester-facing principle, but its replacement
+   runtime contract and Capability Registry schema are follow-on work. The first real
+   adapter integration is the reopening trigger for the deferred Plugin/Adapter execution
+   model. Do not invent an invocation model or expose provider selection to requesters
+   without the required architecture decision.
 8. **`schemas/generated/**` is generated, never hand-edited.** Edit
    `packages/core/src/schema/*.ts` (Zod) instead and regenerate.
 9. **Commit convention:** Conventional Commits, plus an AI-attribution trailer on
    AI-authored commits (`Implemented-by: Claude` or `Implemented-by: Ollama/<model>`),
    per `docs/process/ai-development-plan.md`.
+10. **A completed lifecycle state is not proof of completed work.** The current
+    `AgentRunner` is a lifecycle/conformance harness, not a tool-executing agent. The
+    Orchestration Kernel may mark a Task complete only after an independent verifier
+    accepts the result and evidence. Never allow an executor to self-attest.
+11. **In-memory adapters are not production persistence.** Object, Task, Workflow,
+    evidence, learning, policy, and audit stores currently include in-memory
+    implementations for tests/development. Production use requires durable storage,
+    transactions, recovery, trusted identity, protected secrets, sandboxed execution,
+    and operational controls. Keep these limitations explicit in code and documentation.
 
 ## Where to file disagreement
 
