@@ -115,7 +115,7 @@ export class FounderInterface {
     const entities = this.objects.list();
     const authorizedEntities = await Promise.all(entities.map(async (entity) => ({
       entity,
-      allowed: await this.isAllowed(actorId, 'read_status', entity.entity_id),
+      allowed: await this.isAllowed(actorId, 'read_evidence', entity.entity_id),
     })));
     const matchingEntities = authorizedEntities
       .filter(({ entity, allowed }) => allowed && terms.every((term) =>
