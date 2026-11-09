@@ -56,7 +56,8 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
     `AgentRunner` is a lifecycle/conformance harness, not a tool-executing agent. The
     Orchestration Kernel may mark a Task complete only after an independent verifier
     accepts the result and evidence. Never allow an executor to self-attest.
-12. **In-memory adapters are not production persistence.** Object, Task, Workflow,
+12. **Founder Intelligence persists in the Obsidian vault.** ADR-0014 is Accepted: do not add a separate Founder Intelligence database. AIOS validates managed records against canonical schemas. Vault integration is read-and-propose by default; permanent Memory writes require explicit human review and authorization. Do not hydrate, migrate, rename, rewrite, or normalize existing notes without a reviewed proposal and a separate human-approved write action.
+13. **In-memory adapters are not production persistence.** Object, Task, Workflow,
     evidence, learning, policy, and audit stores currently include in-memory
     implementations for tests/development. Production use requires durable storage,
     transactions, recovery, trusted identity, protected secrets, sandboxed execution,
