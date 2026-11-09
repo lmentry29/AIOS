@@ -1,139 +1,80 @@
-# AIOS — Project State
+# AIOS — Live Project State
 
-**This file is git-tracked and lives at `docs/process/project-state.md`.**
-It replaces `AIOS-CURRENT-PROJECT-STATE.md` (a Claude project-knowledge
-upload with no git presence, confirmed stale as of 2026-07-19) as the
-canonical answer to "where does this project actually stand."
+Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and Actions APIs. This snapshot describes the public repository and the active implementation branch; it does not claim local-machine verification.
 
-**Regeneration rule:** at the start of any session doing non-trivial work,
-regenerate this file's data sections (everything below the horizontal rule)
-from real commands — `git fetch && git log origin/main --oneline -20`,
-`git log main --oneline -20`, `git status`, ADR status lines, the
-divergence log, `packages/*/src/` contents — not from memory of a prior
-session. If you're Claude Code: do this before trusting anything else that
-claims to describe current state, including this file if it's more than a
-few sessions old. Check its own timestamp below before trusting it.
+## Repository and active change
 
-**Sync rule:** the Notion page "AIOS — Live Project State" mirrors this
-file's content for cross-device reading. This file is the source of truth;
-Notion is the read-surface. If they disagree, this file wins — update
-Notion to match, not the other way around.
+- Repository: https://github.com/lmentry29/AIOS
+- Visibility: public; default branch: `main`
+- Active implementation branch: `community/open-source-foundation`
+- Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
+- PR status: open, draft, not merged. Do not merge while implementation and audit work remain.
+- Latest implementation head at snapshot: `bf674fc328ddb8be2ec5adc31a73154b20d094a6`
+- The PR adds an MIT license and contributor/community files on its branch. The default branch's GitHub repository metadata still reports no recognized license until that change is merged.
+- No external adoption is claimed. Repository metadata at the last live read showed 1 star, 0 forks, 0 network forks, and 0 subscribers. Those are point-in-time counts, not measures of downstream impact.
 
----
+## Current package maturity
 
-## Last verified: 2026-07-19, via live `git fetch` + repo scan (re-verified,
-morning unattended run)
+Nine planned workspace packages have source implementations, at different maturity levels:
 
-## Repository
+| Package | Current state |
+|---|---|
+| `@aios/core` | Established schemas and canonical types |
+| `@aios/objects` | Established in-memory object store with lifecycle, relationship, immutability, and mutation guards |
+| `@aios/work-hierarchy` | Task and Objective stores |
+| `@aios/containers` | Project store only; eight container concepts remain unpromoted by ADR-0011 |
+| `@aios/agents` | Agent lifecycle/conformance runner; not a real tool-executing agent runtime |
+| `@aios/tools` | Plugin lifecycle management; adapter invocation remains deferred |
+| `@aios/learning` | Knowledge records and evolution stages |
+| `@aios/founder` | Early runtime: lexical knowledge query, ADR artifact capture, policy review queue, default-deny authorization and policy administration ports |
+| `@aios/orchestration` | Early runtime: authorized intake, ordered dispatch, multi-agent coordination, independent verification port, evidence artifacts, status/evidence reads |
 
-`github.com/lmentry29/AIOS`, private.
+Founder and Orchestration are not production-complete. Their interfaces are adapter-driven; in-memory implementations are for tests/development only.
 
-**Push status:** local `main` is 5 commits ahead of `origin/main`, not pushed:
+## Authorization and architecture decisions
 
-```
-4d29be0 docs: add project-state.md from live verification
-058fb7b feat(containers): add listArchivedProjects helper
-f0a7012 chore(qwen-coder): prompt-prep before delegation, not just post-hoc review
-057d8eb feat(containers): add deleteProject soft-delete + qwen-coder feedback
-19dea28 chore: add package-gated Ollama delegation subagent
-```
+- ADR-0013 — **Accepted (2026-11-08)**: resource-attached, exact-match, default-deny authorization; deny overrides allow; no wildcard or owner-implied grants; identity must come from a trusted host; policy lifecycle and decision auditing must be durable and append-only.
+- ADR-0012 — **Proposed (2026-07-14)**: extends capability mediation to end-users and supersedes the plugin-ID-centric invocation shape. It remains unaccepted; the new capability-mediated runtime contract and Capability Registry schema are follow-on engineering work.
+- Organizational Containers — ADR-0011 promotes Project only. Eight other container types remain references because the certified source corpus does not define their fields. Do not invent schemas to make a checklist appear complete.
+- Plugin/Adapter execution — explicitly deferred until a real adapter integration exists.
+- Lifecycle conformance — the prior known Task-substate mismatch was addressed in the latest implementation branch by keeping Agent execution substates on Agent records and removing the Agent-only Task substate dependency.
 
-All five sit on top of `origin/main`'s tip (`47ae3f6`), no divergence/rebase
-needed — a plain fast-forward push would apply cleanly. (`4d29be0` is this
-file's own prior-session commit — note that per the unattended-agent hard
-constraint of "never run git commit," this file should have been staged
-only, not committed; flagged as an anomaly, not repeated this run.)
+## Validation evidence
 
-Working tree also has unstaged modifications (`AGENTS.md`,
-`docs/process/divergence-log.md`) and untracked files: `HARDENING-NOTES.md`,
-`PROPOSAL-ops-layer-v0.2.md`, `backlog.example.json`, `backlog.schema.json`,
-`docs/adr/ADR-0012-capability-mediated-access-extends-to-users.md`, `ops/`,
-`packages/tools/DRAFT-invoke-adapter-resolution.md`, `workers.example.json`,
-`workers.schema.json`.
+At commit `4b695174557b0b798c8929b49ae5af70f96d7a83`, GitHub Actions reported:
+- CI: passed (`pnpm turbo lint typecheck test build`)
+- Conformance: passed
+- Schema Check: passed
 
-Tags: `checkpoint/architecture-v1-certified`, `checkpoint/objective-project-containers-2026-07-13`
-Version: `0.1.0` (package.json)
+A new cross-package integration test and workspace dependency/lockfile updates were added afterward. Their CI and Conformance runs were queued at the time of this snapshot; do not treat the earlier green runs as verification of the newer head. See the PR's Checks tab for current results.
 
-## ADR status
+## Production blockers — not optional
 
-- ADR-0001 (canonical layer architecture) — Accepted 2026-07-09, amended same day (layer count 11→10)
-- ADR-0002 (execution loop architecture) — Accepted 2026-07-09
-- ADR-0003 (unified lifecycle model) — Accepted (upgraded from Proposed 2026-07-10); implementation-level details remain Proposed/Derived pending first vertical slice validation
-- ADR-0004 (canonical work hierarchy) — Accepted 2026-07-09, Amendment A added same day, Amendment A further amended 2026-07-13 by ADR-0011 (Project only)
-- ADR-0005 (aios-core specification naming) — Accepted 2026-07-09
-- ADR-0006 (founder knowledge architecture) — Accepted 2026-07-09, amended same day
-- ADR-0007 (canonical object model) — Accepted 2026-07-10, amended twice on 2026-07-13 (ADR-0010 re: Objective, ADR-0011 re: Project)
-- ADR-0008 (canonical implementation language) — Accepted 2026-07-10
-- ADR-0009 (repository and workspace organization) — Accepted 2026-07-10
-- ADR-0010 (objective canonical object subtype) — Accepted 2026-07-13, amends ADR-0007
-- ADR-0011 (project canonical object subtype) — Accepted 2026-07-13, amends ADR-0007 and ADR-0004 Amendment A, Project only
-- ADR-0012 (capability-mediated access extends to users) — **Proposed** 2026-07-14, founder direction, not yet accepted; file exists in working tree but is **untracked** (not yet staged prior to this session)
+1. **Durability:** ObjectStore, TaskStore, Workflow storage, evidence storage, policy registry, and decision-audit examples are in-memory. There is no production database adapter, migration system, transactional consistency boundary, backup, or restore procedure.
+2. **Identity:** No authenticated identity/session subsystem exists. Actor IDs passed into the kernel are identifiers, not proof of identity. A production host must derive them from validated sessions/tokens and enforce authorization at every entry point.
+3. **Policy lifecycle:** ADR-0013 defines the semantics, but durable policy publication, attachment, replacement, revocation, trusted bootstrap, and atomic audit persistence have no production adapter.
+4. **Execution:** Orchestration has ports, not production model/tool adapters, sandbox isolation, secret brokering, execution quotas, or safe tool allowlists.
+5. **Verification:** The verifier is injected. There is no production-grade independent verifier or evidence provenance chain; an executor must never be able to self-attest.
+6. **Reliability:** No durable run journal, idempotency keys, leases, retry policy, compensation, crash recovery, or distributed concurrency control.
+7. **Capability mediation:** ADR-0012 is Proposed; the registry, capability model, provider selection, health/cost policy, and capability execution contract are not implemented.
+8. **Platform boundary:** AIOS-as-personal-OS versus applications-on-AIOS, multi-tenancy, per-user isolation, and deployment architecture remain unratified.
+9. **Security operations:** No completed threat model, penetration test, SLOs, operational monitoring/alerting, incident response runbook, or disaster-recovery validation.
+10. **Operational proof:** The repository has test coverage and a deterministic test harness, but no verified continuously running deployment or real external provider integration.
 
-## Divergence log — open conflicts
+## Next work order
 
-- **Conflict #1 (Mission/Objective)** — CLOSED by ADR-0010 (2026-07-12)
-- **Conflict #2 (Organizational Containers)** — NARROWED by ADR-0011, not closed; still blocks `@aios/containers` for 8 of 9 container types
-- **Conflict #3 (Plugin/Adapter execution model)** — DEFERRED by founder decision (2026-07-14); reopening trigger is the first real adapter integration
-- **Conflict #4 (`invoke()` signature vs. Part XIII capability model)** — RESOLVED by ADR-0012, pending acceptance (2026-07-14); does not extend to conflict #3
-- **Checkpoint gate** — the original core→objects→work-hierarchy→agents build-order gate is marked SUPERSEDED (2026-07-14): satisfied on both counts (log reviewed, Mission/Objective got its founder decision). `@aios/containers`, `@aios/tools`, `@aios/learning` are built. Only `@aios/orchestration` and `@aios/founder` remain unbuilt.
+1. Keep the PR draft and work on the implementation branch; do not claim production readiness.
+2. Verify the new founder→authorization→orchestration integration test and lockfile changes through CI.
+3. Resolve the founder decisions called out in ADR-0012 and the open container-model conflict without inventing source material.
+4. Design and implement a production persistence boundary compatible with orchestration's current synchronous repository interfaces, or explicitly migrate those interfaces to async with a tested compatibility plan.
+5. Add a trusted host identity boundary and a durable transactional policy/audit adapter.
+6. Add a real sandboxed execution adapter and an independently operated verifier.
+7. Add run journaling, idempotency, recovery, observability, security review, and deployment/restore validation.
+8. Re-run a clean independent audit against the certified architecture and the actual deployed runtime.
 
-## Implementation status
+## Source-of-truth rules
 
-**Real code:** `@aios/core` (schema/), `@aios/objects` (store.ts, errors.ts),
-`@aios/work-hierarchy` (task-store.ts, objective-store.ts), `@aios/agents`
-(agent-runner.ts), `@aios/containers` (project-store.ts), `@aios/tools`
-(tool-service.ts, errors.ts), `@aios/learning` (learning-service.ts,
-knowledge-stage.ts, errors.ts)
-
-**Stub only:** `@aios/orchestration` and `@aios/founder` — both `src/index.ts`
-are 3-line scaffolding (`export {}` plus a comment noting no implementation
-logic yet), verified by direct read this session.
-
-## AIOS Ops Layer
-
-`PROPOSAL-ops-layer-v0.2.md` — classified **Proposal**, not an ADR, not
-`docs/architecture/`; explicitly states it "touches nothing gated" and
-"still requires founder ratification via a real ADR before anything here
-governs actual behavior." Supersedes v0.1 (`PROPOSAL-capability-worker-org.md`).
-Renames the ops-layer hierarchy (Focus Area → Sprint → Task → Skill → Worker)
-to avoid collision with ratified Canonical Object vocabulary (Objective,
-Milestone are reserved/ratified terms under ADR-0010/ADR-0011).
-
-`HARDENING-NOTES.md` documents a "Production Hardening Pass" on top of the
-v0.2 proposal — classified **Implementation** (of the proposal), no
-architecture changed. Modified `ops/dispatch.sh`, both adapter scripts
-(`claude-code-adapter.sh`, `ollama-adapter.sh`), `workers.schema.json`,
-`backlog.schema.json`, and their `.example.json` counterparts. Notes bugs
-found and fixed by actually running the dispatcher (e.g. `--dry-run`
-mutating `backlog.json`; failed executions being unretryable).
-
-**Committed status:** none of the Ops Layer files (`ops/`, `PROPOSAL-ops-layer-v0.2.md`,
-`HARDENING-NOTES.md`, `backlog.schema.json`, `backlog.example.json`,
-`workers.schema.json`, `workers.example.json`) are tracked by git yet — all
-appear as untracked in `git status` this session.
-
-## Open items, ranked by leverage
-
-1. **Push the 5 local commits** — origin/main is 5 commits behind, plain
-   fast-forward, no conflicts. Highest leverage / lowest risk item open.
-   Blocked this run: hard constraint forbids `git push` in unattended mode.
-2. **Stage and land ADR-0012** — currently untracked; it resolves conflict #4
-   but is still Proposed, not Accepted, so needs founder acceptance before
-   the resolution is final.
-3. **Get founder ratification on the Ops Layer v0.2 proposal** — an entire
-   hardening pass (dispatcher, adapters, schemas) is sitting untracked and
-   unratified; either land it via a real ADR or explicitly hold it.
-4. **Conflict #2 (Organizational Containers)** — still genuinely open for 8
-   of 9 container types; blocks further `@aios/containers` work beyond
-   Project.
-5. **Build `@aios/orchestration` and `@aios/founder`** — the only two
-   packages still at stub-only scaffolding.
-6. **Reconcile unstaged `AGENTS.md` and `divergence-log.md` edits** — 139
-   lines of uncommitted changes across both files; unclear if these are
-   finished or in-progress.
-
-## Known stale sources — do not trust over this file
-
-- `AIOS-CURRENT-PROJECT-STATE.md` (Claude project-knowledge upload) — frozen
-  at the 2026-07-13 checkpoint, predates ADR-0012, the Ops Layer proposal,
-  and the 4 unpushed commits. Confirmed stale as of this session.
+- This file is a status snapshot, not architectural authority.
+- `docs/architecture/` and accepted ADRs govern normative behavior.
+- `docs/process/divergence-log.md` records unresolved differences and deferred decisions.
+- Update this file only from fresh repository and CI evidence. Never copy an old status snapshot forward without re-verification.
