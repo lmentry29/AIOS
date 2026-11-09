@@ -171,6 +171,7 @@ export class OrchestrationKernel {
         throw new OrchestrationError(`Task "${taskId}" is already assigned to another Workflow.`);
       }
       const agentId = await this.options.resolveAgent(task);
+      if (!isEntityIdentifier(agentId)) throw new OrchestrationError('Agent resolver returned an invalid Agent identifier.');
       if (!(await this.options.execution.validateAgent(agentId))) {
         throw new OrchestrationError(`Agent "${agentId}" is not available for execution.`);
       }
@@ -241,6 +242,7 @@ export class OrchestrationKernel {
     }
 
     for (const agentId of uniqueAgents) {
+      if (!isEntityIdentifier(agentId)) throw new OrchestrationError('Coordination contains an invalid Agent identifier.');
       if (!(await this.options.execution.validateAgent(agentId))) {
         throw new OrchestrationError(`Agent "${agentId}" is not available for coordination.`);
       }
