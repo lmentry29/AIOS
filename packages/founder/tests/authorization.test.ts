@@ -125,6 +125,32 @@ describe('AuthorizationService', () => {
     ]);
   });
 
+  it('snapshots a policy before awaiting the asynchronous publication adapter', async () => {
+    let published: AccessPolicy | undefined;
+    const mutable = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow' as const,
+        subject_ids: [actorId],
+        actions: ['execute' as const],
+        resource_ids: [resourceId],
+      }],
+    };
+    const admin = new PolicyAdministrationService(actorId, { get: async () => undefined }, {
+      publish: async (next) => { published = next; },
+      attach: async () => undefined,
+      revoke: async () => undefined,
+    });
+
+    const pending = admin.publish(mutable, actorId);
+    mutable.rules[0]!.actions[0] = 'coordinate';
+    await pending;
+
+    expect(published?.rules[0]?.actions).toEqual(['execute']);
+    expect(Object.isFrozen(published?.rules[0]?.actions)).toBe(true);
+  });
+
   it('prevents Agent identities from becoming policy administrators', async () => {
     const agentId = randomUUID();
     const registry = new InMemoryPolicyRegistry();
