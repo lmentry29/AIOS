@@ -69,7 +69,6 @@ function harness(overrides: {
       evidence: overrides.evidence ?? ['test-report-1'],
     })),
     coordinate: vi.fn(async () => ({
-      verified: overrides.verified ?? true,
       summary: 'Coordination result checked',
       evidence: overrides.evidence ?? ['coordination-report-1'],
     })),
@@ -79,9 +78,9 @@ function harness(overrides: {
     execution,
     verification: {
       verify: async () => ({
-        accepted: options.verified ?? true,
-        reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
-        evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+        accepted: overrides.verified ?? true,
+        reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
+        evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
       }),
     },
     resolveAgent: async () => agentId,
@@ -149,7 +148,6 @@ describe('OrchestrationKernel', () => {
       actions: [{ action_id: actionId, status: 'pending', executed_by: h.agentId }],
     });
     h.execution.executeTask = vi.fn(async () => ({
-      verified: true,
       summary: 'Executor claims success',
       evidence: ['execution-evidence'],
       completed_actions: [{ action_id: actionId, status: 'completed', executed_by: h.agentId }],
