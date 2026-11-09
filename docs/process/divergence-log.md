@@ -530,7 +530,8 @@ The initial vertical-slice stop was intentionally passed after the user directed
 - `@aios/founder`: exact-match authorization evaluator with deny-by-default, deny-overrides, no wildcard or implicit-owner grants, versioned immutable policy configuration, and a mandatory append-only audit sink for every allow/deny decision. The provided in-memory audit sink is for development/tests only; production must inject a durable protected implementation.
 - `@aios/orchestration`: ordered workflow dispatch, Task/Agent preflight, explicit requester identity, authorization checks for intake/dispatch/execution/coordination/status reads, sequential execution adapter calls, and a required independent `TaskVerificationPort`. The executor cannot mark its own result verified; a separate verifier must accept it and provide its own evidence. Execution evidence is recorded as a `test_report` Artifact and referenced from the Task; this remains in-memory.
 - `@aios/orchestration`: rejects empty/duplicate workflow steps, unaccepted Workflows, and preassigned Tasks; suspends active work when execution fails or verification is absent. Coordinated work now records a primary Agent assignment and execution evidence.
-- `@aios/learning`: return detached snapshots from knowledge reads to prevent callers mutating internal service state.
+- `@aios/learning`: return detached snapshots from knowledge reads and copy observation payloads on write; expose injectable Memory Object and Knowledge repository ports so durable adapters can be supplied without changing learning rules.
+- `@aios/founder` and `@aios/orchestration`: depend on repository ports for canonical reads, decision artifacts, Tasks, Workflows, and execution evidence rather than requiring concrete in-memory ObjectStore instances. In-memory implementations remain the defaults; no durable adapter is supplied.
 
 ### Production blockers that remain
 
