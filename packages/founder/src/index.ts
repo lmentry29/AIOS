@@ -57,6 +57,10 @@ function isActorReference(value: unknown): value is string {
       || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 }
 
+function isHumanPrincipal(value: string): boolean {
+  return typeof value === 'string' && /^human:[^\\s:*]+$/.test(value);
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -159,7 +163,7 @@ export class FounderInterface {
     if (decision.title.length > 200 || decision.decision.length > 20000 || decision.rationale.length > 20000) {
       throw new FounderInputError('Decision title is limited to 200 characters; decision and rationale are limited to 20,000 characters each.');
     }
-    if (!isActorReference(actorId)) throw new FounderInputError('Decision capture requires a valid authenticated actor identifier.');
+    if (!isHumanPrincipal(actorId)) throw new FounderInputError('Founder decisions can only be recorded by an authenticated human principal.');
     if (typeof decision.decided_by !== 'string' || decision.decided_by !== actorId) {
       throw new FounderInputError('Decision author must match the authenticated actor.');
     }
@@ -200,14 +204,14 @@ export class FounderInterface {
       version: 1,
       organizational_containers: [],
       owner_id: actorId,
-      owner_type: actorId.startsWith('human:') ? 'human' : 'agent',
+      owner_type: 'human',
       relationships: [],
     });
     return this.artifacts.create(artifact).entity_id;
   }
 
   async reviewQueue(actorId: string): Promise<CanonicalEntity[]> {
-    if (!isActorReference(actorId)) throw new FounderInputError('Review queue requires a valid authenticated actor identifier.');
+    if (!isHumanPrincipal(actorId)) throw new FounderInputError('Founder review queue requires an authenticated human principal.');
     const governed = this.objects.list().filter((entity) => entity.access_policy !== undefined);
     const authorized = await Promise.all(governed.map(async (entity) => ({
       entity,
