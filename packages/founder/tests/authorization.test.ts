@@ -36,6 +36,7 @@ describe('AuthorizationService', () => {
   it('applies explicit deny over a matching allow', async () => {
     const withDeny: AccessPolicy = {
       policy_id: policyId,
+      version: 1,
       rules: [
         ...policy.rules,
         {
@@ -59,7 +60,7 @@ describe('AuthorizationService', () => {
       resource_id: resourceId,
     })).toBe(false);
 
-    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId);
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId, new InMemoryAuthorizationAuditStore());
     expect(await auth.authorize({
       actor_id: '*',
       action: 'execute',
@@ -76,6 +77,29 @@ describe('AuthorizationService', () => {
       action: 'execute',
       resource_id: resourceId,
     })).resolves.toBe(false);
+  });
+
+
+  it('records every allow and deny decision with policy version and reason', async () => {
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => policyId, audit);
+    await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId });
+    await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId });
+
+    expect(audit.list()).toMatchObject([
+      { decision: 'allow', policy_id: policyId, policy_version: 1, reason: 'matching_allow' },
+      { decision: 'deny', policy_id: policyId, policy_version: 1, reason: 'no_matching_allow' },
+    ]);
+  });
+
+  it('fails closed when the mandatory audit sink is unavailable', async () => {
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([policy]),
+      async () => policyId,
+      { append: async () => { throw new Error('audit unavailable'); } },
+    );
+    await expect(auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId }))
+      .resolves.toBe(false);
   });
 
   it('rejects wildcard-like policy subjects and invalid resource IDs at construction', () => {
@@ -97,6 +121,7 @@ describe('AuthorizationService', () => {
     }]), async () => policyId)).toThrow(/Invalid access policy ID/);
     expect(() => new AuthorizationService(new StaticAccessPolicyStore([{
       policy_id: randomUUID(),
+      version: 1,
       rules: [],
     }]), async () => policyId)).toThrow(/at least one rule/);
   });
