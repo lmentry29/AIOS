@@ -301,7 +301,8 @@ export class AuthorizationService {
         } else {
           policyId = resolved;
           const policy = await this.policies.get(resolved);
-          if (!policy || !Array.isArray(policy.rules) || (!Number.isSafeInteger(policy.version) || policy.version < 1)) {
+          if (!policy || policy.policy_id !== resolved || !isUuid(policy.policy_id)
+            || !Array.isArray(policy.rules) || !Number.isSafeInteger(policy.version) || policy.version < 1) {
             reason = 'policy_missing_or_invalid';
           } else {
             policyVersion = policy.version;
