@@ -65,7 +65,7 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
   constructor(policies: readonly AccessPolicy[]) {
     for (const policy of policies) {
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
-      if (!Number.isSafeInteger(policy.version) || policy.version < 1) {
+      if ((!Number.isSafeInteger(policy.version) || policy.version < 1) || policy.version < 1) {
         throw new Error(`Access policy "${policy.policy_id}" requires a positive integer version.`);
       }
       if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
