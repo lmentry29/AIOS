@@ -156,6 +156,11 @@ interface ParsingSchema<T> {
   parse(data: unknown): T;
 }
 
+export interface ObjectStoreOptions {
+  /** Privileged bootstrap only. Ordinary stores must not accept caller-supplied policy attachments. */
+  allowAccessPolicyOnCreate?: boolean;
+}
+
 export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
   Omit<
     T,
@@ -194,13 +199,21 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
 export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   private readonly records = new Map<string, T>();
   private readonly schema: ParsingSchema<T>;
+  private readonly options: ObjectStoreOptions;
 
-  constructor(schema: ParsingSchema<T> = CanonicalEntitySchema as unknown as ParsingSchema<T>) {
+  constructor(
+    schema: ParsingSchema<T> = CanonicalEntitySchema as unknown as ParsingSchema<T>,
+    options: ObjectStoreOptions = {},
+  ) {
     this.schema = schema;
+    this.options = options;
   }
 
   create(entity: T): T {
     const parsed = this.schema.parse(entity);
+    if (parsed.access_policy !== undefined && this.options.allowAccessPolicyOnCreate !== true) {
+      throw new AccessPolicyMutationError(parsed.entity_id);
+    }
     if (this.records.has(parsed.entity_id)) {
       throw new EntityIdConflictError(parsed.entity_id);
     }
