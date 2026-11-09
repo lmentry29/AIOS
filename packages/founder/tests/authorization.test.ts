@@ -94,9 +94,14 @@ describe('AuthorizationService', () => {
     await admin.attach(resourceId, policyId, actorId);
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(true);
 
+    const replacement: AccessPolicy = { ...policy, policy_id: randomUUID(), version: 1 };
+    await admin.publish(replacement, actorId);
+    await admin.attach(resourceId, replacement.policy_id, actorId);
+    expect(registry.listAudit()[3]?.previous_policy_id).toBe(policyId);
+
     await admin.revoke(resourceId, actorId);
     expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId })).toBe(false);
-    expect(registry.listAudit().map((event) => event.operation)).toEqual(['publish', 'attach', 'revoke']);
+    expect(registry.listAudit().map((event) => event.operation)).toEqual(['publish', 'attach', 'publish', 'attach', 'revoke']);
   });
 
   it('restricts policy lifecycle operations to the out-of-band bootstrap principal', async () => {
