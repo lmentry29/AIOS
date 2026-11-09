@@ -13,6 +13,7 @@ import { OrchestrationKernel, type AgentExecutionPort } from '@aios/orchestratio
 
 const FOUNDER = 'human:founder';
 const AGENT_ID = randomUUID();
+const VERIFIER_ID = randomUUID();
 
 function makeTask(): TaskEntity {
   const now = new Date().toISOString();
@@ -82,6 +83,12 @@ describe('founder authorization → orchestration integration', () => {
           actions: ['execute'],
           resource_ids: [candidate.entity_id],
         },
+        {
+          effect: 'allow',
+          subject_ids: [VERIFIER_ID],
+          actions: ['read_evidence'],
+          resource_ids: [candidate.entity_id],
+        },
       ],
     };
 
@@ -109,6 +116,7 @@ describe('founder authorization → orchestration integration', () => {
       authorization: { authorize: (request) => authorization.authorize(request) },
       execution,
       verification: {
+        verifier_id: VERIFIER_ID,
         verify: async ({ task, execution_result }) => ({
           accepted: execution_result.evidence.includes(`task:${task.entity_id}:executed`),
           reason: 'Integration verifier checked the executor evidence against the Task ID.',
@@ -138,9 +146,11 @@ describe('founder authorization → orchestration integration', () => {
     expect(evidence.lifecycle_state).toBe('completed');
 
     const decisions = audit.list();
-    expect(decisions.length).toBeGreaterThanOrEqual(6);
+    expect(decisions.length).toBeGreaterThanOrEqual(7);
     expect(decisions.every((decision) => decision.decision === 'allow')).toBe(true);
     expect(decisions.map((decision) => decision.action)).toContain('execute');
+    expect(decisions).toContainEqual(expect.objectContaining({ actor_id: VERIFIER_ID, action: 'read_evidence', decision: 'allow' }));
+    expect(evidence.description).toContain(VERIFIER_ID);
     expect(registry.listAudit().map((event) => event.operation)).toEqual([
       'publish',
       'attach',
