@@ -14,6 +14,11 @@ export interface ObservationOptions {
 }
 
 /** What this service tracks per record, alongside the Memory Object in the Object Store. */
+export interface MemoryObjectRepositoryPort {
+  create(memory: MemoryObjectEntityType): MemoryObjectEntityType;
+  get(entityId: string): MemoryObjectEntityType | undefined;
+}
+
 export interface KnowledgeRecord {
   /** entity_id of the backing Memory Object in the Object Store. */
   id: string;
@@ -79,10 +84,10 @@ function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
 }
 
 export class LearningService {
-  private readonly memories: ObjectStore<MemoryObjectEntityType>;
+  private readonly memories: MemoryObjectRepositoryPort;
   private readonly knowledge = new Map<string, KnowledgeRecord>();
 
-  constructor(store?: ObjectStore<MemoryObjectEntityType>) {
+  constructor(store?: MemoryObjectRepositoryPort) {
     this.memories = store ?? new ObjectStore<MemoryObjectEntityType>(MemoryObjectEntity);
   }
 
