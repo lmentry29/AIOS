@@ -268,13 +268,24 @@ export class OrchestrationKernel {
     return workflow.lifecycle_state;
   }
 
-  async getExecutionEvidence(evidenceId: string, actorId: string): Promise<ArtifactEntity> {
+  async getExecutionEvidence(evidenceId: string, taskId: string, actorId: string): Promise<ArtifactEntity> {
     const evidence = this.evidence.get(evidenceId);
     if (!evidence) throw new OrchestrationError(`Execution evidence "${evidenceId}" was not found.`);
+    const task = this.tasks.getTask(taskId);
+    if (!task) throw new OrchestrationError(`Task "${taskId}" was not found.`);
+    let evidenceTaskId: unknown;
+    try {
+      evidenceTaskId = JSON.parse(evidence.description ?? '{}').task_id;
+    } catch {
+      throw new OrchestrationError('Execution evidence has an invalid task reference.');
+    }
+    if (evidenceTaskId !== taskId || task.audit_trail_ref !== evidenceId) {
+      throw new OrchestrationError('Execution evidence is not linked to the requested Task.');
+    }
     if (!(await this.options.authorization.authorize({
       actor_id: actorId,
       action: 'read_evidence',
-      resource_id: evidence.entity_id,
+      resource_id: task.entity_id,
     }))) {
       throw new OrchestrationError('Execution evidence read denied by authorization policy.');
     }
