@@ -79,12 +79,15 @@ export class PolicyAdministrationService {
 
   async publish(policy: AccessPolicy, actorId: string): Promise<void> {
     this.assertBootstrapPrincipal(actorId);
-    // Reuse the strict immutable-policy validator before handing policy to storage.
-    new StaticAccessPolicyStore([policy]);
-    if (await this.policies.get(policy.policy_id)) {
+    // Validate and snapshot before the first await. Never pass a caller-owned mutable
+    // policy object across the asynchronous administration boundary.
+    const validated = new StaticAccessPolicyStore([policy]);
+    const snapshot = await validated.get(policy.policy_id);
+    if (!snapshot) throw new PolicyAdministrationError('Validated policy snapshot could not be created.');
+    if (await this.policies.get(snapshot.policy_id)) {
       throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID for every change.');
     }
-    await this.administration.publish(policy, actorId);
+    await this.administration.publish(snapshot, actorId);
   }
 
   async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
