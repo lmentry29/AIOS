@@ -62,10 +62,11 @@ function harness(options: {
 } = {}) {
   const tasks = new TaskStore();
   const calls: string[] = [];
+  let allowed = options.allow ?? true;
   const authorization: AuthorizationPort = {
     authorize: async (request) => {
       calls.push(`auth:${request.actor_id}:${request.action}:${request.resource_id}`);
-      return options.allow ?? true;
+      return allowed;
     },
   };
   const execution: AgentExecutionPort = {
@@ -91,7 +92,7 @@ function harness(options: {
     execution,
     resolveAgent: async () => randomUUID(),
   });
-  return { tasks, kernel, calls };
+  return { tasks, kernel, calls, setAllowed: (value: boolean) => { allowed = value; } };
 }
 
 describe('OrchestrationKernel', () => {
@@ -135,9 +136,16 @@ describe('OrchestrationKernel', () => {
     await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
     const beforeTask = tasks.getTask(current.entity_id);
 
-    const denied = harness({ allow: false });
-    await expect(denied.kernel.dispatch(wf, FOUNDER)).rejects.toBeInstanceOf(OrchestrationError);
-    expect(tasks.getTask(current.entity_id)?.version).toBe(beforeTask?.version);
+    const originalVersion = beforeTask?.version;
+    // Revoke the same kernel's dispatch grant after intake.
+    const sameKernel = harness();
+    const sameTask = sameKernel.tasks.createTask(task());
+    const sameWorkflow = workflow([sameTask.entity_id]);
+    await sameKernel.kernel.intake({ kind: 'workflow', workflow: sameWorkflow }, FOUNDER);
+    sameKernel.setAllowed(false);
+    await expect(sameKernel.kernel.dispatch(sameWorkflow, FOUNDER)).rejects.toBeInstanceOf(OrchestrationError);
+    expect(sameKernel.tasks.getTask(sameTask.entity_id)?.version).toBe(sameTask.version);
+    expect(originalVersion).toBe(beforeTask?.version);
   });
 
   it('suspends active work instead of falsely completing it after executor failure', async () => {
@@ -178,8 +186,11 @@ describe('OrchestrationKernel', () => {
     const { kernel } = harness();
     const wf = workflow([randomUUID()]);
     await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
-    const denied = harness({ allow: false });
-    await expect(denied.kernel.status({ workflow_id: wf.entity_id }, FOUNDER))
+    const { kernel, setAllowed } = harness();
+    const storedWorkflow = workflow([randomUUID()]);
+    await kernel.intake({ kind: 'workflow', workflow: storedWorkflow }, FOUNDER);
+    setAllowed(false);
+    await expect(kernel.status({ workflow_id: storedWorkflow.entity_id }, FOUNDER))
       .rejects.toBeInstanceOf(OrchestrationError);
   });
 });
