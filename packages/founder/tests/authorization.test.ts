@@ -105,6 +105,7 @@ describe('AuthorizationService', () => {
   it('rejects wildcard-like policy subjects and invalid resource IDs at construction', () => {
     expect(() => new StaticAccessPolicyStore([{
       policy_id: randomUUID(),
+      version: 1,
       rules: [{
         effect: 'allow',
         subject_ids: ['*'],
