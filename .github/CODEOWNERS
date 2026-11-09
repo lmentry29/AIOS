@@ -1,2 +1,9 @@
 /docs/adr/            @lmentry29
 /docs/architecture/   @lmentry29
+
+# Security and execution authority surfaces require maintainer review.
+/AGENTS.md                         @lmentry29
+/.github/workflows/                @lmentry29
+/packages/founder/src/authorization.ts @lmentry29
+/packages/orchestration/src/       @lmentry29
+/tests/conformance/                @lmentry29
