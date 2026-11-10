@@ -84,6 +84,25 @@ describe('generated JSON Schema lifecycle contracts', () => {
     }
   });
 
+  it('keeps the executable Task contract strict and bounded', () => {
+    const entity = generatedSchema('task', 'TaskEntity') as {
+      properties?: Record<string, {
+        additionalProperties?: unknown;
+        properties?: Record<string, Record<string, unknown>>;
+      }>;
+    };
+    const execution = entity.properties?.execution;
+    expect(execution?.additionalProperties).toBe(false);
+    expect(execution?.properties?.argv).toMatchObject({ minItems: 1, maxItems: 64 });
+    expect(execution?.properties?.env?.additionalProperties).toEqual({
+      maxLength: 256,
+      type: 'string',
+    });
+    // A converter that cannot understand the Zod version must fail generation, not
+    // emit an empty or reference-only schema that silently drops every constraint.
+    expect(JSON.stringify(entity)).not.toContain('"$ref"');
+  });
+
   it('rejects unratified Workflow and Plugin substates', () => {
     for (const [moduleName, exportName] of [
       ['workflow', 'WorkflowEntity'],

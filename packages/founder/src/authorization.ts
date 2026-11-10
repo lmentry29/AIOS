@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy' | 'revoke_policy';
 
@@ -13,6 +13,24 @@ export interface AccessPolicy {
   policy_id: string;
   version: number;
   rules: readonly AccessRule[];
+}
+
+/**
+ * Content digest for a policy artifact. This is tamper evidence, not a signature:
+ * it binds an audit event to exact policy content but cannot establish who authored it.
+ */
+export function policyArtifactSha256(policy: AccessPolicy): string {
+  const canonicalJson = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+    if (value !== null && typeof value === 'object') {
+      return `{${Object.keys(value)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+        .join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+  };
+  return createHash('sha256').update(canonicalJson(policy)).digest('hex');
 }
 
 export interface AccessRequest {
@@ -252,6 +270,8 @@ export interface PolicyLifecycleAuditEvent {
   policy_version: number;
   resource_id?: string;
   previous_policy_id?: string;
+  /** Canonical SHA-256 of the policy content; absent only in pre-mitigation state. */
+  artifact_sha256?: string;
   timestamp: string;
 }
 
@@ -293,6 +313,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       actor_id: actorId,
       policy_id: policy.policy_id,
       policy_version: policy.version,
+      artifact_sha256: policyArtifactSha256(policy),
       timestamp: new Date().toISOString(),
     });
   }
@@ -312,6 +333,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       actor_id: actorId,
       policy_id: policyId,
       policy_version: policy.version,
+      artifact_sha256: policyArtifactSha256(policy),
       resource_id: resourceId,
       ...(previousPolicyId ? { previous_policy_id: previousPolicyId } : {}),
       timestamp: new Date().toISOString(),
@@ -332,6 +354,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       actor_id: actorId,
       policy_id: policyId,
       policy_version: policy.version,
+      artifact_sha256: policyArtifactSha256(policy),
       resource_id: resourceId,
       timestamp: new Date().toISOString(),
     });
@@ -385,6 +408,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
         actor_id: actorId,
         policy_id: policyId,
         policy_version: policy.version,
+        artifact_sha256: policyArtifactSha256(policy),
         resource_id: resourceId,
         timestamp: new Date().toISOString(),
       });

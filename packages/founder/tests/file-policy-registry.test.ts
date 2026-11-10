@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AccessPolicy } from '../src/authorization.js';
-import { AuthorizationService, PolicyAdministrationService } from '../src/authorization.js';
+import { AuthorizationService, PolicyAdministrationService, policyArtifactSha256 } from '../src/authorization.js';
 import { FilePolicyRegistry, FilePolicyRegistryError } from '../src/file-policy-registry.js';
 
 function setup() {
@@ -61,6 +61,27 @@ describe('FilePolicyRegistry', () => {
       registry.close();
       rmSync(h.directory, { recursive: true, force: true });
     }
+  });
+
+  it('binds lifecycle events to the exact policy artifact and rejects a substituted policy', async () => {
+    const h = setup();
+    const registry = new FilePolicyRegistry({ filePath: h.filePath });
+    await registry.publish(h.policy, 'human:founder');
+    const publishEvent = registry.listPolicyAudit()[0];
+    expect(publishEvent?.artifact_sha256).toBe(policyArtifactSha256(h.policy));
+    registry.close();
+
+    const state = JSON.parse(readFileSync(h.filePath, 'utf8')) as {
+      policies: Record<string, { version: number }>;
+    };
+    const stored = state.policies[h.policy.policy_id];
+    if (!stored) throw new Error('Expected the published policy in state.');
+    // Change policy content without recomputing the hash-chained audit event. The
+    // event hash still verifies; only the artifact digest binding catches this.
+    stored.version = 2;
+    writeFileSync(h.filePath, JSON.stringify(state), { mode: 0o600 });
+    expect(() => new FilePolicyRegistry({ filePath: h.filePath })).toThrow(/artifact digest/);
+    rmSync(h.directory, { recursive: true, force: true });
   });
 
   it('rejects policy mutation and unauthorized administration', async () => {

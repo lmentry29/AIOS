@@ -10,16 +10,7 @@
  */
 import { execFileSync } from 'node:child_process';
 
-const ALLOWED = new Map([
-  [
-    'GHSA-mrhx-c7xc-m3w5',
-    {
-      package: 'zod',
-      reason:
-        'Memory exhaustion while validating oversized constrained collections. Request bodies are capped at 1 MiB by the host, schemas constrain small collections, and the only patched line is zod >=4.6.6, a breaking major that also requires replacing zod-to-json-schema in the schema generator. Upgrade is tracked as F-014 in docs/security/findings-ledger.md.',
-    },
-  ],
-]);
+const ALLOWED = new Map();
 
 function runAudit() {
   try {

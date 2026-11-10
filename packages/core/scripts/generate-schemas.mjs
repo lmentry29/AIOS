@@ -20,7 +20,7 @@
 import { readdirSync, writeFileSync, rmSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(__dirname, "..");
@@ -33,8 +33,7 @@ const outDir = join(pkgRoot, "..", "..", "schemas", "generated");
 const BARREL = "index";
 const INTERNAL_SCHEMA_EXPORTS = new Set(["CanonicalObjectEntityShape"]);
 
-const isZodSchema = (v) =>
-  v !== null && typeof v === "object" && "_def" in v && typeof v.safeParse === "function";
+const isZodSchema = (v) => v instanceof z.ZodType;
 
 // Zod refinements are not representable in JSON Schema by zod-to-json-schema.
 // Keep the cross-runtime contract explicit here so generated schemas enforce the same
@@ -121,6 +120,23 @@ const applyLifecycleContract = (moduleName, exportName, schema, mod, sharedModul
   return { ...schema, allOf: [...(schema.allOf ?? []), ...constraints] };
 };
 
+// Zod objects strip unknown keys at runtime, and the previous generated contract
+// rejected them. Zod 4's input view omits `additionalProperties` for objects, so
+// restore that explicit boundary rather than silently widening the published schema.
+// Record schemas already carry an `additionalProperties` value schema and are left alone.
+const rejectUnknownProperties = (value) => {
+  if (Array.isArray(value)) return value.map(rejectUnknownProperties);
+  if (value === null || typeof value !== "object") return value;
+
+  const result = Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, rejectUnknownProperties(entry)]),
+  );
+  if (result.type === "object" && result.additionalProperties === undefined) {
+    result.additionalProperties = false;
+  }
+  return result;
+};
+
 // Recursively sort object keys so output byte-order is stable across runs.
 const sortDeep = (value) => {
   if (Array.isArray(value)) return value.map(sortDeep);
@@ -176,12 +192,22 @@ for (const moduleName of modules) {
     const value = mod[exportName];
     // Type-only exports don't exist at runtime, so this skips them for free.
     if (!isZodSchema(value) || INTERNAL_SCHEMA_EXPORTS.has(exportName)) continue;
-    // No `name` option: passing one makes zodToJsonSchema wrap the result in its own
-    // {$ref, definitions} envelope, which would nest redundantly inside the envelope
-    // this script already builds. $refStrategy "none" keeps each definition
-    // self-contained and inlined rather than cross-referencing sibling files.
-    const { $schema, ...schema } = zodToJsonSchema(value, { $refStrategy: "none" });
-    definitions[exportName] = sortDeep(applyLifecycleContract(moduleName, exportName, schema, mod, sharedModules));
+    // Zod 4's native converter is the supported replacement for
+    // zod-to-json-schema, which returns an empty schema for Zod 4 inputs. Keep every
+    // definition self-contained: `reused: "inline"` prevents sibling references and
+    // `cycles: "throw"` fails generation rather than emitting an unvalidated cycle.
+    const { $schema, ...schema } = z.toJSONSchema(value, {
+      target: "draft-7",
+      // The JSON Schema is the cross-runtime input contract. Use Zod's input view so
+      // fields with defaults stay optional, matching what the runtime validator
+      // actually accepts; the output view would mark every defaulted field required.
+      io: "input",
+      reused: "inline",
+      cycles: "throw",
+    });
+    definitions[exportName] = sortDeep(
+      rejectUnknownProperties(applyLifecycleContract(moduleName, exportName, schema, mod, sharedModules)),
+    );
   }
 
   const count = Object.keys(definitions).length;

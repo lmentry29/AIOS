@@ -31,7 +31,7 @@ export const TaskExecutionSpec = z.object({
   cwd: z.string().max(1024).optional(),
   timeout_ms: z.number().int().min(100).max(300_000).optional(),
   max_output_bytes: z.number().int().min(1024).max(1_048_576).optional(),
-  env: z.record(z.string().max(256)).optional(),
+  env: z.record(z.string(), z.string().max(256)).optional(),
 });
 export type TaskExecutionSpec = z.infer<typeof TaskExecutionSpec>;
 

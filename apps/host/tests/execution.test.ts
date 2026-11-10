@@ -157,6 +157,23 @@ describe('local command execution', () => {
   });
 });
 
+describe('platform provider fail-closed behavior', () => {
+  it('refuses to advertise Seatbelt when macOS/sandbox-exec cannot establish it', async () => {
+    const provider = createSandboxProvider({ provider: 'seatbelt' });
+    const check = await provider.check();
+    if (process.platform === 'darwin') {
+      // On macOS the probe must report whether sandbox-exec actually applied a profile;
+      // this host is Linux, so only the fail-closed branch is executable here.
+      expect(check.reason).toContain('sandbox-exec');
+    } else {
+      expect(check).toMatchObject({
+        available: false,
+        reason: 'Seatbelt is only available on macOS.',
+      });
+    }
+  });
+});
+
 describe('docker provider command construction', () => {
   it('passes the isolation flags without a shell and keeps argv elements intact', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'aios-fake-docker-'));

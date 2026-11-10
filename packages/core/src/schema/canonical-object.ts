@@ -24,12 +24,14 @@ type CanonicalObjectLifecycle = {
  */
 export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
   schema: T,
-): z.ZodEffects<T, z.output<T>, z.input<T>> {
+): z.ZodType<z.output<T>, z.input<T>> {
   const withCurrentState = schema.refine(
-    (object: z.output<T> & CanonicalObjectLifecycle) =>
-      object.lifecycle_substate === undefined ||
-      (object.lifecycle_state === 'active' &&
-        CanonicalObjectSubstate.safeParse(object.lifecycle_substate).success),
+    (object) => {
+      const value = object as z.output<T> & CanonicalObjectLifecycle;
+      return value.lifecycle_substate === undefined ||
+        (value.lifecycle_state === 'active' &&
+          CanonicalObjectSubstate.safeParse(value.lifecycle_substate).success);
+    },
     {
       message:
         'Canonical Object substates must be mutating, persisting, or synchronizing while lifecycle_state is active (COM §4.5)',
@@ -38,12 +40,14 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
   );
 
   const withHistory = withCurrentState.refine(
-    (object: z.output<T> & CanonicalObjectLifecycle) =>
-      object.lifecycle_history.every((entry: LifecycleHistoryEntry) =>
+    (object) => {
+      const value = object as z.output<T> & CanonicalObjectLifecycle;
+      return value.lifecycle_history.every((entry: LifecycleHistoryEntry) =>
         entry.substate === undefined
           ? true
           : entry.state === 'active' && CanonicalObjectSubstate.safeParse(entry.substate).success,
-      ),
+      );
+    },
     {
       message:
         'Canonical Object lifecycle history substates must be mutating, persisting, or synchronizing under active state (COM §4.5)',
@@ -51,7 +55,7 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
     },
   );
 
-  return withHistory as unknown as z.ZodEffects<T, z.output<T>, z.input<T>>;
+  return withHistory as unknown as z.ZodType<z.output<T>, z.input<T>>;
 }
 
 

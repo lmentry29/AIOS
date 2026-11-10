@@ -13,6 +13,7 @@ import {
   MAX_POLICY_REVOCATION_TARGETS,
   PolicyRevocationError,
   StaticAccessPolicyStore,
+  policyArtifactSha256,
 } from './authorization.js';
 
 const ZERO_HASH = '0'.repeat(64);
@@ -233,6 +234,14 @@ function validateState(value: unknown): FilePolicyState {
         || !Number.isFinite(Date.parse(payload.timestamp))) {
         throw new FilePolicyRegistryError('Policy lifecycle audit event is invalid.');
       }
+      const policy = policies[payload.policy_id];
+      if (!policy) throw new FilePolicyRegistryError('Policy lifecycle event references a missing policy.');
+      if (payload.artifact_sha256 !== undefined
+        && (typeof payload.artifact_sha256 !== 'string'
+          || !/^[a-f0-9]{64}$/.test(payload.artifact_sha256)
+          || policyArtifactSha256(policy) !== payload.artifact_sha256)) {
+        throw new FilePolicyRegistryError('Policy artifact digest does not match the recorded policy.');
+      }
     }
     const { hash, ...unsigned } = event;
     if (eventHash(unsigned) !== hash) throw new FilePolicyRegistryError('Policy audit hash chain verification failed.');
@@ -313,7 +322,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     next.policies[snapshot.policy_id] = snapshot;
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'publish', actor_id: actorId,
-      policy_id: snapshot.policy_id, policy_version: snapshot.version, timestamp: new Date().toISOString(),
+      policy_id: snapshot.policy_id, policy_version: snapshot.version,
+      artifact_sha256: policyArtifactSha256(snapshot), timestamp: new Date().toISOString(),
     });
     this.commit(next);
   }
@@ -394,7 +404,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     next.policies[snapshot.policy_id] = snapshot;
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'publish', actor_id: actorId,
-      policy_id: snapshot.policy_id, policy_version: snapshot.version, timestamp: new Date().toISOString(),
+      policy_id: snapshot.policy_id, policy_version: snapshot.version,
+      artifact_sha256: policyArtifactSha256(snapshot), timestamp: new Date().toISOString(),
     });
     for (const resourceId of resourceIds) {
       const previousPolicyId = previousPolicies.get(resourceId);
@@ -405,7 +416,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
       ];
       appendEvent(next, 'policy_lifecycle', {
         event_id: randomUUID(), operation: 'attach', actor_id: actorId,
-        policy_id: snapshot.policy_id, policy_version: snapshot.version, resource_id: resourceId,
+        policy_id: snapshot.policy_id, policy_version: snapshot.version,
+        artifact_sha256: policyArtifactSha256(snapshot), resource_id: resourceId,
         ...(previousPolicyId === undefined ? {} : { previous_policy_id: previousPolicyId }),
         timestamp: new Date().toISOString(),
       });
@@ -430,7 +442,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     next.resource_policies[resourceId] = policyId;
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'attach', actor_id: actorId,
-      policy_id: policyId, policy_version: policy.version, resource_id: resourceId,
+      policy_id: policyId, policy_version: policy.version,
+      artifact_sha256: policyArtifactSha256(policy), resource_id: resourceId,
       ...(previousPolicyId ? { previous_policy_id: previousPolicyId } : {}),
       timestamp: new Date().toISOString(),
     });
@@ -451,7 +464,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     delete next.resource_policy_history[resourceId];
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'revoke', actor_id: actorId,
-      policy_id: policyId, policy_version: policy.version, resource_id: resourceId,
+      policy_id: policyId, policy_version: policy.version,
+      artifact_sha256: policyArtifactSha256(policy), resource_id: resourceId,
       timestamp: new Date().toISOString(),
     });
     this.commit(next);
@@ -513,7 +527,8 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
       }
       appendEvent(next, 'policy_lifecycle', {
         event_id: randomUUID(), operation: 'revoke', actor_id: actorId,
-        policy_id: policyId, policy_version: policy.version, resource_id: resourceId,
+        policy_id: policyId, policy_version: policy.version,
+        artifact_sha256: policyArtifactSha256(policy), resource_id: resourceId,
         timestamp: new Date().toISOString(),
       });
     }
