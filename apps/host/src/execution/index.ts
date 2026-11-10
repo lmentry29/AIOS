@@ -1,7 +1,7 @@
 import type { HostExecutionConfig } from '../config.js';
 import { HostUnavailableError } from '../errors.js';
 import { LocalCommandExecutor } from './command-executor.js';
-import { LocalCommandVerifier } from './command-verifier.js';
+import { LocalCommandVerifier, type ExecutionLedgerRef } from './command-verifier.js';
 import { createSandboxProvider, type SandboxProvider } from './sandbox.js';
 import { RunWorkspaceManager } from './workspace.js';
 
@@ -21,6 +21,7 @@ export interface LocalExecutionAdapters {
  */
 export async function createLocalExecutionAdapters(
   config: HostExecutionConfig,
+  ledger?: ExecutionLedgerRef,
 ): Promise<LocalExecutionAdapters> {
   const provider = createSandboxProvider(config);
   const check = await provider.check();
@@ -32,12 +33,13 @@ export async function createLocalExecutionAdapters(
     provider,
     workspaces,
     execution: new LocalCommandExecutor(config, provider, workspaces),
-    verification: new LocalCommandVerifier(config, provider, workspaces),
+    verification: new LocalCommandVerifier(config, provider, workspaces, ledger),
   };
 }
 
 export { LocalCommandExecutor } from './command-executor.js';
 export { LocalCommandVerifier } from './command-verifier.js';
+export type { ExecutionLedgerRef } from './command-verifier.js';
 export { createSandboxProvider } from './sandbox.js';
 export type { SandboxProvider, SandboxResult, SandboxRunSpec } from './sandbox.js';
 export { RunWorkspaceManager } from './workspace.js';

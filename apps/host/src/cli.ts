@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { loadHostConfig } from './config.js';
-import { createLocalExecutionAdapters } from './execution/index.js';
+import { createLocalExecutionAdapters, type ExecutionLedgerRef } from './execution/index.js';
 import { provisionPolicies, revokePolicies } from './policy-admin.js';
 import { createHostRuntime } from './runtime.js';
 import { createHostServer } from './server.js';
@@ -36,9 +36,13 @@ async function serve(configPath: string): Promise<void> {
   }
 
   let adapters: Awaited<ReturnType<typeof createLocalExecutionAdapters>> | undefined;
+  // The verifier must bind to the runtime's durable ledger, but the ledger is created
+  // inside the runtime after the sandbox adapters. A late-bound reference keeps the
+  // dependency acyclic without weakening the binding: it is populated before listen().
+  const executionLedger: ExecutionLedgerRef = {};
   if (config.execution) {
     try {
-      adapters = await createLocalExecutionAdapters(config.execution);
+      adapters = await createLocalExecutionAdapters(config.execution, executionLedger);
     } catch (error) {
       process.stderr.write(`${JSON.stringify({
         event: 'execution_unavailable',
@@ -58,6 +62,7 @@ async function serve(configPath: string): Promise<void> {
           resolveAgent: async () => config.execution?.agent_id ?? '',
         }),
   });
+  executionLedger.current = runtime.executions;
   const server = createHostServer(runtime);
   try {
     const address = await server.listen();

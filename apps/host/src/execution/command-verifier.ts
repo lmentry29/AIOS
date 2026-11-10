@@ -6,8 +6,14 @@ import type {
 } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
 import { HostExecutionError, HostUnavailableError } from '../errors.js';
+import { evidenceDigest, type ExecutionLedger } from '../persistence/execution-ledger.js';
 import type { SandboxProvider } from './sandbox.js';
 import type { RunWorkspaceManager } from './workspace.js';
+
+/** Late-bound reference to the host's durable execution ledger. */
+export interface ExecutionLedgerRef {
+  current?: ExecutionLedger;
+}
 
 function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -30,6 +36,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     private readonly config: HostExecutionConfig,
     private readonly provider: SandboxProvider,
     private readonly workspaces: RunWorkspaceManager,
+    private readonly ledger?: ExecutionLedgerRef,
   ) {
     this.verifier_id = config.verifier_id;
   }
@@ -42,6 +49,29 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     const intent = request.task.verification;
     if (!intent || intent.kind !== 'local_command') {
       throw new HostExecutionError('Task has no independent local_command verification intent.');
+    }
+
+    // Bind acceptance to the durable attempt rather than to whatever object reached this
+    // port. The executor's committed record is the authority; a forged or replayed result
+    // whose digest does not match it is rejected before the verification command runs.
+    let boundAttempt: { execution_id: string; attempt: number } | undefined;
+    if (this.ledger !== undefined) {
+      const ledger = this.ledger.current;
+      if (ledger === undefined) {
+        throw new HostExecutionError('The verifier is not bound to a durable execution ledger.');
+      }
+      const attempt = ledger.getForTask(request.task.entity_id);
+      if (attempt === undefined || attempt.state !== 'completed') {
+        return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
+      }
+      if (!request.agent_ids.includes(attempt.agent_id)) {
+        return this.rejectWithoutRunning('The durable attempt was executed by a different principal.');
+      }
+      const expected = attempt.evidence.find((entry) => entry.startsWith('result_sha256:'))?.slice('result_sha256:'.length);
+      if (expected === undefined || expected !== evidenceDigest(request.execution_result)) {
+        return this.rejectWithoutRunning('The executor result does not match the durable attempt evidence.');
+      }
+      boundAttempt = { execution_id: attempt.execution_id, attempt: attempt.attempt };
     }
 
     const workspace = this.workspaces.getOrCreate(request.task.entity_id);
@@ -84,7 +114,23 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         `expected_exit_code:${expectedExitCode}`,
         `timed_out:${result.timedOut}`,
         `executor_result_sha256:${digest(JSON.stringify(request.execution_result))}`,
+        ...(boundAttempt === undefined
+          ? []
+          : [
+              `execution_id:${boundAttempt.execution_id}`,
+              `execution_attempt:${boundAttempt.attempt}`,
+              `bound_result_sha256:${evidenceDigest(request.execution_result)}`,
+            ]),
       ],
+    };
+  }
+
+  private rejectWithoutRunning(reason: string): TaskVerificationDecision {
+    return {
+      accepted: false,
+      reason,
+      verifier_id: this.verifier_id,
+      evidence: [`verifier:${this.verifier_id}`, 'execution_binding:rejected'],
     };
   }
 
