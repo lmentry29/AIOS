@@ -128,7 +128,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
 
   async searchGmail(query: string, actorId: string): Promise<GmailEvidenceRecord[]> {
     if (!isActorReference(actorId)) throw new LocalConnectorEvidenceError('Gmail reads require a valid authenticated actor identifier.');
-    if (typeof query !== 'string' || query.length > 500 || /[\r\n\0]/.test(query)) {
+    if (typeof query !== 'string' || !query.trim() || query.length > 500 || /[\r\n\0]/.test(query)) {
       throw new LocalConnectorEvidenceError('Gmail query must be a string of at most 500 characters without control characters.');
     }
     await this.authorize(actorId, 'gmail');
