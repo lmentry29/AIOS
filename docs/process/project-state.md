@@ -1,10 +1,10 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
-local evidence only. The all-or-nothing attempt-inspection head `8cd427a` and docs tip
-`c64ba42` passed the `ci`, `conformance`, and `schema-check` workflows; the verifier-binding
-head `05769e1` and its docs tip are pushed after this snapshot, so read their checks from
-GitHub.
+local evidence only. The attempt-inspection head `8cd427a` and docs tip `c64ba42` passed the
+`ci`, `conformance`, and `schema-check` workflows. The verifier-binding head `05769e1` and the
+permanent-Memory approval head `503cefb` are pushed after this snapshot; read their checks
+from GitHub.
 
 ## Repository and active change
 
@@ -13,7 +13,7 @@ GitHub.
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `05769e1` (`feat(orchestration): bind verification evidence to the configured verifier`)
+- Verified code head: `503cefb` (`feat(learning): require human approval for permanent Memory writes`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -32,10 +32,10 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/containers` | Project store only; eight container concepts remain unpromoted by ADR-0011 |
 | `@aios/agents` | Agent lifecycle/conformance runner; not a general tool-executing agent runtime |
 | `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
-| `@aios/learning` | Knowledge records and evolution stages; in-memory |
+| `@aios/learning` | Knowledge records and evolution stages; permanent stages require a recorded human approval; in-memory default with a durable host journal |
 | `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with the exact `cancel`/`resume`/`retry` actions, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
 | `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks with verifier-attributed evidence binding, evidence artifacts, status/evidence reads, cancellation preflight/checks, authorized resume/retry orchestration, and read-only Task/Workflow attempt-chain inspection with all-or-nothing step authorization; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, strict concurrency cap, and recovery-to-suspended |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
 broker, no signed verifier provenance, no automatic retry/backoff loop, and no live
@@ -87,13 +87,13 @@ external-provider verification.
 
 ## Validation evidence
 
-Local checks at code head `05769e1` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `503cefb` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
 - `pnpm -r run lint` — pass.
-- `pnpm -r run test` — pass, **465 tests total**.
-- Host: **82 tests** in 7 files, including 38 loopback HTTP tests, cancellation with a
+- `pnpm -r run test` — pass, **482 tests total**.
+- Host: **86 tests** in 8 files, including 39 loopback HTTP tests, cancellation with a
   test-only sandbox stub, a real child-process SIGKILL test with a labelled
   `test-only-process` provider, cap enforcement/retry, late-result rejection, journal-level
   crash/restart reconciliation, authorized resume/retry over append-only attempts, a
@@ -102,11 +102,18 @@ Local checks at code head `05769e1` (Node 26.13.0, pnpm 11.11.0):
   three-generation attempt inspection that leaves the operational journal byte-identical,
   all-or-nothing Workflow attempt inspection that denies a first- or later-step missing
   `read_status` grant before any ledger history read and leaves both persisted Task ledgers
-  unchanged after reopen, and verifier-attributed evidence that still reads after reopening
+  unchanged after reopen, verifier-attributed evidence that still reads after reopening
   with the original verifier but is rejected after a verifier swap or when identity is
-  missing.
+  missing, and a durable learning journal whose approved permanent Memory promotion and
+  consumed approval survive close-and-reopen while unapproved and rejected approvals write
+  no permanent entry.
+- Learning: **28 tests**, including 13 approval tests. `memory-approval.test.ts` proves
+  default denial, rejected/expired/pending approvals write nothing, human-only decisions,
+  exact content/transition binding, one-time consumption, and unchanged draft promotions.
+  `apps/host/tests/learning-store.test.ts` proves an approved promotion and its consumed
+  approval survive close-and-reopen, and a rejected approval leaves no permanent entry.
 - Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
-  orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
+  orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 28; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
 
@@ -137,7 +144,9 @@ provider is unavailable; they do not claim container isolation.
    sink. Policy administration is an offline human CLI.
 6. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
    per-note authorization, retrieval/context assembly, contradiction detection, and reviewed
-   memory writes remain open. Do not bulk-migrate or modify the vault.
+   Founder vault memory writes remain open. Organizational Learning Memory now has
+   approval-gated permanent stages, but that does not authorize any vault mutation. Do not
+   bulk-migrate or modify the vault.
 7. **Live connectors.** Gmail/Notion/Obsidian++ need OAuth/token lifecycle, scopes, health,
    pagination, rate limits, retries, and live integration tests.
 8. **UI.** No UI exists. The host rejects all browser origins by design (ADR-0016).
@@ -149,8 +158,8 @@ provider is unavailable; they do not claim container isolation.
 
 ## Next work order
 
-1. Observe CI on the verifier-binding head `05769e1` and its docs tip; do not treat local
-   results as CI.
+1. Observe CI on the permanent-Memory approval head `503cefb` and its docs tip; do not treat
+   local results as CI.
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.

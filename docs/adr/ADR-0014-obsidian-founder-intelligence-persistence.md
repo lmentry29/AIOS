@@ -39,6 +39,29 @@ That result does **not** authorize bulk migration, automatic frontmatter inserti
 - Keep the Obsidian application/API local-only and authenticated. AIOS must not send credentials to a non-loopback host, and must not connect until the vault API's path containment, origin boundary, and authentication controls are verified.
 - Keep runtime task/run execution state distinct from Founder Intelligence persistence. Its persistence contract remains an explicit engineering decision; this ADR does not authorize a separate database for Founder Intelligence.
 
+## Implementation note — organizational learning Memory approval binding (2026-11-10)
+
+The permanent-Memory rule above is now enforced in code for organizational Learning
+Memory, without changing this ADR's source-of-truth boundary:
+
+- `LearningService.recordObservation()` remains an unapproved draft write.
+- `LearningService.promote()` to `published` or `institutional_standard` requires a recorded
+  approval bound to the Memory Object id, source and target stages, and a SHA-256 over its
+  subject and content. A missing, pending, rejected, expired, consumed, or mismatched
+  approval throws `MemoryApprovalError` and writes no permanent entry.
+- Only an authenticated `human:*` principal may decide an approval, and only through the
+  injected default-deny authorization boundary. The host reuses the protected Founder
+  decision collection's existing exact `intake` grant; no new authorization action or public
+  HTTP Memory-write route was added.
+- The host journals the approval decision and the resulting promotion as one atomic record
+  in a separate `learning.jsonl`; reopening revalidates the correlation. This is
+  organizational Learning Memory, not Founder Intelligence. Founder Profile, Founder Memory,
+  and Founder Context remain vault-only, and no vault mutation path was added.
+
+Proving tests: `packages/learning/tests/memory-approval.test.ts`,
+`apps/host/tests/learning-store.test.ts`, and the host-boundary case in
+`apps/host/tests/http-host.test.ts`.
+
 ## Consequences
 
 - The founder and learning packages must expose read-only adapter ports that can be implemented over the vault without weakening canonical schema validation.

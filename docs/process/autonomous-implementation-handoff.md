@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, verifier-attributed evidence binding).
+Last updated: 2026-11-10 (Freebuff Cloud session, permanent Memory approval binding).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `05769e1` (`feat(orchestration): bind verification evidence to the configured verifier`)
+- Verified code head: `503cefb` (`feat(learning): require human approval for permanent Memory writes`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `503cefb` — human-approved, durable permanent Memory binding
   - `05769e1` — verifier-attributed, persisted evidence binding
   - `8cd427a` — all-or-nothing Workflow attempt inspection
   - `0b01cec` — read-only Task/Workflow attempt-chain inspection
@@ -40,8 +41,8 @@ Last updated: 2026-11-10 (Freebuff Cloud session, verifier-attributed evidence b
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
 - GitHub Actions passed `ci`, `conformance`, and `schema-check` at `8cd427a` and its docs tip
-  `c64ba42`. Checks for the verifier-binding head `05769e1` and its docs tip are observed
-  after the push; this handoff does not assert them.
+  `c64ba42`. Checks for the verifier-binding head `05769e1` and the permanent-Memory
+  approval head `503cefb` are observed after the push; this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -328,7 +329,7 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **82 passed** (7 files) |
+| `@aios/host` | **86 passed** (8 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
@@ -338,9 +339,9 @@ All six commands exited 0. Exact test results:
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
-| `@aios/learning` | 15 passed |
+| `@aios/learning` | 28 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **465 passed** |
+| **Total** | **482 passed** |
 
 Schema regeneration produced no diff.
 
@@ -495,10 +496,29 @@ Schema regeneration produced no diff.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
+- Permanent Memory stages require a recorded human approval bound to the record, transition,
+  and content; the approval and promotion are committed as one durable journal record.
+  This is organizational Learning Memory, not Founder Intelligence, and adds no vault write.
+
+## Completed — permanent Memory approval binding (`503cefb`)
+
+- `LearningService.promote()` to `published` or `institutional_standard` now requires an
+  approval id. The approval is bound to the Memory Object id, source and target stages, and a
+  SHA-256 over subject/content; missing, pending, rejected, expired, consumed, or mismatched
+  approvals throw the typed `MemoryApprovalError` and write nothing.
+- Only an authenticated `human:*` principal can decide an approval, and only through the
+  injected default-deny boundary. The host reuses the protected decision collection's exact
+  `intake` grant; no new authorization action or public HTTP route was added.
+- `DurableLearningStore` keeps Memory Objects, knowledge records, approvals, and promotions
+  in `learning.jsonl`. A promotion and its consumed approval are one journal record; reopen
+  revalidates the binding and refuses mismatched or previously consumed approvals.
+- Tests: `packages/learning/tests/memory-approval.test.ts` (13),
+  `apps/host/tests/learning-store.test.ts` (3), and the host-boundary case in
+  `apps/host/tests/http-host.test.ts` (39 HTTP total). Full workspace: **482 passed**.
 
 ## Next concrete work
 
-1. Observe CI on `05769e1` and the docs tip; push only
+1. Observe CI on `503cefb` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.

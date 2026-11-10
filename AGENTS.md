@@ -65,10 +65,11 @@ passing build.
 12. **Founder Intelligence persists in the Obsidian vault.** ADR-0014 is Accepted: do not add a separate Founder Intelligence database. AIOS validates managed records against canonical schemas. Vault integration is read-and-propose by default; permanent Memory writes require explicit human review and authorization. Do not hydrate, migrate, rename, rewrite, or normalize existing notes without a reviewed proposal and a separate human-approved write action.
 13. **Know which stores are durable and which are not.** Task, Workflow, Artifact/evidence,
     and dispatch-run state are durable through the hash-chained operational journal
-    (ADR-0015), with idempotency, leases, and startup recovery. Learning records, the
-    canonical object store, and some policy/evidence paths still have in-memory or
-    test/development implementations. The journal is not compacted, has no migration
-    framework, and is single-process. Production use still requires protected secrets,
+    (ADR-0015), with idempotency, leases, and startup recovery. Learning records are durable
+    in a separate hash-chained `learning.jsonl`, and permanent Memory stages require a
+    recorded human approval; the canonical object store used only for Founder queries and
+    some policy/evidence paths still have in-memory or test/development implementations. The
+    journals are not compacted, have no migration framework, and are single-process. Production use still requires protected secrets,
     a completed sandbox/provider matrix, operational controls, and independent review.
     Keep these limitations explicit in code and documentation.
 14. **No unrestricted host execution.** A task may run only through the fixed

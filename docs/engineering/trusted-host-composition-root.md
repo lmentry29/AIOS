@@ -24,8 +24,8 @@ hash-chained journal per ADR-0015. The host can compose the fixed `local.exec` e
 an independently executed verifier (ADR-0019) when a Docker, bubblewrap, or Seatbelt
 provider passes its probe. It does **not** close the other production blockers: there is no
 general capability/provider runtime, no signed verifier provenance, evidence readers remain
-unverified against a live Obsidian++, learning records are still in-memory, and there is no
-Founder UI yet.
+unverified against a live Obsidian++, learning records are durable in a separate
+approval-gated journal, and there is no Founder UI yet.
 
 ## Configuration
 
@@ -161,7 +161,27 @@ vault notes as operational storage.
 
 Known limitations, recorded rather than hidden: no journal compaction or snapshotting yet
 (the journal fails closed at 64 MiB), no schema-migration framework, backup/restore is a
-file-level copy with the host stopped, and learning records are still in-memory.
+file-level copy with the host stopped, and the separate learning journal has the same
+no-compaction/migration limits.
+
+### Permanent Memory approvals
+
+`LearningService.recordObservation()` is an ephemeral draft write and stays unapproved.
+Promoting a knowledge record to `published` or `institutional_standard` is a permanent
+Memory write and requires a recorded approval bound to the Memory Object, the source and
+target stages, and a SHA-256 of its subject and content. Only an authenticated `human:*`
+principal can decide the approval, and only when the shared default-deny boundary allows
+the existing exact `intake` grant on the protected Founder decision collection. Pending,
+rejected, expired, and consumed approvals never authorize a write.
+
+The approval and the resulting promotion are appended as one `promotion` record in
+`learning.jsonl`, so they cannot diverge across a crash or reopen; replay revalidates the
+binding. `apps/host/tests/learning-store.test.ts` proves approve-then-write survives
+close-and-reopen and that a rejected approval leaves no permanent entry;
+`packages/learning/tests/memory-approval.test.ts` proves default denial, expiry,
+content/transition binding, and human-only decisions; the host-boundary case in
+`apps/host/tests/http-host.test.ts` proves an unprivileged human is denied. No public HTTP
+Memory write route was added.
 
 ## HTTP surface
 
@@ -310,8 +330,9 @@ single-process lock.
 
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
-  host process. Learning records remain in-memory. Backup/restore is a documented file copy,
-  not an automated procedure. Dispatch is idempotent and leased. Resume and retry are
+  host process. Learning state is durable in a separate journal and approval-gated for
+  permanent stages, but it shares the same missing compaction/migration story. Backup/restore
+  is a documented file copy, not an automated procedure. Dispatch is idempotent and leased. Resume and retry are
   deliberate, authorized, append-only operations (ADR-0022); there is still no automatic
   resume, backoff loop, scheduler, or capacity queue. Multi-generation resume and duplicate
   suppression are proven only against the labelled `stub-container` double, not a real
