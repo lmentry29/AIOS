@@ -480,10 +480,11 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
    rejects every `Origin`.
 10. **Operations.** Metrics/tracing/alerting, journal compaction and migrations, automated
     backup/restore drill, threat model, incident response, deployment docs, SLOs.
-11. **Policy administration assurance.** Runtime publication has no detached policy
-    signature, HTTP revocation route, key rotation, external audit custody, or production
-    recovery/rotation procedure. Current authority is the authenticated session plus the
-    exact grant; do not describe it as cryptographic policy provenance.
+11. **Policy administration assurance.** Runtime publication and retirement have no detached
+    policy signature, key rotation, external audit custody, or production recovery/rotation
+    procedure. Current authority is the authenticated session plus the exact grant; do not
+    describe it as cryptographic policy provenance. Registry state is v2 and downgrade is
+    unsupported.
 
 ## Architectural decisions made this session
 
@@ -579,15 +580,44 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 - A replacement and its publish decision survive host close/reopen; the replacement decides
   later protected reads and the audit prefix reads back in order. Serialized policy and
   audit files contain no bearer token or `Bearer` text.
-- Limits: no detached policy signature, HTTP revocation route, key rotation, external audit
-  custody, or policy rollback by reattaching an older version. Rollback is a new higher
-  version with the restored rules. The registry remains single-process.
+- Limits: no detached policy signature, key rotation, external audit custody, or policy
+  rollback by reattaching an older version. Rollback is a new higher version with the restored
+  rules. Runtime retirement is added under `4422229`. The registry remains single-process.
+
+## Completed — authorized runtime policy retirement (`4422229`)
+
+- `revoke_policy` is a new exact `AccessAction`, separate from `administer_policy` and never
+  implied by it. Rules granting either action may name only human subjects; policy load and
+  publication reject an Agent subject.
+- `POST /v1/policies/:policyId/revoke` accepts exactly `{ "targets": [...] }`. `targets` must
+  be the complete set of resources whose policy history references the version, including
+  retained fallbacks, at most 256 distinct UUIDs. Every target is authorized for an exact
+  `revoke_policy` grant before lookup; the principal must be human.
+- `FilePolicyRegistry` state is schema v2 with `resource_policy_history` and
+  `retired_policies`. `retirePolicy()` removes the version from every affected history,
+  reattaches the newest remaining version, deletes the attachment when nothing remains,
+  appends one `revoke` lifecycle event per resource, and marks the version retired in one
+  fsync'd snapshot. A v1 file migrates to one history entry per attachment without inventing
+  a fallback; a retired version cannot be reattached.
+- Fallback is per resource: the newest remaining version in that resource's own history. With
+  none left, the existing default deny `resource_policy_missing_or_invalid` applies.
+- Typed rejections are `400 invalid_policy_id`/`invalid_targets`, `404 policy_not_found`, and
+  `409 policy_not_attached`/`policy_already_revoked`/`target_scope_mismatch`. Every rejected
+  attempt leaves policy bytes and effective attachments unchanged, and the authorization
+  audit-failure case is proven separately.
+- The offline `aios-host revoke-policy --config ... --revocation ...` path applies the same
+  operation to a stopped host from an owner-only `{ policy_id, targets }` document.
+- Tests: `packages/founder/tests/authorization.test.ts` adds the exact human-grant case,
+  `packages/founder/tests/file-policy-registry.test.ts` adds fallback/deny and
+  unchanged-state cases, `apps/host/tests/policy-admin.test.ts` adds the offline path, and
+  `apps/host/tests/http-host.test.ts` adds four retirement tests (51 HTTP total). Full
+  workspace: **513 passed**.
 
 ## Next concrete work
 
-1. Exercise runtime policy publication in a production-like deployment with a real
-   non-bootstrap operator, independent audit consumer, and restart/recovery drill; push only
-   `upstream community/open-source-foundation`.
+1. Exercise runtime policy publication and retirement in a production-like deployment with a
+   real non-bootstrap operator, independent audit consumer, and restart/recovery drill; push
+   only `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.
 3. Add verifier key provenance and a secret broker before claiming production execution

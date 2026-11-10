@@ -18,13 +18,18 @@ The offline bootstrap path remains human-only:
 
 ```sh
 node apps/host/dist/cli.js publish-policy --config /abs/host.json --policy /abs/policy.json
+node apps/host/dist/cli.js revoke-policy --config /abs/host.json --revocation /abs/revocation.json
 ```
 
 While the host is running, a human principal with an exact `administer_policy` grant on
 every target may publish and attach a replacement through `POST /v1/policies`; the policy
 and all attachments commit atomically and the next authorization decision uses the new
 policy. A missing grant, invalid artifact, stale version, or failed audit append leaves the
-prior policy effective. There is no detached policy signature yet.
+prior policy effective. A human principal with an exact `revoke_policy` grant on every
+resource that references a version may retire it through
+`POST /v1/policies/:policyId/revoke`. Retirement requires the complete target set, reattaches
+the newest remaining version, or leaves the resource with no policy so later decisions fail
+closed. A retired version cannot be reattached. There is no detached policy signature yet.
 
 The contract, configuration schema, route table, security properties, and open blockers are
 documented in

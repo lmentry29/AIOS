@@ -43,12 +43,16 @@ passing build.
    decisions require durable, append-only audit. The host composes a durable
    `FilePolicyRegistry` and `authorization-audit.jsonl`; runtime publication is a
    human-only `POST /v1/policies` path requiring an exact `administer_policy` grant on
-   every target, with an audit append failure blocking the mutation. The offline
-   `publish-policy` CLI remains the out-of-band bootstrap path. `administer_policy` may be
+   every target, with an audit append failure blocking the mutation. Runtime retirement is
+   the human-only `POST /v1/policies/:policyId/revoke` path (ADR-0024): it requires an exact
+   `revoke_policy` grant on every resource that references the version, accepts only the
+   complete target set, and falls back to the newest remaining version or leaves the
+   resource unattached and denying. The offline `publish-policy` and `revoke-policy` CLIs
+   remain the out-of-band bootstrap paths. `administer_policy` may be
    granted only to human subjects; it is never implied by another action, ownership, or
-   the bootstrap identity. This is still not a production security boundary: there is no
-   detached policy signature, HTTP revocation route, external audit custody, or policy
-   recovery/rotation procedure. Do not change authorization semantics without an amending
+   the bootstrap identity. Neither action is implied by the other. This is still not a
+   production security boundary: there is no detached policy signature, external audit
+   custody, or policy recovery/key-rotation procedure. Do not change authorization semantics without an amending
    ADR.
 7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
    ADR-0012 is Proposed and establishes capability mediation as the intended

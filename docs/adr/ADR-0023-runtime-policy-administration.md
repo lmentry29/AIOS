@@ -7,6 +7,9 @@ authenticated runtime publication surface. It does not amend ADR-0013's default-
 exact-match, deny-overrides, human-only administration, or durable-audit rules. It is the
 explicit review ADR-0013 requires before a new action identifier becomes grantable.
 
+**Amended 2026-11-10 by ADR-0024**, which adds the runtime retirement route this ADR
+recorded as missing. Publication semantics are unchanged.
+
 ## Context
 
 ADR-0013 requires protected operations to use resource-attached, exact-match, default-deny
@@ -167,7 +170,8 @@ offline verification, which is a separate security decision and deployment contr
   higher-version publication with the desired rules.
 - The offline CLI still works for initial bootstrap and for operators who deliberately stop
   the host. Runtime administration does not replace it.
-- There is still no HTTP revocation route, detached policy signature, key rotation, or
+- Runtime retirement of an attached version is added by ADR-0024; this ADR's publication
+  contract is unchanged. There is still no detached policy signature, key rotation, or
   external audit custody. Those remain production blockers.
 - The registry remains single-process and local-disk only. Multi-host administration is not
   supported.

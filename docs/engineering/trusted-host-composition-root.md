@@ -17,7 +17,7 @@ nothing in the repository turned an HTTP request into a trusted principal.
 - Composes **one** durable `FilePolicyRegistry` and **one** `AuthorizationService`.
 - Injects the same boundary adapter into Founder and Orchestration.
 - Exposes a small, reviewed read/execute surface over loopback HTTP.
-- Keeps policy administration behind an authenticated, exact-granted human-only path; the offline bootstrap CLI remains available.
+- Keeps policy administration behind authenticated, exact-granted, human-only publication and retirement paths; the offline bootstrap CLIs remain available.
 
 Operational state (Tasks, Workflows, Artifacts, dispatch runs) is durable through a
 hash-chained journal per ADR-0015. The host can compose the fixed `local.exec` executor and
@@ -88,7 +88,8 @@ execution limits, and a group/world-readable config file.
 
 `bootstrap_principal_id` is the principal allowed to read the authorization audit; it is not
 a policy-administration bypass. Runtime publication requires an exact `administer_policy`
-grant on every target, and the offline CLI remains the bootstrap path.
+grant on every target, runtime retirement requires an exact `revoke_policy` grant on every
+resource that references the version, and the offline CLIs remain the bootstrap paths.
 
 ## Identity
 
@@ -214,6 +215,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/health` | Unauthenticated readiness; no configuration or secrets |
 | GET | `/v1/session` | Verified principal, session id, human flag |
 | POST | `/v1/policies` | Human-only; exact `administer_policy` on every target; atomic publish and attach; 201 |
+| POST | `/v1/policies/:policyId/revoke` | Human-only; exact `revoke_policy` on every referenced target; complete target set; retires the version and reattaches the newest remaining version, or leaves the resource unattached; 200 |
 | GET | `/v1/tasks?limit=` | Lists only Tasks on which the session has `read_status` |
 | GET | `/v1/workflows?limit=` | Lists only Workflows on which the session has `read_status` |
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
@@ -257,6 +259,17 @@ registry the host later evaluates. Publication and attachment each append a hash
 audit event. The host must be stopped while this runs because the registry holds a
 single-process lock.
 
+`aios-host revoke-policy` is the offline counterpart for retirement:
+
+```sh
+aios-host revoke-policy --config /abs/host.json --revocation /abs/revocation.json
+```
+
+The revocation document is an owner-only (`0600`), regular, unlinked JSON file of at most
+256 KiB containing exactly `{ "policy_id": "<uuid>", "targets": ["<resource-uuid>"] }`.
+Unknown fields are rejected. It runs through `PolicyAdministrationService` as the configured
+bootstrap principal, so the offline path cannot retire outside that principal's authority.
+
 While the host is running, `POST /v1/policies` accepts the same envelope under a verified
 bearer session. It requires an authenticated `human:*` principal and an exact
 `administer_policy` allow on **every** target before any mutation. The new policy must have a
@@ -275,10 +288,23 @@ append fails, the request is denied before the registry is called. The route is 
 bootstrap bypass: a non-bootstrap human with the exact grants may use it, and the bootstrap
 principal receives no implicit grant.
 
+Runtime retirement is `POST /v1/policies/:policyId/revoke` with `{ "targets": [...] }`. The
+body rejects unknown fields, and `targets` must be the complete set of resources whose policy
+history references the version — including retained fallback versions — at most 256 distinct
+UUIDs. Every target is authorized for an exact `revoke_policy` grant before the policy is
+looked up, and the principal must be human. `FilePolicyRegistry.retirePolicy()` then removes
+the version from each affected history, reattaches the newest remaining version, deletes the
+attachment when no version remains, appends one `revoke` lifecycle event per resource, and
+marks the version retired — all in one fsync'd snapshot. Later decisions use the fallback
+version, or deny with `resource_policy_missing_or_invalid` when nothing remains. A retired
+version stays readable for audit but cannot be reattached. Typed failures are
+`400 invalid_policy_id`/`invalid_targets`, `404 policy_not_found`, and
+`409 policy_not_attached`/`policy_already_revoked`/`target_scope_mismatch`.
+
 There is no detached policy signature in this trust model: authority is the verified session
-plus the exact grant, and a caller-supplied signature field is rejected. There is also no
-HTTP revocation route yet. A policy version cannot be rolled back by reattaching an older
-policy; publish a new, higher version containing the desired rules.
+plus the exact grant, and a caller-supplied signature field is rejected. A policy version
+cannot be rolled back by reattaching an older or retired policy; publish a new, higher
+version containing the desired rules.
 
 ## Bootstrap sequence
 
@@ -320,6 +346,11 @@ policy; publish a new, higher version containing the desired rules.
 - agent, action/resource/scope mismatch, unauthenticated, malformed, schema-invalid, stale,
   audit-failure, and restart cases for runtime publication, with the prior policy unchanged
   on every rejection;
+- exact-granted retirement falling back to a retained version and then denying when no
+  version remains, with revoked lifecycle events recorded;
+- ungranted, Agent, partial-scope, unknown, unattached, malformed, out-of-scope, repeated, and
+  audit-failure retirements leaving policy state unchanged, plus a retirement and its
+  fallback decision surviving restart;
 - default-deny intake and dispatch with no attached policy;
 - agent impersonation and body-supplied actor rejection;
 - intake-only policy denying dispatch with no lifecycle writes;
@@ -385,11 +416,12 @@ policy; publish a new, higher version containing the desired rules.
 
 ## What remains open
 
-- **Policy administration assurance.** Runtime publication is exact-granted and human-only,
-  with atomic replacement and durable decision audit. There is no detached policy signature,
-  HTTP revocation route, key rotation, external audit custody, or reattachment of an older
-  version for rollback; recovery from a bad policy is a new higher-version publication. The
-  registry is single-process and local-disk only.
+- **Policy administration assurance.** Runtime publication and retirement are exact-granted
+  and human-only, with atomic replacement/retirement and durable decision audit. There is no
+  detached policy signature, key rotation, external audit custody, or reattachment of an
+  older or retired version; recovery from a bad policy is a new higher-version publication or
+  a retirement. The registry is single-process, local-disk only, and its state is v2 — an
+  older host cannot read it.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
   host process. Learning state is durable in a separate journal and approval-gated for
