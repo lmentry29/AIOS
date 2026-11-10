@@ -13,6 +13,32 @@ export const Action = z.object({
 });
 export type Action = z.infer<typeof Action>;
 
+// A record is the correct shape for the allowlisted environment, but Zod 4.6.7 has
+// no record `.max()`. This custom validator counts with an early exit, so an
+// oversized map is rejected before any value is examined. The description is the
+// explicit JSON Schema contract consumed by generate-schemas.mjs; keep the two in
+// sync or generation fails closed on an unrepresentable custom type.
+export const MAX_TASK_ENV_ENTRIES = 64;
+const TASK_ENV_DESCRIPTION = 'AIOS task environment: at most 64 string entries';
+
+function isBoundedTaskEnvironment(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  let count = 0;
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue;
+    if (++count > MAX_TASK_ENV_ENTRIES) return false;
+    const entry = (value as Record<string, unknown>)[key];
+    if (key.length > 64 || typeof entry !== 'string' || entry.length > 256) return false;
+  }
+  return true;
+}
+
+export const TaskEnvironment = z
+  .custom<Record<string, string>>(isBoundedTaskEnvironment, {
+    message: TASK_ENV_DESCRIPTION,
+  })
+  .describe(TASK_ENV_DESCRIPTION);
+
 /**
  * Execution intent for a Task.
  *
@@ -31,7 +57,7 @@ export const TaskExecutionSpec = z.object({
   cwd: z.string().max(1024).optional(),
   timeout_ms: z.number().int().min(100).max(300_000).optional(),
   max_output_bytes: z.number().int().min(1024).max(1_048_576).optional(),
-  env: z.record(z.string(), z.string().max(256)).optional(),
+  env: TaskEnvironment.optional(),
 });
 export type TaskExecutionSpec = z.infer<typeof TaskExecutionSpec>;
 

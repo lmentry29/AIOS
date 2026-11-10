@@ -8,8 +8,10 @@ import {
   CanonicalEntity,
   LifecycleState,
   MAX_COLLECTION_ITEMS,
+  MAX_TASK_ENV_ENTRIES,
   MemoryObjectEntity,
   TaskEntity,
+  TaskEnvironment,
   WorkHierarchyParent,
 } from '../src/index.js';
 
@@ -116,6 +118,16 @@ describe('TaskEntity (COM §4.2)', () => {
   it('rejects a Task parented to a mission — the chain is Mission → Objective → Task', () => {
     const parent = { entity_id: crypto.randomUUID(), level: 'mission' };
     expect(TaskEntity.safeParse(task({ work_hierarchy_parent: parent })).success).toBe(false);
+  });
+
+  it('bounds the task environment before examining any entry value', () => {
+    const permitted = Object.fromEntries(
+      Array.from({ length: MAX_TASK_ENV_ENTRIES }, (_, index) => [`K${index}`, 'value']),
+    );
+    expect(TaskEnvironment.safeParse(permitted).success).toBe(true);
+    expect(
+      TaskEnvironment.safeParse({ ...permitted, overflow: 'value' }).success,
+    ).toBe(false);
   });
 
   it('never conflates work_hierarchy_parent with organizational_containers (AGENTS.md rule 4)', () => {

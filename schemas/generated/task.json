@@ -166,7 +166,10 @@
                 "maxLength": 256,
                 "type": "string"
               },
+              "description": "AIOS task environment: at most 64 string entries",
+              "maxProperties": 64,
               "propertyNames": {
+                "maxLength": 64,
                 "type": "string"
               },
               "type": "object"
@@ -419,6 +422,19 @@
       ],
       "type": "object"
     },
+    "TaskEnvironment": {
+      "additionalProperties": {
+        "maxLength": 256,
+        "type": "string"
+      },
+      "description": "AIOS task environment: at most 64 string entries",
+      "maxProperties": 64,
+      "propertyNames": {
+        "maxLength": 64,
+        "type": "string"
+      },
+      "type": "object"
+    },
     "TaskExecutionSpec": {
       "additionalProperties": false,
       "properties": {
@@ -441,7 +457,10 @@
             "maxLength": 256,
             "type": "string"
           },
+          "description": "AIOS task environment: at most 64 string entries",
+          "maxProperties": 64,
           "propertyNames": {
+            "maxLength": 64,
             "type": "string"
           },
           "type": "object"

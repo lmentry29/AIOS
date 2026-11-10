@@ -115,6 +115,18 @@ describe('generated JSON Schema lifecycle contracts', () => {
     expect(arrayCount).toBeGreaterThan(0);
   });
 
+  it('publishes the bounded Task environment contract', () => {
+    const spec = generatedSchema('task', 'TaskExecutionSpec') as {
+      properties?: Record<string, Record<string, unknown>>;
+    };
+    expect(spec.properties?.env).toMatchObject({
+      additionalProperties: { maxLength: 256, type: 'string' },
+      maxProperties: 64,
+      propertyNames: { maxLength: 64, type: 'string' },
+      type: 'object',
+    });
+  });
+
   it('keeps the executable Task contract strict and bounded', () => {
     const entity = generatedSchema('task', 'TaskEntity') as {
       properties?: Record<string, {

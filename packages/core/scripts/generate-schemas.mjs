@@ -40,6 +40,25 @@ const isZodSchema = (v) => v instanceof z.ZodType;
 // lifecycle/substate rules as the runtime Zod schemas. These are draft-07 conditionals.
 const JSON_SCHEMA_THEN = "then";
 
+// Zod custom types have no JSON Schema equivalent. The one production custom type
+// (TaskEnvironment) publishes its contract here; an unknown custom type still fails
+// generation instead of silently becoming an unconstrained schema.
+const EXPLICIT_CUSTOM_SCHEMAS = new Map([
+  [
+    "AIOS task environment: at most 64 string entries",
+    {
+      type: "object",
+      maxProperties: 64,
+      propertyNames: { type: "string", maxLength: 64 },
+      additionalProperties: { type: "string", maxLength: 256 },
+    },
+  ],
+]);
+// The converter invokes the handler twice for a custom schema; the second clone
+// drops the description but shares the Zod definition object. Cache by that definition
+// so the explicit contract is used for both calls. Unknown custom types still fail.
+const explicitByDefinition = new WeakMap();
+
 const lifecycleContracts = {
   "agent.AgentEntity": { substateModule: "agent", substateEnum: "AgentSubstate" },
   "task.TaskEntity": {},
@@ -204,6 +223,16 @@ for (const moduleName of modules) {
       io: "input",
       reused: "inline",
       cycles: "throw",
+      unrepresentable: ({ zodSchema, message }) => {
+        const definition = zodSchema._zod?.def;
+        const explicit =
+          (zodSchema.description
+            ? EXPLICIT_CUSTOM_SCHEMAS.get(zodSchema.description)
+            : undefined) ?? (definition ? explicitByDefinition.get(definition) : undefined);
+        if (explicit === undefined) throw new Error(message);
+        if (definition) explicitByDefinition.set(definition, explicit);
+        return explicit;
+      },
     });
     definitions[exportName] = sortDeep(
       rejectUnknownProperties(applyLifecycleContract(moduleName, exportName, schema, mod, sharedModules)),
