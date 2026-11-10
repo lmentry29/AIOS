@@ -307,3 +307,55 @@ What is verified versus not:
   Docker/rootless cgroup behavior, gVisor, Landlock, aggregate cgroup memory/CPU accounting,
   a hard filesystem quota, and external policy signing/key custody. F-005 and F-009 remain
   accepted with the exact blockers recorded in the findings ledger; F-006 remains unverified.
+
+## 2026-11-10 — Bounded collection re-verification (`8ca3e9c`)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. This is a second F-014 pass: the Zod 4.6.7 upgrade alone was
+insufficient because 4.6.6+ only short-circuits an oversized array when the schema declares
+an upper bound, and 20 canonical arrays were still unbounded.
+
+Commands actually run, in this order:
+
+```sh
+pnpm --filter @aios/core run generate:schemas
+pnpm --filter @aios/core exec vitest run tests/schema.test.ts tests/json-schema-contract.test.ts
+node tools/security/collection-bound-drill.mjs
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+```
+
+Observed results at code head `8ca3e9c`:
+
+- Generation wrote 10 files/40 schemas. The generated diff is **53 additions, 0 deletions**:
+  every previously unbounded array now emits `maxItems`. Ordinary collections use 256;
+  `lifecycle_history` and `project_status_history` use 1,024. `json-schema-contract.test.ts`
+  recursively requires a finite `maxItems` on every generated array and checks Task `actions`
+  at 256; the runtime schema test accepts 256 relationships and rejects 257.
+- Collection drill: 1,000,000 invalid Action entries under `--max-old-space-size=64` produced
+  `success:false`, `issue_count:1`, `elapsed_ms:12`; the collection bound rejected the array
+  before parsing elements instead of accumulating a million issues.
+- Core **49 passed**; full workspace gate **46/46 tasks successful**; host **132 passed, 17
+  skipped** without `AIOS_BWRAP_DIR`; live bwrap suite **17/17 passed**; resource-limit, quota,
+  and seccomp drills all exit 0 with the same limit/filter evidence recorded above.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)`; `secret-scan: no
+  findings across 272 tracked files`.
+
+What is verified versus not:
+
+- **Verified:** the dependency upgrade, native draft-07 generation with `maxItems`, runtime
+  rejection of an oversized array, the generated-contract invariant, and the bounded-memory
+  collection drill. The bubblewrap/seccomp/quota/resource guarantees from the prior pass are
+  unchanged and were re-run.
+- **Not verified:** F-015 remains open. `TaskExecutionSpec.env` is a `z.record`; Zod 4.6.7 has
+  no record `.max()`, and a direct 100,000-key invalid parse emitted 100,000 issues in 626 ms.
+  External `/v1/intake` is capped by `request_body_limit_bytes` (default 256 KiB, maximum 1
+  MiB), which limits but does not remove the amplification. The environment record is not
+  schema-bounded; do not claim otherwise. Docker/gVisor/Seatbelt/Apple Containerization,
+  Landlock, aggregate cgroups, hard disk quotas, and external policy signing remain unverified.

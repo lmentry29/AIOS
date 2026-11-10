@@ -3,10 +3,11 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, Zod advisory closure and policy-provenance
-mitigation). Latest security code head: `24d2791` (F-014, F-009 mitigation, F-005
-fail-closed regression); its documentation/validation commit follows. Re-check this head
-rather than older CI lines below.
+Last updated: 2026-11-10 (Freebuff Cloud session, bounded canonical collections and
+F-014 second-pass validation). Latest security code head: `8ca3e9c` (explicit array bounds on
+top of the Zod 4.6.7 upgrade); its documentation/validation commit follows. Re-check this head
+rather than older CI lines below. F-009's digest mitigation and F-005's fail-closed
+regression remain in place from `24d2791`.
 
 ## Repository state
 
@@ -662,9 +663,28 @@ Evidence: full gate **46/46 tasks**; host **132 passed/17 skipped**; core **47**
 **272 tracked files, no findings**. Docker, gVisor, Seatbelt, and Apple Containerization remain
 unverified. See F-005/F-009/F-014, the validation ledger, and the ADR-0009 amendment.
 
-Next action: close F-013 (host session-token rotation/revocation) in the production identity
-path, with a real expiry/revocation regression and the same full-gate/live evidence. Do not
-claim signed policy provenance or macOS isolation until the recorded blockers are cleared.
+## Completed — bounded canonical collections (`8ca3e9c`)
+
+The Zod 4.6.7 upgrade was necessary but not sufficient for F-014: 4.6.6+ only rejects an
+oversized array before parsing elements when the array declares an upper bound, and 20
+canonical arrays were unbounded. Every canonical array now has `.max(...)` on the array
+itself: 256 entries for ordinary collections and 1,024 for lifecycle/history trails. The
+generated output gained 53 `maxItems` keywords with no deletions. A runtime test rejects 257
+relationships; a recursive contract test requires finite `maxItems` on every generated array;
+`tools/security/collection-bound-drill.mjs` parses 1,000,000 invalid actions under a 64 MiB
+heap and reports one issue in 12 ms.
+
+Evidence at `8ca3e9c`: core **49/49**, full gate **46/46 tasks**, host **132 passed/17 skipped**,
+live bwrap **17/17**, resource-limit/quota/seccomp/collection drills all exit 0, audit **0
+triaged**, secret scan **272 tracked files, no findings**. F-015 records the remaining
+`execution.env` record: external intake is bounded by the 256 KiB default request-body cap,
+but the schema itself has no record entry bound; a 100,000-key direct parse still emitted
+100,000 issues. Do not claim F-015 fixed until a bounded-record regression exists.
+
+Next action: close F-015 (bounded `execution.env` record), then F-013 (host session-token
+rotation/revocation), with a real expiry/revocation regression and the same full-gate/live
+evidence. Do not claim signed policy provenance or macOS isolation until the recorded blockers
+are cleared.
 
 ## Next concrete work
 
