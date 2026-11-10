@@ -65,7 +65,7 @@ export function makePolicy(
 ): AccessPolicy {
   const founderActions = options.intakeOnly
     ? ['intake' as const]
-    : (['intake', 'dispatch', 'read_status', 'read_evidence'] as const);
+    : (['intake', 'dispatch', 'cancel', 'read_status', 'read_evidence'] as const);
   return {
     policy_id: randomUUID(),
     version: 1,

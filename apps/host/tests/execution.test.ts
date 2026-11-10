@@ -1,15 +1,53 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TaskEntity } from '@aios/core';
+import { TaskCancelledError } from '@aios/orchestration';
 import { HostExecutionError, HostUnavailableError } from '../src/errors.js';
-import { createSandboxProvider } from '../src/execution/sandbox.js';
+import { runCapturedProcess } from '../src/execution/process.js';
+import { createSandboxProvider, type SandboxProvider, type SandboxResult, type SandboxRunSpec } from '../src/execution/sandbox.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { AGENT_ID, VERIFIER_ID, makeTask } from './fixtures.js';
 import { StubSandbox, makeExecutionConfig as executionConfig } from './sandbox-fixture.js';
+
+/**
+ * Test-only process provider. It deliberately has no isolation boundary and is labelled
+ * `test-only-process`; it exists to verify that cancellation SIGKILLs the real child the
+ * production helper manages. It must never be selected by the host CLI.
+ */
+class TestProcessSandbox implements SandboxProvider {
+  readonly id = 'test-only-process';
+  readonly assurance = 'test-only-process' as const;
+
+  async check(): Promise<{ available: boolean; reason: string }> {
+    return { available: true, reason: 'test-only process helper' };
+  }
+
+  async run(spec: SandboxRunSpec): Promise<SandboxResult> {
+    const [command, ...args] = spec.argv;
+    if (!command) throw new Error('test process argv is empty');
+    const result = await runCapturedProcess(command, args, {
+      cwd: spec.workspaceDirectory,
+      env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', ...spec.env },
+      timeoutMs: spec.timeoutMs,
+      maxOutputBytes: spec.maxOutputBytes,
+      ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+    });
+    return { ...result, provider: this.id, assurance: this.assurance };
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function executableTask(overrides: Record<string, unknown> = {}): TaskEntity {
   return makeTask({
@@ -63,6 +101,37 @@ describe('local command execution', () => {
     const unavailableExecutor = new LocalCommandExecutor(config, unavailable, workspaces);
     await expect(unavailableExecutor.validateAgent(AGENT_ID)).rejects.toBeInstanceOf(HostUnavailableError);
     expect((await executor.validateAgent('11111111-1111-4111-8111-111111111112'))).toBe(false);
+  });
+
+  it('SIGKILLs the real sandbox child when cancellation is requested', async () => {
+    const config = executionConfig();
+    const workspaces = new RunWorkspaceManager(config.workspace_directory);
+    const executor = new LocalCommandExecutor(config, new TestProcessSandbox(), workspaces);
+    const pidFile = join(config.workspace_directory, 'cancel-child.pid');
+    const script = "require('node:fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 30000)";
+    const task = executableTask({
+      execution: {
+        kind: 'local_command',
+        argv: [process.execPath, '-e', script, pidFile],
+        timeout_ms: 20_000,
+      },
+    });
+
+    const running = executor.executeTask(AGENT_ID, task);
+    for (let attempt = 0; attempt < 100 && !existsSync(pidFile); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(existsSync(pidFile)).toBe(true);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    expect(Number.isSafeInteger(pid)).toBe(true);
+    expect(processAlive(pid)).toBe(true);
+
+    expect(executor.cancelTask(task.entity_id)).toBe(true);
+    await expect(running).rejects.toBeInstanceOf(TaskCancelledError);
+    for (let attempt = 0; attempt < 100 && processAlive(pid); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(processAlive(pid)).toBe(false);
   });
 
   it('rejects an absolute or escaping cwd and requires an execution intent', async () => {

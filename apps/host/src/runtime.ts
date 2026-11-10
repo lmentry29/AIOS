@@ -20,6 +20,8 @@ import { SharedAuthorizationBoundary } from './authorization.js';
 import type { HostConfig } from './config.js';
 import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
+import { ManagedExecutionPort, type CancellableExecutionPort } from './execution/managed-execution.js';
+import type { ExecutionLedger } from './persistence/execution-ledger.js';
 import {
   DurableOperationalStore,
   type DurableCollection,
@@ -94,8 +96,14 @@ export interface HostRuntime {
   taskStore: DurableTaskRepository;
   workflowStore: DurableCollection<WorkflowEntity>;
   artifactStore: DurableCollection<ArtifactEntity>;
-  /** Workflows whose interrupted dispatch was recovered at startup. */
+  /** Workflows whose interrupted dispatch/execution was recovered at startup. */
   recoveredWorkflows: string[];
+  /** Task executions interrupted by a previous process and reconciled at startup. */
+  recoveredExecutions: string[];
+  /** Per-Task execution lifecycle journal. */
+  executions: ExecutionLedger;
+  /** Host-owned cancellation handle; it carries no authorization itself. */
+  executionControl: CancellableExecutionPort;
   executionConfigured: boolean;
   verificationConfigured: boolean;
   evidenceConfigured: boolean;
@@ -105,14 +113,30 @@ export interface HostRuntime {
 /**
  * Refuses to leave recovered Workflows looking active.
  *
- * A run journaled by a previous host boot cannot still be executing. Marking it interrupted
- * is not enough on its own: the Workflow and its active Tasks would otherwise stay `active`
- * with no owner, and a later reader would mistake an interrupted dispatch for in-flight
- * work. `active`/`monitored` can reach `suspended` in the canonical graph; `suspended` can
- * be resumed deliberately, which is exactly the operator decision this creates.
+ * A run or Task execution journaled by a previous host boot cannot still be executing.
+ * Marking it interrupted is not enough on its own: the Workflow and its active Tasks would
+ * otherwise stay `active` with no owner, and a later reader would mistake interrupted work
+ * for in-flight work. `active`/`monitored` can reach `suspended` in the canonical graph;
+ * `suspended` can be resumed deliberately, which is exactly the operator decision this
+ * creates. Reconciliation never re-executes and never appends a second terminal record.
  */
-function suspendInterruptedWork(store: DurableOperationalStore): string[] {
-  const affected = store.runs.recover();
+function reconcileInterruptedWork(store: DurableOperationalStore): {
+  workflows: string[];
+  executions: string[];
+} {
+  const affected = new Set(store.runs.recover());
+  const interruptedExecutions = store.executions.reconcile();
+  const directTasks = new Set<string>();
+  for (const execution of interruptedExecutions) {
+    if (execution.workflow_id) {
+      affected.add(execution.workflow_id);
+      continue;
+    }
+    const task = store.tasks.getTask(execution.task_id);
+    if (task?.assigned_workflow) affected.add(task.assigned_workflow);
+    else directTasks.add(execution.task_id);
+  }
+
   for (const workflowId of affected) {
     const workflow = store.workflows.get(workflowId);
     if (workflow && (workflow.lifecycle_state === 'active' || workflow.lifecycle_state === 'monitored')) {
@@ -124,7 +148,13 @@ function suspendInterruptedWork(store: DurableOperationalStore): string[] {
       store.tasks.transitionTaskLifecycle(task.entity_id, 'suspended', HOST_RECOVERY_ACTOR_ID);
     }
   }
-  return affected;
+  for (const taskId of directTasks) {
+    const task = store.tasks.getTask(taskId);
+    if (task && (task.lifecycle_state === 'active' || task.lifecycle_state === 'monitored')) {
+      store.tasks.transitionTaskLifecycle(taskId, 'suspended', HOST_RECOVERY_ACTOR_ID);
+    }
+  }
+  return { workflows: [...affected], executions: interruptedExecutions.map((record) => record.execution_id) };
 }
 
 function resolveAgentUnlessConfigured(
@@ -178,14 +208,20 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       directory: config.operational_store.directory,
       leaseMs: config.dispatch_lease_ms,
     });
-    const recoveredWorkflows = suspendInterruptedWork(operational);
+    const recovered = reconcileInterruptedWork(operational);
+    const recoveredWorkflows = recovered.workflows;
+    const recoveredExecutions = recovered.executions;
     const taskStore = operational.tasks;
     const workflowStore = operational.workflows;
     const artifactStore = operational.artifacts;
     const objectStore = new ObjectStore<CanonicalEntity>(CanonicalEntitySchema);
     const learning = new LearningService();
 
-    const execution = options.execution ?? new UnconfiguredExecutionPort();
+    const execution = new ManagedExecutionPort(
+      options.execution ?? new UnconfiguredExecutionPort(),
+      operational.executions,
+      config.execution?.max_concurrent_tasks ?? 1,
+    );
     const verification = options.verification ?? new UnconfiguredVerificationPort();
 
     const kernel = new OrchestrationKernel(
@@ -195,6 +231,9 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         execution,
         verification,
         resolveAgent: resolveAgentUnlessConfigured(options.resolveAgent),
+        cancellation: {
+          isCancelled: async (taskId) => operational?.executions.isCancelled(taskId) ?? false,
+        },
       },
       workflowStore,
       artifactStore,
@@ -247,6 +286,9 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       workflowStore,
       artifactStore,
       recoveredWorkflows,
+      recoveredExecutions,
+      executions: operational.executions,
+      executionControl: execution,
       executionConfigured: options.execution !== undefined,
       verificationConfigured: options.verification !== undefined,
       evidenceConfigured: config.obsidian !== undefined,

@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { SandboxProviderKind } from '../config.js';
 import { HostUnavailableError } from '../errors.js';
 import { runCapturedProcess } from './process.js';
 
-export type SandboxAssurance = 'container' | 'kernel-namespace' | 'seatbelt';
+export type SandboxAssurance = 'container' | 'kernel-namespace' | 'seatbelt' | 'test-only-process';
 
 export interface SandboxCheck {
   available: boolean;
@@ -20,6 +21,8 @@ export interface SandboxRunSpec {
   timeoutMs: number;
   maxOutputBytes: number;
   env: Record<string, string>;
+  /** Aborts the sandboxed work. Providers must kill the actual boundary process. */
+  signal?: AbortSignal;
 }
 
 export interface SandboxResult {
@@ -28,6 +31,7 @@ export interface SandboxResult {
   stdout: Buffer;
   stderr: Buffer;
   timedOut: boolean;
+  cancelled: boolean;
   truncated: boolean;
   durationMs: number;
   spawnError?: string;
@@ -56,6 +60,7 @@ interface ProviderRunOptions {
   maxOutputBytes: number;
   env: Record<string, string>;
   cwd?: string;
+  signal?: AbortSignal;
 }
 
 async function spawnProvider(
@@ -68,6 +73,7 @@ async function spawnProvider(
     env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', ...options.env },
     timeoutMs: options.timeoutMs,
     maxOutputBytes: options.maxOutputBytes,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   return { ...result, provider: options.id, assurance: options.assurance };
 }
@@ -111,6 +117,7 @@ class DockerSandbox implements SandboxProvider {
 
   async run(spec: SandboxRunSpec): Promise<SandboxResult> {
     const workspace = assertWorkspace(spec.workspaceDirectory);
+    const containerName = `aios-${randomUUID()}`;
     const mount = `type=bind,src=${workspace},dst=/workspace,rw`;
     const workdir = spec.cwd === undefined ? '/workspace' : `/workspace/${spec.cwd}`;
     // The workspace is mode 0700. Running the container as the host UID/GID keeps
@@ -122,6 +129,7 @@ class DockerSandbox implements SandboxProvider {
     const args = [
       'run',
       '--rm',
+      '--name', containerName,
       '--network=none',
       '--read-only',
       '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
@@ -139,13 +147,29 @@ class DockerSandbox implements SandboxProvider {
       this.image,
       ...spec.argv,
     ];
-    return spawnProvider('docker', args, {
-      id: this.id,
-      assurance: this.assurance,
-      timeoutMs: spec.timeoutMs,
-      maxOutputBytes: spec.maxOutputBytes,
-      env: {},
-    });
+    // Killing the Docker CLI alone leaves the container running. On cancellation, issue an
+    // explicit `docker kill` for this run's unique container name. The kill is best-effort
+    // relative to the CLI abort; `--rm` still removes the container after it stops.
+    const killContainer = () => {
+      void runCapturedProcess('docker', ['kill', containerName], {
+        env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
+        timeoutMs: 5_000,
+        maxOutputBytes: 1024,
+      });
+    };
+    spec.signal?.addEventListener('abort', killContainer, { once: true });
+    try {
+      return await spawnProvider('docker', args, {
+        id: this.id,
+        assurance: this.assurance,
+        timeoutMs: spec.timeoutMs,
+        maxOutputBytes: spec.maxOutputBytes,
+        env: {},
+        ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+      });
+    } finally {
+      spec.signal?.removeEventListener('abort', killContainer);
+    }
   }
 }
 
@@ -187,6 +211,7 @@ class BubblewrapSandbox implements SandboxProvider {
     timeoutMs = 5_000,
     maxOutputBytes = 1024,
     env: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<SandboxResult> {
     const binds = ['/usr', '/bin', '/lib', '/lib64', '/etc']
       .filter((path) => existsSync(path))
@@ -216,6 +241,7 @@ class BubblewrapSandbox implements SandboxProvider {
       timeoutMs,
       maxOutputBytes,
       env: {},
+      ...(signal === undefined ? {} : { signal }),
     });
   }
 
@@ -228,6 +254,7 @@ class BubblewrapSandbox implements SandboxProvider {
       spec.timeoutMs,
       spec.maxOutputBytes,
       spec.env,
+      spec.signal,
     );
   }
 }
@@ -280,6 +307,7 @@ class SeatbeltSandbox implements SandboxProvider {
       maxOutputBytes: spec.maxOutputBytes,
       env: { ...spec.env, HOME: '/tmp', TMPDIR: '/tmp' },
       cwd,
+      ...(spec.signal === undefined ? {} : { signal: spec.signal }),
     });
   }
 }

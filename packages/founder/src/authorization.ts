@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status' | 'read_evidence';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'read_status' | 'read_evidence';
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
@@ -362,7 +362,7 @@ function isHumanPrincipal(value: string): boolean {
 }
 
 function isAccessAction(value: string): value is AccessAction {
-  return ['intake', 'dispatch', 'execute', 'coordinate', 'read_status', 'read_evidence'].includes(value);
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'read_status', 'read_evidence'].includes(value);
 }
 
 function isUuid(value: string): boolean {

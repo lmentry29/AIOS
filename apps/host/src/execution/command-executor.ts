@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { TaskEntity } from '@aios/core';
-import type { AgentExecutionPort, TaskExecutionResult } from '@aios/orchestration';
+import { TaskCancelledError, type AgentExecutionPort, type TaskExecutionResult } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
 import { HostExecutionError, HostUnavailableError } from '../errors.js';
-import type { SandboxProvider } from './sandbox.js';
+import type { SandboxProvider, SandboxResult } from './sandbox.js';
 import type { RunWorkspaceManager } from './workspace.js';
 
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
@@ -35,6 +35,7 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
  */
 export class LocalCommandExecutor implements AgentExecutionPort {
   private availability: { checkedAt: number; available: boolean; reason: string } | undefined;
+  private readonly active = new Map<string, AbortController>();
 
   constructor(
     private readonly config: HostExecutionConfig,
@@ -77,15 +78,29 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       throw new HostExecutionError('Task execution limits are outside the host policy.');
     }
 
-    const result = await this.provider.run({
-      argv: intent.argv,
-      workspaceDirectory: workspace,
-      cwd,
-      timeoutMs: Math.min(timeoutMs, MAX_TIMEOUT_MS),
-      maxOutputBytes,
-      env: filterEnvironment(intent.env),
-    });
+    if (this.active.has(task.entity_id)) {
+      throw new HostExecutionError('This Task already has an active sandbox invocation.');
+    }
+    const controller = new AbortController();
+    this.active.set(task.entity_id, controller);
+    let result: SandboxResult;
+    try {
+      result = await this.provider.run({
+        argv: intent.argv,
+        workspaceDirectory: workspace,
+        cwd,
+        timeoutMs: Math.min(timeoutMs, MAX_TIMEOUT_MS),
+        maxOutputBytes,
+        env: filterEnvironment(intent.env),
+        signal: controller.signal,
+      });
+    } finally {
+      if (this.active.get(task.entity_id) === controller) this.active.delete(task.entity_id);
+    }
 
+    if (result.cancelled) {
+      throw new TaskCancelledError(task.entity_id);
+    }
     if (result.spawnError) {
       throw new HostExecutionError('The sandbox could not start the requested command.');
     }
@@ -129,6 +144,14 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     throw new HostExecutionError(
       'The local command adapter does not coordinate multiple Agents; use a coordination adapter whose evidence can be verified independently.',
     );
+  }
+
+  /** Aborts the sandbox invocation for a Task. Returns false when nothing is active. */
+  cancelTask(taskId: string): boolean {
+    const controller = this.active.get(taskId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   }
 
   private async ensureAvailable(): Promise<void> {

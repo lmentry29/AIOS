@@ -59,7 +59,7 @@ export interface TaskVerificationPort {
 
 export interface AuthorizationRequest {
   actor_id: string;
-  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'read_status' | 'read_evidence';
+  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'read_status' | 'read_evidence';
   resource_id: string;
 }
 
@@ -71,6 +71,13 @@ export interface AgentExecutionPort {
   validateAgent(agentId: string): Promise<boolean>;
   executeTask(agentId: string, task: TaskEntity): Promise<TaskExecutionResult>;
   coordinate(agents: string[], task: TaskEntity): Promise<TaskExecutionResult>;
+  /** Optional preflight check used to reject a dispatch before lifecycle writes. */
+  hasCapacity?(): boolean;
+}
+
+/** Read-only cancellation view supplied by the host; it carries no authority itself. */
+export interface TaskCancellationPort {
+  isCancelled(taskId: string): Promise<boolean>;
 }
 
 export interface OrchestrationOptions {
@@ -78,6 +85,7 @@ export interface OrchestrationOptions {
   execution: AgentExecutionPort;
   verification: TaskVerificationPort;
   resolveAgent(task: TaskEntity): Promise<string>;
+  cancellation?: TaskCancellationPort;
 }
 
 function clonePlain<T>(value: T): T {
@@ -111,6 +119,22 @@ export class OrchestrationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'OrchestrationError';
+  }
+}
+
+/** The Task was cancelled by an authorized caller; no verifier or completion may follow. */
+export class TaskCancelledError extends OrchestrationError {
+  constructor(taskId: string) {
+    super(`Task "${taskId}" was cancelled before verified completion.`);
+    this.name = 'TaskCancelledError';
+  }
+}
+
+/** Rejected before execution because the configured concurrency cap is full. */
+export class ExecutionCapacityError extends OrchestrationError {
+  constructor() {
+    super('The host execution concurrency limit is full; this dispatch was not started.');
+    this.name = 'ExecutionCapacityError';
   }
 }
 
@@ -207,6 +231,10 @@ export class OrchestrationKernel {
       if (task.assigned_workflow && task.assigned_workflow !== stored.entity_id) {
         throw new OrchestrationError(`Task "${taskId}" is already assigned to another Workflow.`);
       }
+      await this.assertNotCancelled(taskId);
+      if (this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
+        throw new ExecutionCapacityError();
+      }
       const agentId = await this.options.resolveAgent(task);
       if (!isEntityIdentifier(agentId)) throw new OrchestrationError('Agent resolver returned an invalid Agent identifier.');
       if (!(await this.options.execution.validateAgent(agentId))) {
@@ -234,9 +262,15 @@ export class OrchestrationKernel {
         task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', item.agentId);
         task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
 
+        await this.assertNotCancelled(task.entity_id);
         const result = await this.options.execution.executeTask(item.agentId, task);
+        // A late result is not completion. Check the durable cancellation view before the
+        // verifier runs and again before any evidence or lifecycle write.
+        await this.assertNotCancelled(task.entity_id);
         const verified = await this.verifyResult(result, task, [item.agentId]);
+        await this.assertNotCancelled(task.entity_id);
         const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.verifier_id, verified.result, verified.decision);
+        await this.assertNotCancelled(task.entity_id);
         this.tasks.updateTask(task.entity_id, {
           audit_trail_ref: evidenceId,
           ...(task.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
@@ -298,9 +332,13 @@ export class OrchestrationKernel {
     this.tasks.transitionTaskLifecycle(current.entity_id, 'validated', actorId);
     const active = this.tasks.transitionTaskLifecycle(current.entity_id, 'active', actorId);
     try {
+      await this.assertNotCancelled(active.entity_id);
       const result = await this.options.execution.coordinate(uniqueAgents, active);
+      await this.assertNotCancelled(active.entity_id);
       const verified = await this.verifyResult(result, active, uniqueAgents);
+      await this.assertNotCancelled(active.entity_id);
       const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.verifier_id, verified.result, verified.decision);
+      await this.assertNotCancelled(active.entity_id);
       this.tasks.updateTask(active.entity_id, {
         audit_trail_ref: evidenceId,
         ...(active.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
@@ -358,6 +396,12 @@ export class OrchestrationKernel {
       throw new OrchestrationError('Execution evidence read denied by authorization policy.');
     }
     return evidence;
+  }
+
+  private async assertNotCancelled(taskId: string): Promise<void> {
+    if (this.options.cancellation && await this.options.cancellation.isCancelled(taskId)) {
+      throw new TaskCancelledError(taskId);
+    }
   }
 
   private persistExecutionEvidence(

@@ -95,10 +95,17 @@ async function startHost(options: {
   withAdapters?: boolean;
   withLocalAdapters?: boolean;
   directory?: string;
+  maxConcurrentTasks?: number;
 } = {}): Promise<Harness> {
   const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'aios-host-http-'));
   const policyPath = join(directory, 'policy-state.json');
   const configPath = join(directory, 'host.json');
+  const localExecutionConfig = options.withLocalAdapters
+    ? {
+        ...makeExecutionConfig(join(directory, 'workspaces')),
+        max_concurrent_tasks: options.maxConcurrentTasks ?? 1,
+      }
+    : undefined;
   writeFileSync(configPath, JSON.stringify({
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
@@ -112,6 +119,7 @@ async function startHost(options: {
       { session_id: randomUUID(), principal_id: FOUNDER, token_sha256: sha256(FOUNDER_TOKEN), label: 'founder laptop' },
       { session_id: randomUUID(), principal_id: AGENT_ID, token_sha256: sha256(AGENT_TOKEN), label: 'agent worker' },
     ],
+    ...(localExecutionConfig === undefined ? {} : { execution: localExecutionConfig }),
   }), { mode: 0o600 });
 
   if (options.policy) await attachPolicy(policyPath, options.policy);
@@ -119,9 +127,9 @@ async function startHost(options: {
   const config = loadHostConfig(configPath);
   let sandbox: StubSandbox | undefined;
   let localAdapters: { execution: LocalCommandExecutor; verification: LocalCommandVerifier } | undefined;
-  if (options.withLocalAdapters) {
+  if (localExecutionConfig) {
     sandbox = new StubSandbox();
-    const executionConfig = makeExecutionConfig(join(directory, 'workspaces'));
+    const executionConfig = localExecutionConfig;
     const workspaces = new RunWorkspaceManager(executionConfig.workspace_directory);
     localAdapters = {
       execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces),
@@ -583,6 +591,163 @@ describe('trusted host HTTP surface', () => {
     }
   });
 
+  it('cancels an executing Task, kills its sandbox invocation, and skips the verifier', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'cancel me'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const held = harness.sandbox?.holdNextRun();
+    expect(held).toBeDefined();
+    const running = dispatch(harness, workflow.entity_id);
+    await held?.started;
+    expect(harness.runtime.executions.getForTask(task.entity_id)?.state).toBe('running');
+
+    const cancelled = await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'operator requested cancellation' },
+    });
+    expect(cancelled.status).toBe(202);
+    expect(cancelled.body).toMatchObject({ task_id: task.entity_id, state: 'cancelled' });
+    expect(harness.sandbox?.aborted).toBe(true);
+
+    const dispatchResult = await running;
+    expect(dispatchResult.status).toBe(409);
+    expect(dispatchResult.body?.error).toBe('task_cancelled');
+    // The verifier never ran: exactly one sandbox call, the cancelled execution.
+    expect(harness.sandbox?.calls).toHaveLength(1);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      state: 'cancelled',
+      reason_code: 'cancelled_by_request',
+    });
+    expect(harness.runtime.executions.getForTask(task.entity_id)?.finished_at).toBeTruthy();
+    expect(harness.runtime.runs.list().find((run) => run.workflow_id === workflow.entity_id)?.state)
+      .toBe('cancelled');
+    expect(JSON.stringify(harness.runtime.executions.getForTask(task.entity_id)))
+      .not.toContain('operator requested cancellation');
+
+    const repeated = await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+    });
+    expect(repeated.status).toBe(200);
+    expect(repeated.body?.already_cancelled).toBe(true);
+
+    const audit = await call(harness, 'GET', '/v1/audit/authorization?limit=500', { token: FOUNDER_TOKEN });
+    expect(audit.status).toBe(200);
+    expect(audit.body?.records).toContainEqual(expect.objectContaining({
+      actor_id: FOUNDER,
+      action: 'cancel',
+      decision: 'allow',
+      resource_id: task.entity_id,
+    }));
+  });
+
+  it('cancels a queued Task and prevents it from ever executing', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'must not run'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const cancelled = await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'cancel while queued' },
+    });
+    expect(cancelled.status).toBe(202);
+    expect(harness.runtime.executions.getForTask(task.entity_id)?.state).toBe('cancelled');
+
+    const deniedExecution = await dispatch(harness, workflow.entity_id);
+    expect(deniedExecution.status).toBe(409);
+    expect(deniedExecution.body?.error).toBe('task_cancelled');
+    expect(harness.sandbox?.calls).toHaveLength(0);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('created');
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('created');
+  });
+
+  it('requires explicit cancel authorization and records no cancellation when denied', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id, { intakeOnly: true }),
+      withAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const denied = await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'not granted' },
+    });
+    expect(denied.status).toBe(403);
+    expect(denied.body?.error).toBe('forbidden');
+    expect(harness.runtime.executions.getForTask(task.entity_id)).toBeUndefined();
+  });
+
+  it('rejects a dispatch beyond the configured concurrency cap without starting it', async () => {
+    const firstTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'first'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const secondTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'second'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const firstWorkflow = makeWorkflow([firstTask.entity_id]);
+    const secondWorkflow = makeWorkflow([secondTask.entity_id]);
+    const firstPolicy = makePolicy(firstTask.entity_id, firstWorkflow.entity_id);
+    const secondPolicy = makePolicy(secondTask.entity_id, secondWorkflow.entity_id);
+    const policy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [...firstPolicy.rules, ...secondPolicy.rules],
+    };
+    const harness = await startHost({
+      policy,
+      withLocalAdapters: true,
+      maxConcurrentTasks: 1,
+    });
+    for (const item of [firstTask, secondTask]) {
+      expect((await intake(harness, 'task', item)).status).toBe(201);
+    }
+    expect((await intake(harness, 'workflow', firstWorkflow)).status).toBe(201);
+    expect((await intake(harness, 'workflow', secondWorkflow)).status).toBe(201);
+
+    const held = harness.sandbox?.holdNextRun();
+    expect(held).toBeDefined();
+    const active = dispatch(harness, firstWorkflow.entity_id);
+    await held?.started;
+
+    const rejected = await dispatch(harness, secondWorkflow.entity_id);
+    expect(rejected.status).toBe(429);
+    expect(rejected.body?.error).toBe('execution_capacity_exceeded');
+    expect(harness.sandbox?.calls).toHaveLength(1);
+    // The kernel rejected before its first lifecycle write, so the Workflow remains
+    // retryable instead of being left active or suspended with no execution.
+    expect(harness.runtime.workflowStore.get(secondWorkflow.entity_id)?.lifecycle_state).toBe('created');
+    expect(harness.runtime.taskStore.getTask(secondTask.entity_id)?.lifecycle_state).toBe('created');
+
+    held?.release();
+    expect((await active).status).toBe(200);
+    const retried = await dispatch(harness, secondWorkflow.entity_id, 'capacity-retry-0001');
+    expect(retried.status).toBe(200);
+    expect(retried.body?.lifecycle_state).toBe('completed');
+  });
+
   it('restores durable operational state and suspends interrupted work after restart', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'aios-host-restart-'));
     const task = makeTask();
@@ -600,22 +765,33 @@ describe('trusted host HTTP surface', () => {
     first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'active', FOUNDER);
     first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'validated', FOUNDER);
     first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'active', FOUNDER);
-    first.runtime.runs.start({
+    const started = first.runtime.runs.start({
       workflow_id: workflow.entity_id,
       actor_id: FOUNDER,
       idempotency_key: 'interrupted-dispatch-0001',
     });
+    first.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
 
-    // Simulate a host crash: the run is journaled as running, then the process stops
-    // without completing it.
+    // Simulate a host crash: run and Task execution are journaled as running, then the
+    // process stops without completing either.
     await first.server.close();
     first.runtime.close();
 
     const second = await startHost({ directory });
     expect(second.runtime.recoveredWorkflows).toEqual([workflow.entity_id]);
+    expect(second.runtime.recoveredExecutions).toHaveLength(1);
     expect(second.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
     expect(second.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
-    expect(second.runtime.runs.list()[0]?.state).toBe('interrupted');
+    expect(second.runtime.runs.get(started.run.run_id)?.state).toBe('interrupted');
+    expect(second.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      state: 'interrupted',
+      reason_code: 'host_restarted',
+    });
+    expect(second.runtime.executions.list()).toHaveLength(1);
 
     const read = await call(second, 'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN });
     expect(read.status).toBe(200);
@@ -624,5 +800,16 @@ describe('trusted host HTTP surface', () => {
     const health = await call(second, 'GET', '/health');
     expect(health.body?.storage).toBe('durable');
     expect(health.body?.recovered_workflows).toBe(1);
+    expect(health.body?.recovered_executions).toBe(1);
+
+    // A second fresh start sees only terminal records: reconciliation is a no-op and does
+    // not duplicate the terminal transition or create another execution.
+    await second.server.close();
+    second.runtime.close();
+    const third = await startHost({ directory });
+    expect(third.runtime.recoveredWorkflows).toEqual([]);
+    expect(third.runtime.recoveredExecutions).toEqual([]);
+    expect(third.runtime.executions.getForTask(task.entity_id)?.state).toBe('interrupted');
+    expect(third.runtime.executions.list()).toHaveLength(1);
   });
 });

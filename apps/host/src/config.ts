@@ -87,6 +87,11 @@ export interface HostExecutionConfig {
   default_timeout_ms: number;
   /** Upper bound applied to captured stdout and stderr per stream. */
   max_output_bytes: number;
+  /**
+   * Maximum number of Task executions allowed to run at once. A dispatch beyond this
+   * limit is rejected before execution with HTTP 429; it is not silently fanned out.
+   */
+  max_concurrent_tasks: number;
 }
 
 const DEFAULT_BODY_LIMIT = 256 * 1024;
@@ -180,6 +185,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     'image',
     'default_timeout_ms',
     'max_output_bytes',
+    'max_concurrent_tasks',
   ]), 'execution');
 
   const workspaceDirectory = requireString(
@@ -233,6 +239,15 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     maxOutputBytes = value;
   }
 
+  let maxConcurrentTasks = 1;
+  if (raw.max_concurrent_tasks !== undefined) {
+    const value = raw.max_concurrent_tasks;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 32) {
+      fail('execution.max_concurrent_tasks', 'must be an integer between 1 and 32');
+    }
+    maxConcurrentTasks = value;
+  }
+
   return {
     workspace_directory: resolve(workspaceDirectory),
     agent_id: agentId,
@@ -241,6 +256,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     ...(image === undefined ? {} : { image }),
     default_timeout_ms: defaultTimeoutMs,
     max_output_bytes: maxOutputBytes,
+    max_concurrent_tasks: maxConcurrentTasks,
   };
 }
 

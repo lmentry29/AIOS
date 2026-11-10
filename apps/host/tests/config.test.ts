@@ -88,7 +88,17 @@ describe('host configuration', () => {
       image: 'node:22-alpine',
       default_timeout_ms: 60_000,
       max_output_bytes: 64 * 1024,
+      max_concurrent_tasks: 1,
     });
+    expect(parseHostConfig(validConfig({
+      execution: {
+        workspace_directory: join(tmpdir(), 'aios-workspaces'),
+        agent_id: '11111111-1111-4111-8111-111111111111',
+        verifier_id: '22222222-2222-4222-8222-222222222222',
+        provider: 'bubblewrap',
+        max_concurrent_tasks: 4,
+      },
+    })).execution?.max_concurrent_tasks).toBe(4);
   });
 
   it('rejects an execution verifier that is also the executor and unsafe provider wiring', () => {
@@ -107,6 +117,10 @@ describe('host configuration', () => {
       .toThrow(/image/);
     expect(() => parseHostConfig(validConfig({ execution: { ...base, provider: 'process' } })))
       .toThrow(/provider/);
+    for (const invalid of [0, 33, 1.5, '2']) {
+      expect(() => parseHostConfig(validConfig({ execution: { ...base, max_concurrent_tasks: invalid } })))
+        .toThrow(/max_concurrent_tasks/);
+    }
     expect(() => parseHostConfig(validConfig({ execution: { ...base, image: undefined, provider: 'bubblewrap' } })))
       .not.toThrow();
   });

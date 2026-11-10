@@ -1,12 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { FounderAuthorizationError, FounderInputError } from '@aios/founder';
-import { OrchestrationError } from '@aios/orchestration';
+import { ExecutionCapacityError, OrchestrationError, TaskCancelledError } from '@aios/orchestration';
 import type { HostConfig } from './config.js';
 import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
+import { ExecutionConflictError } from './persistence/execution-ledger.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
 import type { HostRuntime } from './runtime.js';
 
@@ -103,6 +104,8 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknow
 }
 
 function dispatchFailureCode(error: unknown): string {
+  if (error instanceof TaskCancelledError) return 'task_cancelled';
+  if (error instanceof ExecutionCapacityError) return 'execution_capacity_exceeded';
   if (error instanceof HostUnavailableError) return 'adapter_unavailable';
   if (error instanceof HostExecutionError) return 'execution_failed';
   if (error instanceof OrchestrationError) return 'orchestration_rejected';
@@ -124,6 +127,15 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   }
   if (error instanceof FounderInputError) {
     return { status: 400, code: 'invalid_request', message: error.message };
+  }
+  if (error instanceof TaskCancelledError) {
+    return { status: 409, code: 'task_cancelled', message: error.message };
+  }
+  if (error instanceof ExecutionCapacityError) {
+    return { status: 429, code: 'execution_capacity_exceeded', message: error.message };
+  }
+  if (error instanceof ExecutionConflictError) {
+    return { status: 409, code: 'execution_conflict', message: error.message };
   }
   if (error instanceof OrchestrationError) {
     const denied = /denied|not authorized/i.test(error.message);
@@ -310,7 +322,7 @@ export class HostHttpServer {
 async function requireAllowed(
   runtime: HostRuntime,
   session: AuthenticatedSession,
-  action: 'read_status' | 'read_evidence',
+  action: 'read_status' | 'read_evidence' | 'cancel',
   resourceId: string,
 ): Promise<void> {
   const allowed = await runtime.authorization.authorize({
@@ -373,6 +385,8 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           },
           storage: 'durable',
           recovered_workflows: runtime.recoveredWorkflows.length,
+          recovered_executions: runtime.recoveredExecutions.length,
+          max_concurrent_tasks: runtime.config.execution?.max_concurrent_tasks ?? 1,
         },
       }),
     },
@@ -444,6 +458,91 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         await requireAllowed(host, session, 'read_status', workflowId);
         const workflow = await host.kernel.getWorkflow(workflowId, session.principal_id);
         return { status: 200, body: { workflow } };
+      },
+    },
+    {
+      pattern: /^\/v1\/tasks\/([^/]+)\/cancel$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session, req, readJson }, params) => {
+        const taskId = uuidParam(params[1], 'taskId');
+        // Authorize the exact cancel action before revealing whether the Task exists.
+        await requireAllowed(host, session, 'cancel', taskId);
+        // The reason is optional. Do not require a JSON media type when the caller sends
+        // no body at all (for example an idempotent retry).
+        const declaredLength = req.headers['content-length'];
+        const hasBody = req.headers['content-type'] !== undefined
+          || req.headers['transfer-encoding'] !== undefined
+          || (typeof declaredLength === 'string' && Number(declaredLength) > 0);
+        const body = hasBody ? ((await readJson()) ?? {}) : {};
+        const requestedReason = body.reason;
+        if (requestedReason !== undefined && (typeof requestedReason !== 'string'
+          || requestedReason.trim().length === 0 || requestedReason.length > 500)) {
+          throw new HostHttpError(
+            400,
+            'invalid_field',
+            'Field "reason" must be a bounded non-empty string.',
+          );
+        }
+        const task = host.taskStore.getTask(taskId);
+        if (!task) throw new HostHttpError(404, 'not_found', 'Task was not found.');
+        if (task.lifecycle_state === 'completed' || task.lifecycle_state === 'archived') {
+          throw new HostHttpError(409, 'task_terminal', 'A terminal Task cannot be cancelled.');
+        }
+
+        const existing = host.executions.getForTask(taskId);
+        if (existing && existing.state !== 'running' && existing.state !== 'cancelled') {
+          throw new HostHttpError(409, 'execution_terminal', 'The Task execution is already terminal.');
+        }
+        if (existing?.state === 'cancelled') {
+          return {
+            status: 200,
+            body: {
+              task_id: taskId,
+              execution_id: existing.execution_id,
+              state: 'cancelled',
+              already_cancelled: true,
+            },
+          };
+        }
+
+        // Persist the terminal cancellation before aborting. The executor wrapper checks this
+        // record after the sandbox returns, so a late success can never overwrite it.
+        const cancelled = host.executions.cancel({
+          task_id: taskId,
+          ...(task.assigned_workflow === undefined ? {} : { workflow_id: task.assigned_workflow }),
+          actor_id: session.principal_id,
+          reason_code: 'cancelled_by_request',
+          evidence: [`reason_sha256:${createHash('sha256').update(requestedReason ?? 'cancelled_by_request').digest('hex')}`],
+        });
+
+        let runId: string | undefined;
+        if (task.assigned_workflow) {
+          const run = host.runs.listForWorkflow(task.assigned_workflow).find((candidate) => candidate.state === 'running');
+          if (run) {
+            host.runs.cancel(run.run_id, 'cancelled_by_request');
+            runId = run.run_id;
+          }
+        }
+        if (task.lifecycle_state === 'active' || task.lifecycle_state === 'monitored') {
+          host.taskStore.transitionTaskLifecycle(
+            taskId,
+            'suspended',
+            task.assigned_agent ?? session.principal_id,
+          );
+        }
+        // Abort after the ledger and run are terminal. The local executor kills the sandbox
+        // process; a wrapper around any other executor rechecks the ledger before completion.
+        host.executionControl.cancelTask(taskId);
+
+        return {
+          status: 202,
+          body: {
+            task_id: taskId,
+            execution_id: cancelled.record.execution_id,
+            state: 'cancelled',
+            ...(runId === undefined ? {} : { run_id: runId }),
+          },
+        };
       },
     },
     {
@@ -557,7 +656,9 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         const stopHeartbeat = host.runs.heartbeat(started.run.run_id);
         try {
           const handle = await host.kernel.dispatch(workflow, session.principal_id);
-          host.runs.complete(started.run.run_id);
+          const run = host.runs.get(started.run.run_id);
+          if (run?.state === 'running') host.runs.complete(started.run.run_id);
+          else if (run?.state === 'cancelled') throw new TaskCancelledError(workflowId);
           const current = host.workflowStore.get(handle.workflow_id);
           return {
             status: 200,
@@ -570,8 +671,11 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           };
         } catch (error) {
           // A rejected or failed dispatch is journaled before the error is returned, so a
-          // restart cannot re-run it or mistake it for completed work.
-          host.runs.fail(started.run.run_id, dispatchFailureCode(error));
+          // restart cannot re-run it or mistake it for completed work. Cancellation already
+          // wrote its terminal run state; never overwrite it with a generic failure.
+          if (host.runs.get(started.run.run_id)?.state === 'running') {
+            host.runs.fail(started.run.run_id, dispatchFailureCode(error));
+          }
           throw error;
         } finally {
           stopHeartbeat();

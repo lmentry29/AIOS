@@ -5,5 +5,7 @@ export * from './runtime.js';
 export * from './server.js';
 export * from './policy-admin.js';
 export * from './persistence/journal.js';
+export * from './persistence/execution-ledger.js';
 export * from './persistence/operational-store.js';
+export * from './execution/managed-execution.js';
 export * from './errors.js';

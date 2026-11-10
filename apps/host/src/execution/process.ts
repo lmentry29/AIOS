@@ -5,6 +5,8 @@ export interface CapturedProcessOptions {
   env: Record<string, string>;
   timeoutMs: number;
   maxOutputBytes: number;
+  /** Aborts the child process with SIGKILL. The result is marked `cancelled`. */
+  signal?: AbortSignal;
 }
 
 export interface CapturedProcessResult {
@@ -13,6 +15,7 @@ export interface CapturedProcessResult {
   stdout: Buffer;
   stderr: Buffer;
   timedOut: boolean;
+  cancelled: boolean;
   truncated: boolean;
   durationMs: number;
   spawnError?: string;
@@ -37,6 +40,7 @@ export function runCapturedProcess(
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let truncated = false;
     let timedOut = false;
+    let cancelled = false;
     let spawnError: string | undefined;
     let settled = false;
 
@@ -52,16 +56,24 @@ export function runCapturedProcess(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       resolve({
         exitCode,
         signal,
         stdout,
         stderr,
         timedOut,
+        cancelled,
         truncated,
         durationMs: Date.now() - started,
         ...(spawnError === undefined ? {} : { spawnError }),
       });
+    };
+
+    const abort = () => {
+      if (settled || cancelled) return;
+      cancelled = true;
+      child.kill('SIGKILL');
     };
 
     const append = (current: Buffer<ArrayBufferLike>, chunk: Buffer): Buffer<ArrayBufferLike> => {
@@ -96,5 +108,8 @@ export function runCapturedProcess(
       child.kill('SIGKILL');
     }, options.timeoutMs);
     timer.unref();
+
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener('abort', abort, { once: true });
   });
 }
