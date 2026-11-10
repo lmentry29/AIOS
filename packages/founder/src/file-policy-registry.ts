@@ -94,7 +94,7 @@ function appendEvent(state: FilePolicyState, kind: AuditKind, payload: PolicyLif
 function validateDecisionRecord(value: AuthorizationDecisionAudit): void {
   if (!isRecord(value) || !isUuid(value.request_id)
     || !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id))
-    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'read_status', 'read_evidence'].includes(value.action))
+    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence'].includes(value.action))
     || !(value.resource_id === null || isUuid(value.resource_id))
     || !(value.policy_id === null || isUuid(value.policy_id))
     || !(value.policy_version === null || (Number.isSafeInteger(value.policy_version) && value.policy_version >= 1))

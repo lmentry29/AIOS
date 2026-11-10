@@ -4,7 +4,7 @@ import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AccessPolicy } from '@aios/founder';
+import type { AccessAction, AccessPolicy } from '@aios/founder';
 import { FilePolicyRegistry, PolicyAdministrationService } from '@aios/founder';
 import type { AgentExecutionPort, TaskVerificationPort } from '@aios/orchestration';
 import type { TaskEntity, WorkflowEntity } from '@aios/core';
@@ -226,6 +226,41 @@ function dispatch(harness: Harness, workflowId: string, idempotencyKey = randomU
     token: FOUNDER_TOKEN,
     headers: { 'idempotency-key': idempotencyKey },
   });
+}
+
+function resumeWorkflowRequest(harness: Harness, workflowId: string) {
+  return call(harness, 'POST', `/v1/workflows/${workflowId}/resume`, { token: FOUNDER_TOKEN });
+}
+
+function resumeTaskRequest(harness: Harness, taskId: string) {
+  return call(harness, 'POST', `/v1/tasks/${taskId}/resume`, { token: FOUNDER_TOKEN });
+}
+
+function retryTaskRequest(harness: Harness, taskId: string) {
+  return call(harness, 'POST', `/v1/tasks/${taskId}/retry`, { token: FOUNDER_TOKEN });
+}
+
+function withoutActions(policy: AccessPolicy, removed: readonly AccessAction[]): AccessPolicy {
+  return {
+    policy_id: policy.policy_id,
+    version: policy.version,
+    rules: policy.rules.map((rule) => ({
+      ...rule,
+      actions: rule.actions.filter((action) => !removed.includes(action)),
+    })).filter((rule) => rule.actions.length > 0),
+  };
+}
+
+function suspendWorkflow(harness: Harness, workflowId: string): void {
+  harness.runtime.workflowStore.transitionLifecycle(workflowId, 'validated', FOUNDER);
+  harness.runtime.workflowStore.transitionLifecycle(workflowId, 'active', FOUNDER);
+  harness.runtime.workflowStore.transitionLifecycle(workflowId, 'suspended', FOUNDER);
+}
+
+function suspendTask(harness: Harness, taskId: string): void {
+  harness.runtime.taskStore.transitionTaskLifecycle(taskId, 'validated', FOUNDER);
+  harness.runtime.taskStore.transitionTaskLifecycle(taskId, 'active', FOUNDER);
+  harness.runtime.taskStore.transitionTaskLifecycle(taskId, 'suspended', FOUNDER);
 }
 
 describe('trusted host HTTP surface', () => {
@@ -811,5 +846,416 @@ describe('trusted host HTTP surface', () => {
     expect(third.runtime.recoveredExecutions).toEqual([]);
     expect(third.runtime.executions.getForTask(task.entity_id)?.state).toBe('interrupted');
     expect(third.runtime.executions.list()).toHaveLength(1);
+  });
+
+  it('resumes a crash-interrupted Workflow with a distinct attempt and no third attempt on repeat', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-resume-'));
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'resumed'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const ownedTask = { ...task, assigned_workflow: workflow.entity_id } as TaskEntity;
+
+    const first = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+      directory,
+    });
+    expect((await intake(first, 'task', ownedTask)).status).toBe(201);
+    expect((await intake(first, 'workflow', workflow)).status).toBe(201);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'validated', FOUNDER);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'active', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'validated', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'active', FOUNDER);
+    const crashed = first.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+
+    // Crash: the execution is journaled as running and the process stops without completing.
+    await first.server.close();
+    first.runtime.close();
+
+    const second = await startHost({ directory, withLocalAdapters: true });
+    expect(second.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      execution_id: crashed.execution_id,
+      state: 'interrupted',
+      reason_code: 'host_restarted',
+      attempt: 1,
+      attempt_kind: 'initial',
+    });
+    expect(second.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+
+    const resumed = await resumeWorkflowRequest(second, workflow.entity_id);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({
+      workflow_id: workflow.entity_id,
+      lifecycle_state: 'completed',
+      resumed: true,
+    });
+    const summaries = resumed.body?.attempts as Array<Record<string, unknown>>;
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      task_id: task.entity_id,
+      attempt: 2,
+      attempt_kind: 'resume',
+      state: 'completed',
+    });
+    expect(summaries[0]?.execution_id).not.toBe(crashed.execution_id);
+
+    const attempts = second.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(2);
+    // The interrupted record is immutable history; the resumed attempt chains to it.
+    expect(attempts[0]).toMatchObject({
+      execution_id: crashed.execution_id,
+      state: 'interrupted',
+      attempt: 1,
+      attempt_kind: 'initial',
+    });
+    expect(attempts[1]).toMatchObject({
+      state: 'completed',
+      attempt: 2,
+      attempt_kind: 'resume',
+      previous_execution_id: crashed.execution_id,
+    });
+    expect(second.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('completed');
+    // The resumed command and its independent verifier ran; the interrupted attempt never did.
+    expect(second.sandbox?.calls).toHaveLength(2);
+
+    // Repeating the authorized resume is an idempotent no-op, not a third attempt.
+    const repeated = await resumeWorkflowRequest(second, workflow.entity_id);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body).toMatchObject({ resumed: false, lifecycle_state: 'completed' });
+    expect(second.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
+  });
+
+  it('refuses to resume a cancelled execution while an authorized retry starts a distinct attempt', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'retried'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const held = harness.sandbox?.holdNextRun();
+    const running = dispatch(harness, workflow.entity_id);
+    await held?.started;
+    expect((await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'operator cancelled the attempt' },
+    })).status).toBe(202);
+    expect((await running).status).toBe(409);
+
+    const cancelled = harness.runtime.executions.getForTask(task.entity_id);
+    expect(cancelled).toMatchObject({ state: 'cancelled', attempt: 1, attempt_kind: 'initial' });
+
+    // A resume must not reopen a cancellation; the terminal record is not erased.
+    const refused = await resumeTaskRequest(harness, task.entity_id);
+    expect(refused.status).toBe(409);
+    expect(refused.body?.error).toBe('execution_conflict');
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(1);
+    expect(harness.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      execution_id: cancelled?.execution_id,
+      state: 'cancelled',
+    });
+
+    const retried = await retryTaskRequest(harness, task.entity_id);
+    expect(retried.status).toBe(200);
+    expect(retried.body).toMatchObject({ task_id: task.entity_id, retried: true, lifecycle_state: 'completed' });
+    expect(retried.body?.execution).toMatchObject({ attempt: 2, attempt_kind: 'retry', state: 'completed' });
+
+    const attempts = harness.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({
+      execution_id: cancelled?.execution_id,
+      state: 'cancelled',
+      attempt: 1,
+      attempt_kind: 'initial',
+    });
+    expect(attempts[1]).toMatchObject({
+      attempt: 2,
+      attempt_kind: 'retry',
+      state: 'completed',
+      previous_execution_id: cancelled?.execution_id,
+    });
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('completed');
+    // A Task-level retry leaves its Workflow suspended for an explicit Workflow resume.
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+    // One cancelled invocation plus the retried command and its verifier.
+    expect(harness.sandbox?.calls).toHaveLength(3);
+
+    const repeated = await retryTaskRequest(harness, task.entity_id);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body).toMatchObject({ retried: false, lifecycle_state: 'completed' });
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
+  });
+
+  it('retries a failed execution, then resumes the Workflow without re-running completed work', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/false'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    // The labelled test double does not execute argv, so its result is set explicitly.
+    if (harness.sandbox) harness.sandbox.result = { exitCode: 1 };
+    const failed = await dispatch(harness, workflow.entity_id);
+    expect(failed.status).toBe(422);
+    expect(harness.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      state: 'failed',
+      attempt: 1,
+      attempt_kind: 'initial',
+    });
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+
+    // A Workflow resume is blocked by a failed sibling and never silently retries it.
+    const blocked = await resumeWorkflowRequest(harness, workflow.entity_id);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body?.error).toBe('execution_conflict');
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(1);
+    expect(harness.sandbox?.calls).toHaveLength(1);
+
+    // Repair the command and deliberately retry only the Task.
+    if (harness.sandbox) harness.sandbox.result = {};
+    harness.runtime.taskStore.updateTask(task.entity_id, {
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'repaired'] },
+    });
+    const retried = await retryTaskRequest(harness, task.entity_id);
+    expect(retried.status).toBe(200);
+    expect(retried.body).toMatchObject({ retried: true, lifecycle_state: 'completed' });
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+    const attempts = harness.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({ state: 'failed', attempt: 1, attempt_kind: 'initial' });
+    expect(attempts[1]).toMatchObject({
+      state: 'completed',
+      attempt: 2,
+      attempt_kind: 'retry',
+      previous_execution_id: attempts[0]?.execution_id,
+    });
+
+    const callsBeforeResume = harness.sandbox?.calls.length ?? 0;
+    const resumed = await resumeWorkflowRequest(harness, workflow.entity_id);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({ resumed: true, lifecycle_state: 'completed', attempts: [] });
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('completed');
+    expect(harness.sandbox?.calls).toHaveLength(callsBeforeResume);
+  });
+
+  it('requires explicit resume and retry authorization before lookup and writes nothing when denied', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/false'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const policy = withoutActions(
+      makePolicy(task.entity_id, workflow.entity_id),
+      ['resume', 'retry'],
+    );
+    const harness = await startHost({ policy, withLocalAdapters: true });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    if (harness.sandbox) harness.sandbox.result = { exitCode: 1 };
+    expect((await dispatch(harness, workflow.entity_id)).status).toBe(422);
+
+    const taskState = harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state;
+    const workflowState = harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state;
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(1);
+
+    for (const denied of [
+      await resumeWorkflowRequest(harness, workflow.entity_id),
+      await resumeTaskRequest(harness, task.entity_id),
+      await retryTaskRequest(harness, task.entity_id),
+    ]) {
+      expect(denied.status).toBe(403);
+      expect(denied.body?.error).toBe('forbidden');
+    }
+
+    // An unknown identifier is denied identically: authorization precedes resource lookup.
+    const unknown = randomUUID();
+    for (const denied of [
+      await resumeWorkflowRequest(harness, unknown),
+      await resumeTaskRequest(harness, unknown),
+      await retryTaskRequest(harness, unknown),
+    ]) {
+      expect(denied.status).toBe(403);
+    }
+
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe(taskState);
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe(workflowState);
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(1);
+    expect(harness.sandbox?.calls).toHaveLength(1);
+  });
+
+  it('requires the Agent execute grant for a retried attempt', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'granted?'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const full = makePolicy(task.entity_id, workflow.entity_id);
+    const policy: AccessPolicy = {
+      policy_id: full.policy_id,
+      version: full.version,
+      rules: full.rules
+        .map((rule) => (rule.subject_ids.includes(AGENT_ID)
+          ? { ...rule, actions: rule.actions.filter((action) => action !== 'execute') }
+          : rule))
+        .filter((rule) => rule.actions.length > 0),
+    };
+    const harness = await startHost({ policy, withLocalAdapters: true });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'cancel while queued' },
+    })).status).toBe(202);
+
+    const denied = await retryTaskRequest(harness, task.entity_id);
+    expect(denied.status).toBe(403);
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(1);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('created');
+    expect(harness.sandbox?.calls).toHaveLength(0);
+  });
+
+  it('enforces the concurrency cap on resumed dispatch before any lifecycle or attempt write', async () => {
+    const firstTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'first'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const secondTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'second'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const firstWorkflow = makeWorkflow([firstTask.entity_id]);
+    const secondWorkflow = makeWorkflow([secondTask.entity_id]);
+    const firstPolicy = makePolicy(firstTask.entity_id, firstWorkflow.entity_id);
+    const secondPolicy = makePolicy(secondTask.entity_id, secondWorkflow.entity_id);
+    const policy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [...firstPolicy.rules, ...secondPolicy.rules],
+    };
+    const harness = await startHost({ policy, withLocalAdapters: true, maxConcurrentTasks: 1 });
+    for (const item of [firstTask, secondTask]) {
+      expect((await intake(harness, 'task', item)).status).toBe(201);
+    }
+    for (const item of [firstWorkflow, secondWorkflow]) {
+      expect((await intake(harness, 'workflow', item)).status).toBe(201);
+    }
+
+    // Prepare a crash-interrupted attempt on the first Workflow/Task pair.
+    const ownedTask = harness.runtime.taskStore.updateTask(firstTask.entity_id, {
+      assigned_workflow: firstWorkflow.entity_id,
+    });
+    expect(ownedTask.assigned_workflow).toBe(firstWorkflow.entity_id);
+    suspendTask(harness, firstTask.entity_id);
+    suspendWorkflow(harness, firstWorkflow.entity_id);
+    const interrupted = harness.runtime.executions.start({
+      task_id: firstTask.entity_id,
+      workflow_id: firstWorkflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+    expect(harness.runtime.executions.getForTask(firstTask.entity_id)?.state).toBe('interrupted');
+
+    const held = harness.sandbox?.holdNextRun();
+    const active = dispatch(harness, secondWorkflow.entity_id);
+    await held?.started;
+
+    const rejected = await resumeWorkflowRequest(harness, firstWorkflow.entity_id);
+    expect(rejected.status).toBe(429);
+    expect(rejected.body?.error).toBe('execution_capacity_exceeded');
+    expect(harness.runtime.workflowStore.get(firstWorkflow.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.taskStore.getTask(firstTask.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.executions.listForTask(firstTask.entity_id)).toHaveLength(1);
+    expect(harness.runtime.executions.getForTask(firstTask.entity_id)).toMatchObject({
+      execution_id: interrupted.execution_id,
+      state: 'interrupted',
+    });
+    expect(harness.sandbox?.calls).toHaveLength(1);
+
+    held?.release();
+    expect((await active).status).toBe(200);
+
+    const resumed = await resumeWorkflowRequest(harness, firstWorkflow.entity_id);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({ resumed: true, lifecycle_state: 'completed' });
+    const attempts = harness.runtime.executions.listForTask(firstTask.entity_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({ state: 'interrupted', attempt: 1 });
+    expect(attempts[1]).toMatchObject({ state: 'completed', attempt: 2, attempt_kind: 'resume' });
+  });
+
+  it('cancels a resumed attempt, kills its sandbox, and cannot be overwritten by a late result', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'resume then cancel'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', { ...task, assigned_workflow: workflow.entity_id } as TaskEntity)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    suspendTask(harness, task.entity_id);
+    suspendWorkflow(harness, workflow.entity_id);
+    const interrupted = harness.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+
+    const held = harness.sandbox?.holdNextRun();
+    const resumed = resumeWorkflowRequest(harness, workflow.entity_id);
+    await held?.started;
+    expect(harness.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      state: 'running',
+      attempt: 2,
+      attempt_kind: 'resume',
+    });
+
+    const cancelled = await call(harness, 'POST', `/v1/tasks/${task.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'cancel the resumed attempt' },
+    });
+    expect(cancelled.status).toBe(202);
+    expect(harness.sandbox?.aborted).toBe(true);
+    const result = await resumed;
+    expect(result.status).toBe(409);
+    expect(result.body?.error).toBe('task_cancelled');
+
+    const attempts = harness.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({
+      execution_id: interrupted.execution_id,
+      state: 'interrupted',
+      attempt: 1,
+    });
+    expect(attempts[1]).toMatchObject({ state: 'cancelled', attempt: 2, attempt_kind: 'resume' });
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+    // Only the resumed execution reached the sandbox and it was aborted; the verifier never ran.
+    expect(harness.sandbox?.calls).toHaveLength(1);
+
+    // A subsequent resume is refused; the cancelled attempt is never reopened in place.
+    const refused = await resumeTaskRequest(harness, task.entity_id);
+    expect(refused.status).toBe(409);
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import {
   DispatchConflictError,
   DurableOperationalStore,
 } from '../src/persistence/operational-store.js';
-import { FOUNDER, makeTask, makeWorkflow } from './fixtures.js';
+import { AGENT_ID, FOUNDER, makeTask, makeWorkflow } from './fixtures.js';
 
 function stateDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'aios-operational-'));
@@ -219,5 +220,115 @@ describe('durable dispatch runs', () => {
     // Recovery is not completion, and a second recovery pass is a no-op.
     expect(second.runs.recover()).toEqual([]);
     second.close();
+  });
+});
+
+describe('durable execution attempts', () => {
+  it('keeps a terminal attempt immutable while appending retry history across restart', () => {
+    const directory = stateDirectory();
+    const task = makeTask();
+    const first = new DurableOperationalStore({ directory });
+    const initial = first.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID });
+    expect(initial).toMatchObject({ attempt: 1, attempt_kind: 'initial', state: 'running' });
+    first.executions.fail(initial.execution_id, 'execution_failed');
+    expect(first.executions.listForTask(task.entity_id).map((record) => [record.attempt, record.state]))
+      .toEqual([[1, 'failed']]);
+    expect(() => first.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID }))
+      .toThrow(/use resume or retry/);
+
+    const retry = first.executions.retry({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: initial.execution_id,
+    });
+    expect(retry).toMatchObject({
+      attempt: 2,
+      attempt_kind: 'retry',
+      previous_execution_id: initial.execution_id,
+    });
+    first.executions.complete(retry.execution_id, [`result_sha256:${'a'.repeat(64)}`]);    // The failed attempt is history, not a mutable pointer.
+    expect(first.executions.get(initial.execution_id)).toMatchObject({ state: 'failed', revision: 2 });
+    expect(first.executions.getForTask(task.entity_id)?.execution_id).toBe(retry.execution_id);
+    first.close();
+
+    const second = new DurableOperationalStore({ directory });
+    const attempts = second.executions.listForTask(task.entity_id);
+    expect(attempts.map((record) => [record.attempt, record.attempt_kind, record.state])).toEqual([
+      [1, 'initial', 'failed'],
+      [2, 'retry', 'completed'],
+    ]);
+    expect(attempts[1]?.previous_execution_id).toBe(initial.execution_id);
+    second.close();
+  });
+
+  it('resumes only interrupted attempts and never reopens a cancellation', () => {
+    const directory = stateDirectory();
+    const task = makeTask();
+    const store = new DurableOperationalStore({ directory });
+    const initial = store.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID });
+    expect(() => store.executions.resume({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: initial.execution_id,
+    })).toThrow(/Only an interrupted execution/);
+
+    store.executions.reconcile();
+    expect(store.executions.get(initial.execution_id)?.state).toBe('interrupted');
+    const resumed = store.executions.resume({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: initial.execution_id,
+    });
+    expect(resumed).toMatchObject({
+      attempt: 2,
+      attempt_kind: 'resume',
+      previous_execution_id: initial.execution_id,
+    });
+
+    store.executions.cancel({
+      task_id: task.entity_id,
+      actor_id: FOUNDER,
+      reason_code: 'cancelled_by_request',
+    });
+    expect(store.executions.get(resumed.execution_id)?.state).toBe('cancelled');
+    expect(() => store.executions.resume({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: resumed.execution_id,
+    })).toThrow(/cancelled execution cannot be resumed/);
+
+    const retried = store.executions.retry({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: resumed.execution_id,
+    });
+    expect(retried).toMatchObject({
+      attempt: 3,
+      attempt_kind: 'retry',
+      previous_execution_id: resumed.execution_id,
+    });
+    expect(store.executions.get(resumed.execution_id)).toMatchObject({
+      state: 'cancelled',
+      revision: 2,
+    });
+    expect(store.executions.listForTask(task.entity_id)).toHaveLength(3);
+    store.close();
+  });
+
+  it('rejects a non-contiguous attempt chain on journal replay', () => {
+    const directory = stateDirectory();
+    const task = makeTask();
+    const first = new DurableOperationalStore({ directory });
+    const initial = first.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID });
+    first.journal.append('execution', {
+      ...initial,
+      execution_id: randomUUID(),
+      attempt: 3,
+      attempt_kind: 'retry',
+      previous_execution_id: initial.execution_id,
+      revision: 1,
+    });
+    first.close();
+    expect(() => new DurableOperationalStore({ directory })).toThrow(/non-contiguous/);
   });
 });

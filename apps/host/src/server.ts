@@ -2,7 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { FounderAuthorizationError, FounderInputError } from '@aios/founder';
-import { ExecutionCapacityError, OrchestrationError, TaskCancelledError } from '@aios/orchestration';
+import {
+  ExecutionAttemptConflictError,
+  ExecutionCapacityError,
+  OrchestrationError,
+  TaskCancelledError,
+} from '@aios/orchestration';
 import type { HostConfig } from './config.js';
 import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
@@ -133,6 +138,9 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   }
   if (error instanceof ExecutionCapacityError) {
     return { status: 429, code: 'execution_capacity_exceeded', message: error.message };
+  }
+  if (error instanceof ExecutionAttemptConflictError) {
+    return { status: 409, code: 'execution_conflict', message: error.message };
   }
   if (error instanceof ExecutionConflictError) {
     return { status: 409, code: 'execution_conflict', message: error.message };
@@ -322,7 +330,7 @@ export class HostHttpServer {
 async function requireAllowed(
   runtime: HostRuntime,
   session: AuthenticatedSession,
-  action: 'read_status' | 'read_evidence' | 'cancel',
+  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry',
   resourceId: string,
 ): Promise<void> {
   const allowed = await runtime.authorization.authorize({
@@ -543,6 +551,53 @@ function buildRoutes(runtime: HostRuntime): Route[] {
             ...(runId === undefined ? {} : { run_id: runId }),
           },
         };
+      },
+    },
+    {
+      pattern: /^\/v1\/workflows\/([^/]+)\/resume$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session }, params) => {
+        const workflowId = uuidParam(params[1], 'workflowId');
+        if (!host.executionConfigured || !host.verificationConfigured) {
+          throw new HostUnavailableError(
+            'Workflow resume requires a configured execution adapter and an independent verifier.',
+          );
+        }
+        // Authorize the exact resume action before revealing whether the Workflow exists.
+        // The kernel re-evaluates the same action and each Task/Agent grant before writes.
+        await requireAllowed(host, session, 'resume', workflowId);
+        const result = await host.kernel.resumeWorkflow(workflowId, session.principal_id);
+        return { status: 200, body: result };
+      },
+    },
+    {
+      pattern: /^\/v1\/tasks\/([^/]+)\/resume$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session }, params) => {
+        const taskId = uuidParam(params[1], 'taskId');
+        if (!host.executionConfigured || !host.verificationConfigured) {
+          throw new HostUnavailableError(
+            'Task resume requires a configured execution adapter and an independent verifier.',
+          );
+        }
+        await requireAllowed(host, session, 'resume', taskId);
+        const result = await host.kernel.resumeTask(taskId, session.principal_id);
+        return { status: 200, body: result };
+      },
+    },
+    {
+      pattern: /^\/v1\/tasks\/([^/]+)\/retry$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session }, params) => {
+        const taskId = uuidParam(params[1], 'taskId');
+        if (!host.executionConfigured || !host.verificationConfigured) {
+          throw new HostUnavailableError(
+            'Task retry requires a configured execution adapter and an independent verifier.',
+          );
+        }
+        await requireAllowed(host, session, 'retry', taskId);
+        const result = await host.kernel.retryTask(taskId, session.principal_id);
+        return { status: 200, body: result };
       },
     },
     {

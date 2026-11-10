@@ -32,6 +32,74 @@ export interface TaskExecutionResult {
   completed_actions?: TaskEntity['actions'];
 }
 
+export type ExecutionAttemptKind = 'initial' | 'resume' | 'retry';
+export type ObservedExecutionState = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+
+/** A deliberate resume/retry of the latest terminal execution attempt (ADR-0022). */
+export interface ExecutionAttemptRequest {
+  kind: 'resume' | 'retry';
+  previous_execution_id: string;
+}
+
+/** Read-only view of the latest durable execution attempt for a Task. */
+export interface TaskExecutionObservation {
+  execution_id: string;
+  task_id: string;
+  agent_id: string;
+  state: ObservedExecutionState;
+  attempt: number;
+  attempt_kind: ExecutionAttemptKind;
+  previous_execution_id?: string;
+}
+
+export interface TaskExecutionStatePort {
+  latest(taskId: string): Promise<TaskExecutionObservation | undefined>;
+}
+
+export interface TaskAttemptSummary {
+  task_id: string;
+  execution_id: string;
+  attempt: number;
+  attempt_kind: ExecutionAttemptKind;
+  state: ObservedExecutionState;
+}
+
+export interface WorkflowResumeResult {
+  workflow_id: string;
+  lifecycle_state: LifecycleState;
+  resumed: boolean;
+  attempts: TaskAttemptSummary[];
+}
+
+export interface TaskResumeResult {
+  task_id: string;
+  lifecycle_state: LifecycleState;
+  resumed: boolean;
+  execution?: TaskAttemptSummary;
+}
+
+export interface TaskRetryResult {
+  task_id: string;
+  lifecycle_state: LifecycleState;
+  retried: boolean;
+  execution?: TaskAttemptSummary;
+}
+
+type WorkflowResumePlanItem =
+  | { mode: 'skip'; task: TaskEntity }
+  | { mode: 'execute'; task: TaskEntity; agentId: string }
+  | { mode: 'resume'; task: TaskEntity; agentId: string; previousExecutionId: string };
+
+function executionSummary(observation: TaskExecutionObservation): TaskAttemptSummary {
+  return {
+    task_id: observation.task_id,
+    execution_id: observation.execution_id,
+    attempt: observation.attempt,
+    attempt_kind: observation.attempt_kind,
+    state: observation.state,
+  };
+}
+
 export interface VerifiedExecution {
   result: TaskExecutionResult;
   decision: TaskVerificationDecision;
@@ -59,7 +127,7 @@ export interface TaskVerificationPort {
 
 export interface AuthorizationRequest {
   actor_id: string;
-  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'read_status' | 'read_evidence';
+  action: 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence';
   resource_id: string;
 }
 
@@ -69,7 +137,15 @@ export interface AuthorizationPort {
 
 export interface AgentExecutionPort {
   validateAgent(agentId: string): Promise<boolean>;
-  executeTask(agentId: string, task: TaskEntity): Promise<TaskExecutionResult>;
+  /**
+   * Executes a Task. `attempt` is present only for a deliberate resume/retry of the
+   * latest terminal attempt; the initial dispatch omits it.
+   */
+  executeTask(
+    agentId: string,
+    task: TaskEntity,
+    attempt?: ExecutionAttemptRequest,
+  ): Promise<TaskExecutionResult>;
   coordinate(agents: string[], task: TaskEntity): Promise<TaskExecutionResult>;
   /** Optional preflight check used to reject a dispatch before lifecycle writes. */
   hasCapacity?(): boolean;
@@ -86,6 +162,8 @@ export interface OrchestrationOptions {
   verification: TaskVerificationPort;
   resolveAgent(task: TaskEntity): Promise<string>;
   cancellation?: TaskCancellationPort;
+  /** Read-only durable attempt view used to decide resume eligibility. */
+  executionState?: TaskExecutionStatePort;
 }
 
 function clonePlain<T>(value: T): T {
@@ -135,6 +213,17 @@ export class ExecutionCapacityError extends OrchestrationError {
   constructor() {
     super('The host execution concurrency limit is full; this dispatch was not started.');
     this.name = 'ExecutionCapacityError';
+  }
+}
+
+/**
+ * The caller is authorized, but the requested resume/retry is invalid for the current
+ * lifecycle state or latest attempt. Never an authorization denial.
+ */
+export class ExecutionAttemptConflictError extends OrchestrationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExecutionAttemptConflictError';
   }
 }
 
@@ -289,6 +378,364 @@ export class OrchestrationKernel {
         this.workflows.transitionLifecycle(stored.entity_id, 'suspended', actorId);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Deliberately resumes a suspended Workflow (ADR-0022).
+   *
+   * Authorization for `resume` on the Workflow happens before lookup, matching cancel.
+   * Completed Tasks are skipped, interrupted Tasks get a new `resume` attempt, and
+   * `created` Tasks execute normally. A failed, cancelled, or unverified-completed sibling
+   * blocks the whole resume with a typed conflict; it is never silently retried.
+   */
+  async resumeWorkflow(workflowId: string, actorId: string): Promise<WorkflowResumeResult> {
+    if (!isEntityIdentifier(workflowId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Workflow resume requires a valid Workflow and actor identifier.');
+    }
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action: 'resume',
+      resource_id: workflowId,
+    }))) {
+      throw new OrchestrationError('Workflow resume denied by authorization policy.');
+    }
+
+    const stored = this.workflows.get(workflowId);
+    if (!stored) throw new OrchestrationError(`Workflow "${workflowId}" was not found.`);
+    if (stored.lifecycle_state === 'completed' || stored.lifecycle_state === 'archived') {
+      return {
+        workflow_id: stored.entity_id,
+        lifecycle_state: stored.lifecycle_state,
+        resumed: false,
+        attempts: [],
+      };
+    }
+    if (stored.lifecycle_state !== 'suspended') {
+      throw new ExecutionAttemptConflictError(
+        `Workflow "${stored.entity_id}" is ${stored.lifecycle_state}; only a suspended Workflow can be resumed.`,
+      );
+    }
+
+    const plan = await this.buildWorkflowResumePlan(stored, actorId);
+    if (plan.some((item) => item.mode !== 'skip')
+      && this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
+      // Same non-blocking, deterministic rejection as dispatch: before any lifecycle write.
+      throw new ExecutionCapacityError();
+    }
+
+    this.workflows.transitionLifecycle(stored.entity_id, 'active', actorId);
+    try {
+      const attempts: TaskAttemptSummary[] = [];
+      for (const item of plan) {
+        if (item.mode === 'skip') continue;
+        let task = this.tasks.updateTask(item.task.entity_id, {
+          assigned_agent: item.agentId,
+          assigned_workflow: stored.entity_id,
+        });
+        if (item.mode === 'resume') {
+          task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
+        } else {
+          task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', item.agentId);
+          task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', item.agentId);
+        }
+
+        await this.assertNotCancelled(task.entity_id);
+        const result = await this.options.execution.executeTask(
+          item.agentId,
+          task,
+          item.mode === 'resume'
+            ? { kind: 'resume', previous_execution_id: item.previousExecutionId }
+            : undefined,
+        );
+        await this.assertNotCancelled(task.entity_id);
+        const verified = await this.verifyResult(result, task, [item.agentId]);
+        await this.assertNotCancelled(task.entity_id);
+        const evidenceId = this.persistExecutionEvidence(
+          task,
+          [item.agentId],
+          verified.verifier_id,
+          verified.result,
+          verified.decision,
+        );
+        await this.assertNotCancelled(task.entity_id);
+        this.tasks.updateTask(task.entity_id, {
+          audit_trail_ref: evidenceId,
+          ...(task.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
+        });
+        this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', item.agentId);
+        const observation = await this.latestExecution(task.entity_id);
+        if (observation) attempts.push(executionSummary(observation));
+      }
+      const completed = this.workflows.transitionLifecycle(stored.entity_id, 'completed', actorId);
+      return {
+        workflow_id: completed.entity_id,
+        lifecycle_state: completed.lifecycle_state,
+        resumed: true,
+        attempts,
+      };
+    } catch (error) {
+      const activeTask = plan
+        .filter((item) => item.mode !== 'skip')
+        .map((item) => this.tasks.getTask(item.task.entity_id))
+        .find((task) => task?.lifecycle_state === 'active');
+      if (activeTask) {
+        this.tasks.transitionTaskLifecycle(
+          activeTask.entity_id,
+          'suspended',
+          activeTask.assigned_agent ?? actorId,
+        );
+      }
+      const current = this.workflows.get(stored.entity_id);
+      if (current?.lifecycle_state === 'active') {
+        this.workflows.transitionLifecycle(stored.entity_id, 'suspended', actorId);
+      }
+      throw error;
+    }
+  }
+
+  /** Deliberately resumes one suspended Task whose latest attempt is `interrupted`. */
+  async resumeTask(taskId: string, actorId: string): Promise<TaskResumeResult> {
+    const redriven = await this.redriveTask(taskId, actorId, 'resume');
+    return {
+      task_id: redriven.task.entity_id,
+      lifecycle_state: redriven.task.lifecycle_state,
+      resumed: redriven.executed,
+      ...(redriven.execution === undefined ? {} : { execution: redriven.execution }),
+    };
+  }
+
+  /**
+   * Deliberately retries one Task after `failed`, `cancelled`, or an unverified `completed`
+   * attempt. The terminal record is preserved; a distinct attempt is appended.
+   */
+  async retryTask(taskId: string, actorId: string): Promise<TaskRetryResult> {
+    const redriven = await this.redriveTask(taskId, actorId, 'retry');
+    return {
+      task_id: redriven.task.entity_id,
+      lifecycle_state: redriven.task.lifecycle_state,
+      retried: redriven.executed,
+      ...(redriven.execution === undefined ? {} : { execution: redriven.execution }),
+    };
+  }
+
+  private async redriveTask(
+    taskId: string,
+    actorId: string,
+    action: 'resume' | 'retry',
+  ): Promise<{ task: TaskEntity; executed: boolean; execution?: TaskAttemptSummary }> {
+    if (!isEntityIdentifier(taskId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError(`Task ${action} requires a valid Task and actor identifier.`);
+    }
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action,
+      resource_id: taskId,
+    }))) {
+      throw new OrchestrationError(`Task ${action} denied by authorization policy.`);
+    }
+
+    const stored = this.tasks.getTask(taskId);
+    if (!stored) throw new OrchestrationError(`Task "${taskId}" was not found.`);
+    if (stored.lifecycle_state === 'completed' || stored.lifecycle_state === 'archived') {
+      return { task: stored, executed: false };
+    }
+    if (stored.lifecycle_state === 'active'
+      || stored.lifecycle_state === 'monitored'
+      || stored.lifecycle_state === 'validated') {
+      throw new ExecutionAttemptConflictError(
+        `Task "${taskId}" is still ${stored.lifecycle_state}; it cannot be redriven while it is active.`,
+      );
+    }
+    if (action === 'resume' && stored.lifecycle_state !== 'suspended') {
+      throw new ExecutionAttemptConflictError(
+        `Task "${taskId}" is ${stored.lifecycle_state}; only a suspended Task can be resumed.`,
+      );
+    }
+    if (action === 'retry' && stored.lifecycle_state !== 'suspended' && stored.lifecycle_state !== 'created') {
+      throw new ExecutionAttemptConflictError(
+        `Task "${taskId}" is ${stored.lifecycle_state} and cannot be retried.`,
+      );
+    }
+
+    const latest = await this.latestExecution(taskId);
+    if (!latest) {
+      throw new ExecutionAttemptConflictError(`Task "${taskId}" has no execution attempt to ${action}.`);
+    }
+    if (action === 'resume') {
+      if (latest.state === 'cancelled') {
+        throw new ExecutionAttemptConflictError(
+          'A cancelled execution cannot be resumed; request an authorized retry instead.',
+        );
+      }
+      if (latest.state !== 'interrupted') {
+        throw new ExecutionAttemptConflictError(
+          `Only an interrupted execution can be resumed; the latest attempt is "${latest.state}".`,
+        );
+      }
+    } else {
+      if (latest.state === 'running') {
+        throw new ExecutionAttemptConflictError('A running execution cannot be retried.');
+      }
+      if (latest.state === 'interrupted') {
+        throw new ExecutionAttemptConflictError('An interrupted execution must be resumed, not retried.');
+      }
+    }
+
+    const assigned = stored.assigned_agent;
+    const observedAgent = isEntityIdentifier(latest.agent_id) ? latest.agent_id : undefined;
+    const agentId = assigned ?? observedAgent ?? await this.options.resolveAgent(stored);
+    await this.assertAgentExecutable(agentId, stored);
+
+    // Same cap policy as dispatch: reject before the Task lifecycle changes.
+    if (this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
+      throw new ExecutionCapacityError();
+    }
+
+    let task = this.tasks.updateTask(stored.entity_id, { assigned_agent: agentId });
+    if (task.lifecycle_state === 'created') {
+      task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', agentId);
+    }
+    task = this.tasks.transitionTaskLifecycle(task.entity_id, 'active', agentId);
+
+    try {
+      // A retry is expected to follow a cancelled attempt, so the pre-dispatch check must
+      // not treat that terminal predecessor as a live cancellation. Once the new attempt
+      // exists, every post-execution check observes it normally; a cancellation that
+      // arrives during the retry still stops verification and completion.
+      if (action === 'resume') await this.assertNotCancelled(task.entity_id);
+      const result = await this.options.execution.executeTask(agentId, task, {
+        kind: action,
+        previous_execution_id: latest.execution_id,
+      });
+      await this.assertNotCancelled(task.entity_id);
+      const verified = await this.verifyResult(result, task, [agentId]);
+      await this.assertNotCancelled(task.entity_id);
+      const evidenceId = this.persistExecutionEvidence(
+        task,
+        [agentId],
+        verified.verifier_id,
+        verified.result,
+        verified.decision,
+      );
+      await this.assertNotCancelled(task.entity_id);
+      this.tasks.updateTask(task.entity_id, {
+        audit_trail_ref: evidenceId,
+        ...(task.actions.length > 0 ? { actions: verified.result.completed_actions ?? [] } : {}),
+      });
+      const completed = this.tasks.transitionTaskLifecycle(task.entity_id, 'completed', agentId);
+      const observation = await this.latestExecution(task.entity_id);
+      return {
+        task: completed,
+        executed: true,
+        ...(observation === undefined ? {} : { execution: executionSummary(observation) }),
+      };
+    } catch (error) {
+      const current = this.tasks.getTask(task.entity_id);
+      if (current && (current.lifecycle_state === 'active' || current.lifecycle_state === 'monitored')) {
+        this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', agentId);
+      }
+      throw error;
+    }
+  }
+
+  private async buildWorkflowResumePlan(
+    stored: WorkflowEntity,
+    actorId: string,
+  ): Promise<WorkflowResumePlanItem[]> {
+    if (stored.steps.length === 0) throw new OrchestrationError('Cannot resume a Workflow with no steps.');
+    if (new Set(stored.steps).size !== stored.steps.length) {
+      throw new OrchestrationError('Workflow steps must not contain duplicate Task IDs.');
+    }
+
+    const plan: WorkflowResumePlanItem[] = [];
+    for (const taskId of stored.steps) {
+      const task = this.tasks.getTask(taskId);
+      if (!task) throw new OrchestrationError(`Workflow step Task "${taskId}" does not exist.`);
+      if (task.lifecycle_state === 'completed' || task.lifecycle_state === 'archived') {
+        plan.push({ mode: 'skip', task });
+        continue;
+      }
+      if (task.lifecycle_state === 'active'
+        || task.lifecycle_state === 'monitored'
+        || task.lifecycle_state === 'validated') {
+        throw new ExecutionAttemptConflictError(
+          `Task "${taskId}" is still ${task.lifecycle_state}; it cannot be resumed twice.`,
+        );
+      }
+
+      const latest = await this.latestExecution(taskId);
+      if (latest) {
+        if (latest.state === 'running') {
+          throw new ExecutionAttemptConflictError(`Task "${taskId}" has a running execution attempt.`);
+        }
+        if (latest.state === 'failed' || latest.state === 'cancelled') {
+          throw new ExecutionAttemptConflictError(
+            `Task "${taskId}" is blocked by a ${latest.state} execution; an authorized Task retry is required before the Workflow can resume.`,
+          );
+        }
+        if (latest.state === 'completed') {
+          throw new ExecutionAttemptConflictError(
+            `Task "${taskId}" has a completed execution that was never verified; an authorized Task retry is required.`,
+          );
+        }
+        if (task.lifecycle_state !== 'suspended') {
+          throw new ExecutionAttemptConflictError(
+            `Task "${taskId}" has an interrupted execution but is ${task.lifecycle_state}; only a suspended Task can be resumed.`,
+          );
+        }
+        if (!(await this.options.authorization.authorize({
+          actor_id: actorId,
+          action: 'resume',
+          resource_id: taskId,
+        }))) {
+          throw new OrchestrationError(`Task resume denied by authorization policy for Task "${taskId}".`);
+        }
+        await this.assertAgentExecutable(latest.agent_id, task);
+        plan.push({
+          mode: 'resume',
+          task,
+          agentId: latest.agent_id,
+          previousExecutionId: latest.execution_id,
+        });
+        continue;
+      }
+
+      if (task.lifecycle_state !== 'created') {
+        throw new ExecutionAttemptConflictError(
+          `Task "${taskId}" is ${task.lifecycle_state} with no execution attempt; it cannot be resumed.`,
+        );
+      }
+      if (task.assigned_agent) {
+        throw new OrchestrationError(`Task "${taskId}" is already assigned to an Agent.`);
+      }
+      if (task.assigned_workflow && task.assigned_workflow !== stored.entity_id) {
+        throw new OrchestrationError(`Task "${taskId}" is already assigned to another Workflow.`);
+      }
+      const agentId = await this.options.resolveAgent(task);
+      await this.assertAgentExecutable(agentId, task);
+      plan.push({ mode: 'execute', task, agentId });
+    }
+    return plan;
+  }
+
+  private async latestExecution(taskId: string): Promise<TaskExecutionObservation | undefined> {
+    return this.options.executionState?.latest(taskId);
+  }
+
+  private async assertAgentExecutable(agentId: string, task: TaskEntity): Promise<void> {
+    if (!isEntityIdentifier(agentId)) {
+      throw new OrchestrationError('Agent resolver returned an invalid Agent identifier.');
+    }
+    if (!(await this.options.execution.validateAgent(agentId))) {
+      throw new OrchestrationError(`Agent "${agentId}" is not available for execution.`);
+    }
+    if (!(await this.options.authorization.authorize({
+      actor_id: agentId,
+      action: 'execute',
+      resource_id: task.entity_id,
+    }))) {
+      throw new OrchestrationError(`Execution denied for Agent "${agentId}" on Task "${task.entity_id}".`);
     }
   }
 

@@ -234,6 +234,9 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         cancellation: {
           isCancelled: async (taskId) => operational?.executions.isCancelled(taskId) ?? false,
         },
+        executionState: {
+          latest: async (taskId) => operational?.executions.getForTask(taskId),
+        },
       },
       workflowStore,
       artifactStore,

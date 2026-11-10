@@ -3,6 +3,7 @@ import {
   ExecutionCapacityError,
   TaskCancelledError,
   type AgentExecutionPort,
+  type ExecutionAttemptRequest,
   type TaskExecutionResult,
 } from '@aios/orchestration';
 import { type ExecutionLedger, type ExecutionRecord, evidenceDigest } from '../persistence/execution-ledger.js';
@@ -58,18 +59,32 @@ export class ManagedExecutionPort implements AgentExecutionPort {
     return this.delegate.validateAgent(agentId);
   }
 
-  async executeTask(agentId: string, task: TaskEntity): Promise<TaskExecutionResult> {
-    if (this.ledger.isCancelled(task.entity_id)) throw new TaskCancelledError(task.entity_id);
+  async executeTask(
+    agentId: string,
+    task: TaskEntity,
+    attempt?: ExecutionAttemptRequest,
+  ): Promise<TaskExecutionResult> {
+    // An initial dispatch may never run a Task whose latest attempt was cancelled. A
+    // retry is the only path that appends after a cancellation, and it is separately
+    // authorized; resume requires an interrupted predecessor, so it is never cancelled.
+    if (attempt === undefined && this.ledger.isCancelled(task.entity_id)) {
+      throw new TaskCancelledError(task.entity_id);
+    }
     if (!this.hasCapacity()) throw new ExecutionCapacityError();
 
     this.active += 1;
     let execution: ExecutionRecord;
     try {
-      execution = this.ledger.start({
+      const request = {
         task_id: task.entity_id,
         ...(task.assigned_workflow === undefined ? {} : { workflow_id: task.assigned_workflow }),
         agent_id: agentId,
-      });
+      };
+      execution = attempt?.kind === 'resume'
+        ? this.ledger.resume({ ...request, previous_execution_id: attempt.previous_execution_id })
+        : attempt?.kind === 'retry'
+          ? this.ledger.retry({ ...request, previous_execution_id: attempt.previous_execution_id })
+          : this.ledger.start(request);
     } catch (error) {
       this.active -= 1;
       throw error;
@@ -77,7 +92,8 @@ export class ManagedExecutionPort implements AgentExecutionPort {
 
     try {
       const result = await this.delegate.executeTask(agentId, task);
-      if (this.ledger.getForTask(task.entity_id)?.state !== 'running') {
+      const current = this.ledger.getForTask(task.entity_id);
+      if (current?.execution_id !== execution.execution_id || current.state !== 'running') {
         throw new TaskCancelledError(task.entity_id);
       }
       this.ledger.complete(execution.execution_id, [
@@ -87,7 +103,7 @@ export class ManagedExecutionPort implements AgentExecutionPort {
       return result;
     } catch (error) {
       const current = this.ledger.getForTask(task.entity_id);
-      if (current?.state === 'running') {
+      if (current?.execution_id === execution.execution_id && current.state === 'running') {
         if (error instanceof TaskCancelledError) {
           this.ledger.cancel({
             task_id: task.entity_id,

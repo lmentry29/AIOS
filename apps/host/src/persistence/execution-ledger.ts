@@ -6,12 +6,18 @@ const MAX_EVIDENCE_LENGTH = 300;
 const MAX_REASON_LENGTH = 120;
 
 export type ExecutionState = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+export type ExecutionAttemptKind = 'initial' | 'resume' | 'retry';
 
 export interface ExecutionRecord {
   execution_id: string;
   task_id: string;
   workflow_id?: string;
   agent_id: string;
+  /** Monotonically increasing per Task, starting at 1. */
+  attempt: number;
+  attempt_kind: ExecutionAttemptKind;
+  /** Set for `resume`/`retry`; absent for the initial attempt. */
+  previous_execution_id?: string;
   state: ExecutionState;
   started_at: string;
   updated_at: string;
@@ -25,6 +31,11 @@ export interface StartExecutionRequest {
   task_id: string;
   workflow_id?: string;
   agent_id: string;
+}
+
+export interface RedriveExecutionRequest extends StartExecutionRequest {
+  /** The terminal attempt this resume/retry follows. */
+  previous_execution_id: string;
 }
 
 export interface CancelExecutionRequest {
@@ -64,6 +75,10 @@ function isExecutionState(value: unknown): value is ExecutionState {
     || value === 'interrupted';
 }
 
+function isAttemptKind(value: unknown): value is ExecutionAttemptKind {
+  return value === 'initial' || value === 'resume' || value === 'retry';
+}
+
 function assertIdentifier(value: unknown, label: string, maxLength = 200): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
     throw new ExecutionConflictError(`${label} must be a bounded non-empty string.`);
@@ -92,6 +107,48 @@ function normalizeReason(reason: string): string {
   return reason;
 }
 
+/**
+ * Reads the attempt identity from a journal record.
+ *
+ * Records written before ADR-0022 have no attempt fields. They were the only execution
+ * record for their Task, so the append-only interpretation is attempt 1 / initial. Any
+ * later record for the same Task must then chain from it; ambiguous data is rejected by
+ * `restore()` rather than guessed.
+ */
+function attemptIdentity(value: Record<string, unknown>): {
+  attempt: number;
+  attempt_kind: ExecutionAttemptKind;
+  previous_execution_id?: string;
+} {
+  if (value.attempt === undefined && value.attempt_kind === undefined && value.previous_execution_id === undefined) {
+    return { attempt: 1, attempt_kind: 'initial' };
+  }
+  if (!Number.isSafeInteger(value.attempt) || (value.attempt as number) < 1) {
+    throw new JournalError('Operational journal contains an invalid execution attempt number.');
+  }
+  if (!isAttemptKind(value.attempt_kind)) {
+    throw new JournalError('Operational journal contains an invalid execution attempt kind.');
+  }
+  if (value.previous_execution_id !== undefined
+    && (typeof value.previous_execution_id !== 'string' || value.previous_execution_id.length === 0)) {
+    throw new JournalError('Operational journal contains an invalid execution predecessor.');
+  }
+  if (value.attempt_kind === 'initial') {
+    if (value.attempt !== 1 || value.previous_execution_id !== undefined) {
+      throw new JournalError('Operational journal contains an initial execution attempt with a predecessor.');
+    }
+  } else if (value.previous_execution_id === undefined) {
+    throw new JournalError('Operational journal contains a resumed or retried attempt without a predecessor.');
+  }
+  return {
+    attempt: value.attempt as number,
+    attempt_kind: value.attempt_kind,
+    ...(value.previous_execution_id === undefined
+      ? {}
+      : { previous_execution_id: value.previous_execution_id as string }),
+  };
+}
+
 function validateExecution(value: unknown): ExecutionRecord {
   if (!isRecord(value)
     || typeof value.execution_id !== 'string' || value.execution_id.length === 0
@@ -110,7 +167,10 @@ function validateExecution(value: unknown): ExecutionRecord {
     || !Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
     throw new JournalError('Operational journal contains an invalid execution record.');
   }
-  return structuredClone(value as unknown as ExecutionRecord);
+  return structuredClone({
+    ...value,
+    ...attemptIdentity(value),
+  } as unknown as ExecutionRecord);
 }
 
 function terminal(state: ExecutionState): boolean {
@@ -123,41 +183,63 @@ function terminal(state: ExecutionState): boolean {
  * A dispatch run describes one Workflow dispatch and its lease. An execution record
  * describes one Task's sandboxed work. They are separate because cancellation and crash
  * recovery need to know whether a *Task* was running, not merely whether an HTTP dispatch
- * was in progress. The record is appended before the sandbox is invoked and is driven to
- * exactly one terminal state. A terminal record never changes, so a late executor result
- * cannot overwrite a cancellation.
+ * was in progress.
+ *
+ * ADR-0022 makes the ledger an append-only *chain of attempts* per Task. A Task keeps one
+ * immutable terminal record per attempt; `resume` (interrupted) and `retry` (failed,
+ * cancelled, or unverified completed) append a new attempt with its own `execution_id` and
+ * a `previous_execution_id`. A cancelled attempt is never reopened or rewritten. Readers
+ * observe the latest attempt; audit readers can walk every predecessor.
  *
  * Evidence is bounded and generated by the host; task output and exception messages are
  * never copied into it. `reason_code` is a stable classification, not free-form prose.
  */
 export class ExecutionLedger {
   private readonly records = new Map<string, ExecutionRecord>();
-  private readonly byTask = new Map<string, string>();
+  /** Ordered attempt IDs per Task. The last entry is the latest attempt. */
+  private readonly byTask = new Map<string, string[]>();
 
   constructor(private readonly journal: AppendOnlyJournal) {}
 
   start(request: StartExecutionRequest, now: Date = new Date()): ExecutionRecord {
     const taskId = assertIdentifier(request.task_id, 'Execution Task ID');
-    const agentId = assertIdentifier(request.agent_id, 'Execution Agent ID');
-    if (this.byTask.has(taskId)) {
-      throw new ExecutionConflictError('This Task already has a durable execution record.');
+    if ((this.byTask.get(taskId)?.length ?? 0) > 0) {
+      throw new ExecutionConflictError('This Task already has a durable execution record; use resume or retry.');
     }
-    const timestamp = now.toISOString();
-    const record: ExecutionRecord = {
-      execution_id: randomUUID(),
-      task_id: taskId,
-      ...(request.workflow_id === undefined
-        ? {}
-        : { workflow_id: assertIdentifier(request.workflow_id, 'Execution Workflow ID') }),
-      agent_id: agentId,
-      state: 'running',
-      started_at: timestamp,
-      updated_at: timestamp,
-      evidence: [],
-      revision: 1,
-    };
-    this.persist(record);
-    return structuredClone(record);
+    return this.append(request, 'initial', undefined, now);
+  }
+
+  /** Appends a new attempt after the latest `interrupted` record. */
+  resume(request: RedriveExecutionRequest, now: Date = new Date()): ExecutionRecord {
+    const latest = this.requireLatest(request.task_id);
+    if (latest.state === 'cancelled') {
+      throw new ExecutionConflictError('A cancelled execution cannot be resumed; request an authorized retry instead.');
+    }
+    if (latest.state !== 'interrupted') {
+      throw new ExecutionConflictError(`Only an interrupted execution can be resumed; the latest attempt is "${latest.state}".`);
+    }
+    if (latest.execution_id !== request.previous_execution_id) {
+      throw new ExecutionConflictError('The referenced execution is not the latest attempt for this Task.');
+    }
+    return this.append(request, 'resume', latest, now);
+  }
+
+  /**
+   * Appends a new attempt after a terminal failure, cancellation, or unverified completion.
+   * The cancelled record remains in the ledger forever; this never reopens it.
+   */
+  retry(request: RedriveExecutionRequest, now: Date = new Date()): ExecutionRecord {
+    const latest = this.requireLatest(request.task_id);
+    if (latest.state === 'running') {
+      throw new ExecutionConflictError('A running execution cannot be retried.');
+    }
+    if (latest.state === 'interrupted') {
+      throw new ExecutionConflictError('An interrupted execution must be resumed, not retried.');
+    }
+    if (latest.execution_id !== request.previous_execution_id) {
+      throw new ExecutionConflictError('The referenced execution is not the latest attempt for this Task.');
+    }
+    return this.append(request, 'retry', latest, now);
   }
 
   complete(executionId: string, evidence: readonly string[], now: Date = new Date()): ExecutionRecord {
@@ -169,24 +251,22 @@ export class ExecutionLedger {
   }
 
   /**
-   * Marks a Task cancelled, whether it is running, queued behind the concurrency gate, or
-   * cancelled before dispatch. Returns the existing record unchanged when the operation is
-   * already cancelled, making an authorized retry idempotent.
+   * Marks the latest attempt cancelled, whether it is running, queued behind the
+   * concurrency gate, or cancelled before dispatch. Returns the existing record unchanged
+   * when the latest attempt is already cancelled, making an authorized retry idempotent.
    */
   cancel(request: CancelExecutionRequest, now: Date = new Date()): CancelledExecution {
     const taskId = assertIdentifier(request.task_id, 'Execution Task ID');
     const reason = normalizeReason(request.reason_code);
     const evidence = normalizeEvidence(request.evidence);
-    const existingId = this.byTask.get(taskId);
-    if (existingId !== undefined) {
-      const existing = this.records.get(existingId);
-      if (!existing) throw new ExecutionConflictError('Execution index is inconsistent.');
-      if (existing.state === 'cancelled') return { record: structuredClone(existing), changed: false };
-      if (terminal(existing.state)) {
-        throw new ExecutionConflictError(`Execution is already terminal in state \"${existing.state}\".`);
+    const latest = this.getForTask(taskId);
+    if (latest !== undefined) {
+      if (latest.state === 'cancelled') return { record: latest, changed: false };
+      if (terminal(latest.state)) {
+        throw new ExecutionConflictError(`Execution is already terminal in state "${latest.state}".`);
       }
       return {
-        record: this.transition(existing, 'cancelled', now, reason, evidence),
+        record: this.transition(latest, 'cancelled', now, reason, evidence),
         changed: true,
       };
     }
@@ -199,6 +279,8 @@ export class ExecutionLedger {
         ? {}
         : { workflow_id: assertIdentifier(request.workflow_id, 'Execution Workflow ID') }),
       agent_id: `host-cancel:${assertIdentifier(request.actor_id, 'Cancellation actor', 160)}`,
+      attempt: 1,
+      attempt_kind: 'initial',
       state: 'cancelled',
       started_at: timestamp,
       updated_at: timestamp,
@@ -216,9 +298,17 @@ export class ExecutionLedger {
     return record ? structuredClone(record) : undefined;
   }
 
+  /** The latest attempt, which is what execution control observes. */
   getForTask(taskId: string): ExecutionRecord | undefined {
-    const executionId = this.byTask.get(taskId);
+    const executionId = this.byTask.get(taskId)?.at(-1);
     return executionId === undefined ? undefined : this.get(executionId);
+  }
+
+  /** Every attempt for a Task, oldest first. Terminal predecessors stay readable. */
+  listForTask(taskId: string): ExecutionRecord[] {
+    return (this.byTask.get(taskId) ?? [])
+      .map((executionId) => this.get(executionId))
+      .filter((record): record is ExecutionRecord => record !== undefined);
   }
 
   isCancelled(taskId: string): boolean {
@@ -249,22 +339,80 @@ export class ExecutionLedger {
     return interrupted;
   }
 
-  /** Journal replay only. Monotonic and never out of a terminal state. */
+  /**
+   * Journal replay only. Validates per-attempt monotonicity and a contiguous, correctly
+   * linked attempt chain per Task. It never invents completion.
+   */
   restore(value: unknown): void {
     const record = validateExecution(value);
     const current = this.records.get(record.execution_id);
-    if (current && record.revision <= current.revision) {
-      throw new JournalError('Operational journal contains a non-monotonic execution record.');
+    if (current) {
+      if (record.revision <= current.revision) {
+        throw new JournalError('Operational journal contains a non-monotonic execution record.');
+      }
+      if (terminal(current.state)) {
+        throw new JournalError('Operational journal contains a transition out of a terminal execution state.');
+      }
+      if (current.task_id !== record.task_id
+        || current.attempt !== record.attempt
+        || current.attempt_kind !== record.attempt_kind
+        || current.previous_execution_id !== record.previous_execution_id) {
+        throw new JournalError('Operational journal changed an execution attempt identity.');
+      }
+      this.records.set(record.execution_id, record);
+      return;
     }
-    if (current && terminal(current.state)) {
-      throw new JournalError('Operational journal contains a transition out of a terminal execution state.');
+
+    const attempts = this.byTask.get(record.task_id) ?? [];
+    const previousId = attempts.at(-1);
+    if (record.attempt !== attempts.length + 1) {
+      throw new JournalError('Operational journal contains a non-contiguous execution attempt sequence.');
     }
-    const indexedId = this.byTask.get(record.task_id);
-    if (indexedId !== undefined && indexedId !== record.execution_id) {
-      throw new JournalError('Operational journal contains two executions for one Task.');
+    if (record.attempt_kind === 'initial') {
+      if (attempts.length !== 0 || record.previous_execution_id !== undefined) {
+        throw new JournalError('Operational journal contains an initial execution attempt with a predecessor.');
+      }
+    } else if (previousId === undefined || record.previous_execution_id !== previousId) {
+      throw new JournalError('Operational journal contains a resumed or retried attempt with a mismatched predecessor.');
     }
     this.records.set(record.execution_id, record);
-    this.byTask.set(record.task_id, record.execution_id);
+    this.byTask.set(record.task_id, [...attempts, record.execution_id]);
+  }
+
+  private append(
+    request: StartExecutionRequest,
+    attemptKind: ExecutionAttemptKind,
+    previous: ExecutionRecord | undefined,
+    now: Date,
+  ): ExecutionRecord {
+    const taskId = assertIdentifier(request.task_id, 'Execution Task ID');
+    const agentId = assertIdentifier(request.agent_id, 'Execution Agent ID');
+    const timestamp = now.toISOString();
+    const record: ExecutionRecord = {
+      execution_id: randomUUID(),
+      task_id: taskId,
+      ...(request.workflow_id === undefined
+        ? {}
+        : { workflow_id: assertIdentifier(request.workflow_id, 'Execution Workflow ID') }),
+      agent_id: agentId,
+      attempt: previous === undefined ? 1 : previous.attempt + 1,
+      attempt_kind: attemptKind,
+      ...(previous === undefined ? {} : { previous_execution_id: previous.execution_id }),
+      state: 'running',
+      started_at: timestamp,
+      updated_at: timestamp,
+      evidence: [],
+      revision: 1,
+    };
+    this.persist(record);
+    return structuredClone(record);
+  }
+
+  private requireLatest(taskId: string): ExecutionRecord {
+    const task = assertIdentifier(taskId, 'Execution Task ID');
+    const latest = this.getForTask(task);
+    if (!latest) throw new ExecutionConflictError('This Task has no execution attempt to resume or retry.');
+    return latest;
   }
 
   private requireRunning(executionId: string): ExecutionRecord {
@@ -300,7 +448,9 @@ export class ExecutionLedger {
   private persist(record: ExecutionRecord): void {
     this.journal.append('execution', record);
     this.records.set(record.execution_id, record);
-    this.byTask.set(record.task_id, record.execution_id);
+    const attempts = this.byTask.get(record.task_id) ?? [];
+    if (attempts.at(-1) !== record.execution_id) attempts.push(record.execution_id);
+    this.byTask.set(record.task_id, attempts);
   }
 }
 
