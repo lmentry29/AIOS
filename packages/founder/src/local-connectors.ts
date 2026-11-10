@@ -94,6 +94,9 @@ function stableSourceId(resourceId: string, source: string): string {
  * resource authorization before each provider-backed request. It never writes to
  * Gmail, Notion, or the vault.
  */
+const MAX_GMAIL_RESPONSE_BYTES = 256 * 1024;
+const MAX_NOTION_RESPONSE_BYTES = 5 * 1024 * 1024;
+
 export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorEvidenceReadPort {
   private readonly baseUrl: URL;
   private readonly authorizationHeader: string;
@@ -134,7 +137,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
     await this.authorize(actorId, 'gmail');
     const url = new URL('/api/connectors/gmail/search', this.baseUrl);
     url.searchParams.set('query', query);
-    const payload = await this.getJson(url);
+    const payload = await this.getJson(url, MAX_GMAIL_RESPONSE_BYTES);
     if (!isRecord(payload) || !Array.isArray(payload.results) || payload.results.length > 5) {
       throw new LocalConnectorEvidenceError('Gmail connector returned an invalid result collection.');
     }
@@ -157,7 +160,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
   async listNotionApplications(actorId: string): Promise<NotionApplicationEvidenceRecord[]> {
     if (!isActorReference(actorId)) throw new LocalConnectorEvidenceError('Notion reads require a valid authenticated actor identifier.');
     await this.authorize(actorId, 'notion');
-    const payload = await this.getJson(new URL('/api/connectors/notion/applications', this.baseUrl));
+    const payload = await this.getJson(new URL('/api/connectors/notion/applications', this.baseUrl), MAX_NOTION_RESPONSE_BYTES);
     if (!isRecord(payload) || !Array.isArray(payload.results) || payload.results.length > 500) {
       throw new LocalConnectorEvidenceError('Notion connector returned an invalid result collection.');
     }
@@ -194,7 +197,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
     if (!allowed) throw new LocalConnectorAuthorizationError(source);
   }
 
-  private async getJson(url: URL): Promise<unknown> {
+  private async getJson(url: URL, maxBytes: number): Promise<unknown> {
     if (url.origin !== this.baseUrl.origin) throw new LocalConnectorEvidenceError('Local connector request escaped the loopback origin.');
     let response: Response;
     try {
@@ -208,8 +211,39 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
       throw new LocalConnectorEvidenceError('Local Obsidian++ connector request failed or timed out.');
     }
     if (!response.ok) throw new LocalConnectorEvidenceError(`Local Obsidian++ connector returned HTTP ${response.status}.`);
+    const contentLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      try { await response.body?.cancel(); } catch { /* Best-effort cancellation. */ }
+      throw new LocalConnectorEvidenceError('Local Obsidian++ connector response exceeded its size limit.');
+    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new LocalConnectorEvidenceError('Local Obsidian++ connector response body is unavailable.');
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
     try {
-      return await response.json() as unknown;
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        totalBytes += chunk.value.byteLength;
+        if (totalBytes > maxBytes) {
+          await reader.cancel();
+          throw new LocalConnectorEvidenceError('Local Obsidian++ connector response exceeded its size limit.');
+        }
+        chunks.push(chunk.value);
+      }
+    } catch (error) {
+      try { await reader.cancel(); } catch { /* Best-effort cancellation. */ }
+      if (error instanceof LocalConnectorEvidenceError) throw error;
+      throw new LocalConnectorEvidenceError('Local Obsidian++ connector response could not be read.');
+    }
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    try {
+      return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     } catch {
       throw new LocalConnectorEvidenceError('Local Obsidian++ connector returned invalid JSON.');
     }
