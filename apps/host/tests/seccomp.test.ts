@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TaskEntity } from '@aios/core';
 import type { AgentExecutionPort, TaskExecutionResult } from '@aios/orchestration';
-import { SandboxFilterUnavailableError, SandboxSyscallDeniedError } from '../src/errors.js';
+import {
+  SandboxFilterUnavailableError,
+  SandboxResourceLimitUnavailableError,
+  SandboxSyscallDeniedError,
+} from '../src/errors.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
 import { ManagedExecutionPort } from '../src/execution/managed-execution.js';
@@ -21,17 +25,24 @@ const FILTER = {
   applied: true,
 };
 
+const LIMITS = {
+  memory_bytes: 1280 * 1024 * 1024,
+  cpu_seconds: 5,
+  processes: 128,
+  applied: true,
+};
+
 class FilterSandbox implements SandboxProvider {
   readonly id = 'bubblewrap';
   readonly assurance = 'kernel-namespace' as const;
   calls: SandboxRunSpec[] = [];
   result: Partial<SandboxResult> = {};
-  checkResult: { available: boolean; reason: string; filterFailure?: boolean } = {
+  checkResult: { available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean } = {
     available: true,
     reason: 'filter test provider',
   };
 
-  async check(): Promise<{ available: boolean; reason: string; filterFailure?: boolean }> {
+  async check(): Promise<{ available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean }> {
     return this.checkResult;
   }
 
@@ -49,6 +60,7 @@ class FilterSandbox implements SandboxProvider {
       provider: this.id,
       assurance: this.assurance,
       filter: FILTER,
+      limits: LIMITS,
       ...this.result,
     };
   }
@@ -207,6 +219,58 @@ describe('sandbox filter evidence', () => {
 
     expect(decision.accepted).toBe(false);
     expect(decision.evidence).toContain('verification_failure:sandbox_filter_unavailable');
+  });
+
+  it('maps absent per-run resource-limit proof to its own durable reason', async () => {
+    const store = new DurableOperationalStore({ directory: mkdtempSync(join(tmpdir(), 'aios-limits-ledger-')) });
+    try {
+      const config = makeExecutionConfig();
+      const sandbox = new FilterSandbox();
+      sandbox.result = { limits: { ...LIMITS, applied: false, reason: 'ulimit failed' } };
+      const managed = new ManagedExecutionPort(
+        new LocalCommandExecutor(config, sandbox, new RunWorkspaceManager(config.workspace_directory)),
+        store.executions,
+        1,
+      );
+      const denied = task();
+
+      await expect(managed.executeTask(AGENT_ID, denied)).rejects.toBeInstanceOf(SandboxResourceLimitUnavailableError);
+      expect(store.executions.getForTask(denied.entity_id)).toMatchObject({
+        state: 'failed',
+        reason_code: 'sandbox_resource_limit_unavailable',
+      });
+
+      const verifier = new LocalCommandVerifier(
+        config,
+        new FilterSandbox(),
+        new RunWorkspaceManager(config.workspace_directory),
+        { current: store.executions },
+      );
+      const decision = await verifier.verify({
+        task: denied,
+        agent_ids: [AGENT_ID],
+        execution_result: { summary: 'claimed success', evidence: [] },
+      });
+      expect(decision.accepted).toBe(false);
+      expect(decision.evidence).toContain('failure_reason_code:sandbox_resource_limit_unavailable');
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rejects a verifier command whose own resource-limit proof is missing', async () => {
+    const config = makeExecutionConfig();
+    const sandbox = new FilterSandbox();
+    sandbox.result = { limits: { ...LIMITS, applied: false, reason: 'ulimit failed' } };
+    const verifier = new LocalCommandVerifier(config, sandbox, new RunWorkspaceManager(config.workspace_directory));
+    const decision = await verifier.verify({
+      task: task(),
+      agent_ids: [AGENT_ID],
+      execution_result: { summary: 'claimed success', evidence: [] },
+    });
+
+    expect(decision.accepted).toBe(false);
+    expect(decision.evidence).toContain('verification_failure:sandbox_resource_limit_unavailable');
   });
 });
 

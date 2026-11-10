@@ -14,6 +14,8 @@ export interface SandboxCheck {
   reason: string;
   /** True when the failure is specifically the system-call filter, not the namespace. */
   filterFailure?: boolean;
+  /** True when the failure is specifically the resource limits. */
+  resourceLimitFailure?: boolean;
 }
 
 export interface SandboxRunSpec {
@@ -36,6 +38,24 @@ export interface SandboxFilterEvidence {
   reason?: string;
 }
 
+export interface SandboxResourceLimitEvidence {
+  memory_bytes: number;
+  cpu_seconds: number;
+  processes: number;
+  applied: boolean;
+  reason?: string;
+}
+
+/** RLIMIT_AS applied to each sandboxed process; this is not an aggregate cgroup limit. */
+export const BWRAP_MEMORY_MAX_BYTES = 1280 * 1024 * 1024;
+/** RLIMIT_NPROC applied to the sandboxed UID. */
+export const BWRAP_MAX_PROCESSES = 128;
+
+/** RLIMIT_CPU is aligned to the run's own deadline, in whole seconds. */
+export function bubblewrapCpuSeconds(timeoutMs: number): number {
+  return Math.max(1, Math.ceil(timeoutMs / 1000));
+}
+
 export interface SandboxResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -50,6 +70,8 @@ export interface SandboxResult {
   assurance: SandboxAssurance;
   /** Proof produced by the provider that its system-call filter was active before exec. */
   filter?: SandboxFilterEvidence;
+  /** Proof that the per-run memory/CPU/process limits were installed before exec. */
+  limits?: SandboxResourceLimitEvidence;
 }
 
 /**
@@ -192,8 +214,9 @@ class DockerSandbox implements SandboxProvider {
  * Bubblewrap user namespaces, no network, read-only host system, writable workspace.
  *
  * This is a kernel-namespace boundary, not a container: there is no cgroup memory/CPU
- * accounting. Every invocation also installs a generated seccomp deny-list before exec;
- * if that filter cannot be installed the run is denied rather than executed unfiltered.
+ * accounting. Every invocation installs per-process RLIMIT_AS, RLIMIT_CPU and RLIMIT_NPROC
+ * and a generated seccomp deny-list before exec; if either cannot be installed the run is
+ * denied rather than executed without the filter or limits.
  */
 class BubblewrapSandbox implements SandboxProvider {
   readonly id = 'bubblewrap';
@@ -210,6 +233,13 @@ class BubblewrapSandbox implements SandboxProvider {
     );
     if (version.spawnError || version.exitCode !== 0) {
       return { available: false, reason: 'bubblewrap is not installed or cannot run on this host.' };
+    }
+    if (!existsSync('/usr/bin/prlimit')) {
+      return {
+        available: false,
+        resourceLimitFailure: true,
+        reason: 'prlimit is not installed at /usr/bin/prlimit, so per-run resource limits cannot be proven.',
+      };
     }
     let probe: SandboxResult;
     try {
@@ -228,10 +258,17 @@ class BubblewrapSandbox implements SandboxProvider {
         reason: `The system-call filter was not active for the probe: ${probe.filter?.reason ?? 'no filter evidence'}`,
       };
     }
+    if (probe.limits?.applied !== true) {
+      return {
+        available: false,
+        resourceLimitFailure: true,
+        reason: `The per-run resource limits were not active for the probe: ${probe.limits?.reason ?? 'no resource-limit evidence'}`,
+      };
+    }
     if (probe.exitCode !== 0) {
       return { available: false, reason: 'bubblewrap cannot create the required user namespace on this host.' };
     }
-    return { available: true, reason: 'bubblewrap passed its namespace and seccomp-filter probes.' };
+    return { available: true, reason: 'bubblewrap passed its namespace, seccomp-filter and resource-limit probes.' };
   }
 
   private seccompProfile(): SeccompProfile {
@@ -255,6 +292,7 @@ class BubblewrapSandbox implements SandboxProvider {
     signal?: AbortSignal,
   ): Promise<SandboxResult> {
     const profile = this.seccompProfile();
+    const cpuSeconds = bubblewrapCpuSeconds(timeoutMs);
     const filterDirectory = mkdtempSync(join(tmpdir(), 'aios-seccomp-'));
     const filterPath = join(filterDirectory, 'filter.bpf');
     const markerPath = join(filterDirectory, 'applied');
@@ -265,18 +303,24 @@ class BubblewrapSandbox implements SandboxProvider {
     const binds = ['/usr', '/bin', '/lib', '/lib64', '/etc']
       .filter((path) => existsSync(path))
       .flatMap((path) => ['--ro-bind', path, path]);
-    // The fixed wrapper runs after bwrap has installed the filter. It records the
-    // kernel's Seccomp mode on fd 4, closes the inherited descriptors, then execs the
-    // requested argv without a shell string. A missing marker means bwrap never reached
-    // the wrapped command, so the host refuses to treat the invocation as filtered.
+    // bwrap installs the filter, then invokes the trusted host prlimit binary with
+    // inherited per-process address-space, CPU and process ceilings. prlimit execs this
+    // fixed wrapper only after all three limits are installed. The wrapper validates
+    // the kernel's Seccomp mode and the exact /proc/self/limits values, records both
+    // proofs on fd 4, closes the inherited descriptors, and execs the requested argv
+    // without a shell string. A missing marker means bwrap never reached the wrapped
+    // command, so the host refuses to treat the invocation as filtered or limited.
     const wrapper = [
       'seccomp=missing',
+      'limits=missing',
       'while read -r key value; do',
       '  if [ "$key" = "Seccomp:" ] && [ "$value" = "2" ]; then seccomp=applied; break; fi',
       'done < /proc/self/status',
-      'printf "%s" "$seccomp" >&4',
+      `if [ "$seccomp" = applied ] && grep -q '^Max address space[[:space:]]*${BWRAP_MEMORY_MAX_BYTES}[[:space:]]*${BWRAP_MEMORY_MAX_BYTES}' /proc/self/limits && grep -q '^Max cpu time[[:space:]]*${cpuSeconds}[[:space:]]*${cpuSeconds}' /proc/self/limits && grep -q '^Max processes[[:space:]]*${BWRAP_MAX_PROCESSES}[[:space:]]*${BWRAP_MAX_PROCESSES}' /proc/self/limits; then limits=applied; fi`,
+      'printf "seccomp=%s limits=%s" "$seccomp" "$limits" >&4',
       'exec 3>&- 4>&-',
       '[ "$seccomp" = applied ] || exit 126',
+      '[ "$limits" = applied ] || exit 125',
       'exec "$@"',
     ].join('\n');
     const args = [
@@ -298,6 +342,11 @@ class BubblewrapSandbox implements SandboxProvider {
       '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin',
       ...Object.entries(env).flatMap(([key, value]) => ['--setenv', key, value]),
       '--',
+      '/usr/bin/prlimit',
+      `--as=${BWRAP_MEMORY_MAX_BYTES}`,
+      `--cpu=${cpuSeconds}`,
+      `--nproc=${BWRAP_MAX_PROCESSES}`,
+      '--',
       '/bin/sh', '-c', wrapper, 'aios-filter',
       ...argv,
     ];
@@ -317,14 +366,22 @@ class BubblewrapSandbox implements SandboxProvider {
       } catch {
         // A missing marker is treated as a failed filter installation below.
       }
-      const applied = marker === 'applied';
+      const seccompApplied = /(?:^|\s)seccomp=applied(?:\s|$)/.test(marker);
+      const limitsApplied = /(?:^|\s)limits=applied(?:\s|$)/.test(marker);
       return {
         ...result,
         filter: {
           profile: profile.profile,
           sha256: profile.sha256,
-          applied,
-          ...(applied ? {} : { reason: marker.length > 0 ? `filter marker was "${marker}"` : 'filter marker was not written' }),
+          applied: seccompApplied,
+          ...(seccompApplied ? {} : { reason: marker.length > 0 ? `filter marker was "${marker}"` : 'filter marker was not written' }),
+        },
+        limits: {
+          memory_bytes: BWRAP_MEMORY_MAX_BYTES,
+          cpu_seconds: cpuSeconds,
+          processes: BWRAP_MAX_PROCESSES,
+          applied: limitsApplied,
+          ...(limitsApplied ? {} : { reason: marker.length > 0 ? `resource-limit marker was "${marker}"` : 'resource-limit marker was not written' }),
         },
       };
     } finally {

@@ -8,6 +8,7 @@ import {
 } from '@aios/orchestration';
 import {
   SandboxFilterUnavailableError,
+  SandboxResourceLimitUnavailableError,
   SandboxSyscallDeniedError,
   WorkspaceQuotaExceededError,
 } from '../errors.js';
@@ -24,6 +25,7 @@ function isCancellable(value: AgentExecutionPort): value is AgentExecutionPort &
 function failureCode(error: unknown): string {
   if (error instanceof WorkspaceQuotaExceededError) return 'disk_quota_exceeded';
   if (error instanceof SandboxFilterUnavailableError) return 'sandbox_filter_unavailable';
+  if (error instanceof SandboxResourceLimitUnavailableError) return 'sandbox_resource_limit_unavailable';
   if (error instanceof SandboxSyscallDeniedError) return 'sandbox_syscall_denied';
   if (error instanceof TaskCancelledError) return 'task_cancelled';
   if (error instanceof Error && error.name.length > 0) {

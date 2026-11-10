@@ -72,6 +72,14 @@ export class SandboxFilterUnavailableError extends HostExecutionError {
   }
 }
 
+/** The per-run memory/CPU/process limits could not be installed. */
+export class SandboxResourceLimitUnavailableError extends HostExecutionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SandboxResourceLimitUnavailableError';
+  }
+}
+
 /** The kernel killed a sandboxed process because it used a denied system call. */
 export class SandboxSyscallDeniedError extends HostExecutionError {
   constructor(

@@ -127,6 +127,55 @@ describe.skipIf(!enabled || process.platform !== 'linux')('live bubblewrap bound
     expect(result.stdout.toString('utf8')).toMatch(/CapEff:\s*0+$/m);
   });
 
+  it('installs per-process memory, CPU and process limits before exec', async () => {
+    const result = await provider.run({
+      argv: ['/bin/sh', '-c', 'printf "v=%s t=%s\n" "$(ulimit -v)" "$(ulimit -t)"; grep "^Max processes" /proc/self/limits'],
+      workspaceDirectory: workspace(),
+      timeoutMs: 5_000,
+      maxOutputBytes: 4096,
+      env: {},
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString('utf8')).toContain('v=1310720 t=5');
+    expect(result.stdout.toString('utf8')).toMatch(/^Max processes\s+128\s+128\s+processes/m);
+    expect(result.limits).toMatchObject({
+      memory_bytes: 1280 * 1024 * 1024,
+      cpu_seconds: 5,
+      processes: 128,
+      applied: true,
+    });
+  });
+
+  it('still runs an ordinary interpreter under the memory and process ceilings', async () => {
+    const result = await provider.run({
+      argv: ['perl', '-e', 'print qq(perl-ok\n)'],
+      workspaceDirectory: workspace(),
+      timeoutMs: 5_000,
+      maxOutputBytes: 4096,
+      env: {},
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString('utf8')).toBe('perl-ok\n');
+  });
+
+  it('stops a memory bomb with RLIMIT_AS instead of letting it exhaust the host', async () => {
+    const result = await provider.run({
+      argv: [
+        'perl',
+        '-e',
+        'my @a; my $x = q(x) x (64*1024*1024); while (1) { push @a, $x }',
+      ],
+      workspaceDirectory: workspace(),
+      timeoutMs: 15_000,
+      maxOutputBytes: 4096,
+      env: {},
+    });
+    expect(result.limits?.applied).toBe(true);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.timedOut).toBe(false);
+    expect(result.stderr.toString('utf8')).toMatch(/Out of memory/i);
+  });
+
   it('kills a background workload when the boundary is killed', async () => {
     const marker = join(tmpdir(), `aios-orphan-${Date.now()}.pid`);
     const result = await provider.run({

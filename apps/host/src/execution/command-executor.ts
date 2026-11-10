@@ -6,6 +6,7 @@ import {
   HostExecutionError,
   HostUnavailableError,
   SandboxFilterUnavailableError,
+  SandboxResourceLimitUnavailableError,
   SandboxSyscallDeniedError,
   WorkspaceQuotaExceededError,
 } from '../errors.js';
@@ -41,7 +42,7 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
  * so a command cannot inject credentials or untrusted text into the durable journal.
  */
 export class LocalCommandExecutor implements AgentExecutionPort {
-  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean } | undefined;
+  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean } | undefined;
   private readonly active = new Map<string, AbortController>();
 
   constructor(
@@ -139,6 +140,14 @@ export class LocalCommandExecutor implements AgentExecutionPort {
         `The system-call filter was not active for this run: ${result.filter?.reason ?? 'no filter evidence'}.`,
       );
     }
+    // Resource limits are part of the same pre-exec proof: a run whose limits were not
+    // installed is denied rather than allowed to consume unbounded host resources.
+    if (this.provider.id === 'bubblewrap' && result.limits?.applied !== true) {
+      this.workspaces.discard(task.entity_id);
+      throw new SandboxResourceLimitUnavailableError(
+        `The per-run resource limits were not active: ${result.limits?.reason ?? 'no resource-limit evidence'}.`,
+      );
+    }
     if (result.signal === 'SIGSYS' || result.exitCode === SECCOMP_DENIED_EXIT_CODE) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxSyscallDeniedError(
@@ -174,6 +183,14 @@ export class LocalCommandExecutor implements AgentExecutionPort {
             `syscall_filter:${result.filter.profile}`,
             `syscall_filter_sha256:${result.filter.sha256}`,
             `syscall_filter_applied:${result.filter.applied}`,
+          ]),
+      ...(result.limits === undefined
+        ? []
+        : [
+            `resource_limit_memory_bytes:${result.limits.memory_bytes}`,
+            `resource_limit_cpu_seconds:${result.limits.cpu_seconds}`,
+            `resource_limit_processes:${result.limits.processes}`,
+            `resource_limits_applied:${result.limits.applied}`,
           ]),
     ];
 
@@ -214,11 +231,16 @@ export class LocalCommandExecutor implements AgentExecutionPort {
             `Local execution is unavailable because the system-call filter failed: ${this.availability.reason}`,
           );
         }
+        if (this.provider.id === 'bubblewrap' && this.availability.resourceLimitFailure === true) {
+          throw new SandboxResourceLimitUnavailableError(
+            `Local execution is unavailable because the per-run resource limits failed: ${this.availability.reason}`,
+          );
+        }
         throw new HostUnavailableError(`Local execution is unavailable: ${this.availability.reason}`);
       }
       return;
     }
-    let check: { available: boolean; reason: string; filterFailure?: boolean };
+    let check: { available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean };
     try {
       check = await this.provider.check();
     } catch {
@@ -229,6 +251,11 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       if (this.provider.id === 'bubblewrap' && check.filterFailure === true) {
         throw new SandboxFilterUnavailableError(
           `Local execution is unavailable because the system-call filter failed: ${check.reason}`,
+        );
+      }
+      if (this.provider.id === 'bubblewrap' && check.resourceLimitFailure === true) {
+        throw new SandboxResourceLimitUnavailableError(
+          `Local execution is unavailable because the per-run resource limits failed: ${check.reason}`,
         );
       }
       throw new HostUnavailableError(`Local execution is unavailable: ${check.reason}`);
