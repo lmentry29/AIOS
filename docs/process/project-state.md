@@ -4,9 +4,10 @@ Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distingu
 evidence from observed CI. Code head `4422229` (authorized runtime policy retirement) sits on
 the branch above the previously verified merge head `8c950e6`, which merged `upstream/main`
 at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
-`schema-check` (run `42887224921`) workflows with PR #1 mergeable/clean. The docs commit for
-this pass is the branch tip after `4422229`; read `git log --oneline -4` for the exact tip, and
-treat CI on `4422229` and later as pending until its own runs are observed.
+`schema-check` (run `42887224921`) workflows with PR #1 mergeable/clean. Docs commit
+`aa86a4e` sits above the code head, and `aa86a4e` passed `ci` (run `42892775891`),
+`conformance` (run `42892776172`), and `schema-check` (run `42892775877`). A final docs-only
+record commit follows; its own runs are separate.
 
 ## Repository and active change
 
@@ -16,12 +17,11 @@ treat CI on `4422229` and later as pending until its own runs are observed.
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
 - Verified code head: `4422229` (`feat(host): retire attached policy versions at runtime`)
-- Docs commit for this pass: the branch tip after `4422229`
-  (`docs(adr): record authorized runtime policy retirement`).
+- Docs commit for this pass: `aa86a4e` (`docs(adr): record authorized runtime policy retirement`).
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
   mergeable/clean.
-- `4422229` is committed after that merge head. Its CI and the docs commit's CI must be
-  observed before either is reported green.
+- `4422229` and docs commit `aa86a4e` sit above that merge head. Both workflow sets
+  succeeded on `aa86a4e`; see Validation evidence for run ids.
 - Do not push `main`. The implementation branch may be pushed to
   `upstream community/open-source-foundation`.
 
@@ -147,10 +147,11 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 28; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
-- GitHub Actions at merge head `8c950e6`: `ci`, `conformance`, and `schema-check` all
-  succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`. The
-  runtime-retirement code commit `4422229` and the docs commit after it have their own runs;
-  do not infer their result from this line.
+- GitHub Actions on `aa86a4e`: `ci` (run `42892775891`), `conformance` (run
+  `42892776172`), and `schema-check` (run `42892775877`) all succeeded; PR #1 reported
+  `mergeable: true`, `mergeable_state: unstable` while those runs were in flight. The
+  docs-only CI-record commit after `aa86a4e` has its own runs; do not infer their result
+  from this line.
 
 The command and test results above are local, not CI. The real Docker, bubblewrap, and
 Seatbelt providers could not be integration-tested here: `docker info` cannot reach a daemon, and `bwrap`,
