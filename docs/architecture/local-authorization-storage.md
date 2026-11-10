@@ -2,7 +2,7 @@
 
 ## Scope
 
-The Founder package includes `FilePolicyRegistry`, a local durable implementation of the policy store, resource-to-policy resolver, policy administration port, and authorization decision audit sink.
+The Founder package now includes `FilePolicyRegistry`, a local durable implementation of the policy store, resource-to-policy resolver, policy administration port, and authorization decision audit sink.
 
 It stores only authorization policy snapshots, resource attachments, and authorization audit records. It is **not** a Founder Intelligence store and does not duplicate Obsidian notes, Founder Memory, Gmail messages, or Notion page content.
 
@@ -23,11 +23,9 @@ The registry plugs into the existing `AuthorizationService` and `PolicyAdministr
 
 No wildcard grants, implicit owner grants, or policy auto-attachments are introduced. The trusted host remains responsible for authenticating the caller and supplying the actor ID; this file store does not authenticate users.
 
-The `createLocalEvidenceRuntime()` factory composes this registry, the shared AuthorizationService, and the read-only vault/Gmail/Notion readers. It deliberately creates no grants. The trusted host must provision the bootstrap human principal, create and attach narrowly scoped resource policies for the vault, Gmail, and Notion, and inject the shared AuthorizationService into Founder and Orchestration.
-
 ## Limitations
 
 - A hash chain detects edits relative to the stored chain but is not a digital signature and cannot protect against an attacker who can rewrite the entire file and recompute every hash.
 - The registry is not a distributed database and is not suitable for multi-host or multi-user deployments.
 - Backup, restore, retention, external audit export, and recovery drills still require operational implementation.
-- The local host composition root must still authenticate callers, configure resource policies, and inject this runtime into the full AIOS application.
+- The local host composition root must provision the bootstrap human principal, create and attach narrowly scoped resource policies for the vault, Gmail, and Notion, and pass the same AuthorizationService to Founder and Orchestration.
