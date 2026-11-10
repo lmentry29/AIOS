@@ -448,8 +448,9 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   child-process helper kills a direct child; it is not isolation evidence.
 - **Not live-provider verified:** Obsidian++, Gmail, Notion, GitHub, or any model provider.
 - **Not security tested:** independent penetration test, hostile-kernel escape, container
-  escape, or verifier-key compromise. Bubblewrap has no cgroup accounting or seccomp profile
-  and is labelled kernel-namespace/trusted-local only.
+  escape, or verifier-key compromise. Bubblewrap now installs a generated seccomp deny-list
+  with live denial drills (ADR-0027), but has no cgroup accounting, no active Landlock, and is
+  labelled kernel-namespace/trusted-local only; Docker/Seatbelt/gVisor remain unverified.
 - **Not signed:** verifier decisions have no Ed25519/TUF provenance. The trust anchor is a
   host-configured distinct principal plus a separately executed command.
 

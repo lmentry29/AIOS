@@ -26,7 +26,9 @@ Founder Intelligence vault's own access controls.
 3. **Host → sandbox provider.** The task supplies an argv, never a shell string or a provider
    selection. The provider establishes the OS boundary before the workload starts.
 4. **Sandbox → workspace.** Only the per-task workspace is writable; the host filesystem is
-   read-only or absent; `/tmp` is a private, size-bounded tmpfs.
+   read-only or absent; `/tmp` is a private, size-bounded tmpfs. Before exec, bubblewrap
+   installs a generated seccomp deny-list with an architecture guard; the host refuses a run
+   unless the kernel reports `Seccomp: 2` and the provider supplies matching filter evidence.
 5. **Executor → verifier.** Separate principal and separate sandbox invocation. The verifier
    never accepts the executor's self-report; it runs its own command and records hashes.
 6. **Host → durable stores.** Owner-only files, hash-chained, single-writer lock, fsync before
@@ -47,6 +49,13 @@ Founder Intelligence vault's own access controls.
 - **Shared-kernel isolation.** bubblewrap and Docker do not survive a host-kernel exploit.
   gVisor or a VM boundary is required for hostile multi-tenant workloads; neither is validated
   in this repository yet.
+- **System-call attack surface.** bubblewrap now installs a generated seccomp deny-list
+  (ADR-0027) that kills ptrace, mount/namespace, keyring/module, bpf/perf, io_uring,
+  userfaultfd, and related syscalls. It is a deny-list, not a complete allow-list: unlisted
+  syscall families remain callable, and the filter does not make the shared kernel safe.
+  Landlock is not active on the validation host, and Docker/Seatbelt/gVisor/Apple
+  Containerization remain unverified. A denied syscall is journaled as
+  `sandbox_syscall_denied`; missing filter proof is `sandbox_filter_unavailable`.
 - **Resource exhaustion.** bubblewrap has no cgroup CPU/memory controls. Deadlines, bounded
   output, a size-bounded `/tmp` (64 MiB), process-group kill, and one-command-per-task are the
   current controls; a memory bomb can still stress the host. The per-run workspace ceiling is

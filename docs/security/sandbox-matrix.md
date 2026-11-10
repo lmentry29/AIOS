@@ -5,7 +5,7 @@ Primary sources checked 2026-11-10. Versions are the latest published at that da
 
 | Provider | Boundary | Shares host kernel | Unprivileged operation | Resource limits | Network isolation | AIOS evidence |
 |---|---|---|---|---|---|---|
-| bubblewrap 0.13.1 | Namespaces + mounts + capability drop; policy is caller-defined | Yes | Yes, user namespaces; setuid mode removed in 0.12.0 | No cgroup CPU/memory flags; `--size` bounds only the next tmpfs | `--unshare-net` / `--unshare-all` give loopback-only netns | **Validated** on Linux 6.1.102 with bwrap 0.9.0: 9/9 adversarial cases (see validation ledger) |
+| bubblewrap 0.13.1 | Namespaces + mounts + capability drop + generated seccomp deny-list; policy is caller-defined | Yes | Yes, user namespaces; setuid mode removed in 0.12.0 | Seccomp BPF deny-list with architecture guard; no cgroup CPU/memory flags; `--size` bounds only the next tmpfs | `--unshare-net` / `--unshare-all` give loopback-only netns | **Validated** on Linux 6.1.102 with bwrap 0.9.0: 9/9 boundary cases plus 3/3 seccomp cases and 2/2 quota drills (see validation ledger) |
 | Docker Engine 29.9.3 (rootless) | Container: namespaces, cgroups, seccomp, LSMs | Yes | Rootless daemon + userns; needs subuid/subgid mapping | cgroup v2 via `--memory`, `--cpus`, `--pids-limit`; ignored without cgroup v2 + systemd | netns per container; `--network=none` | **Unverified**: CLI present, daemon socket permission denied on the validation host. Adapter tests cover argument construction only |
 | gVisor 20261102.0 (`runsc`) | User-space application kernel (Sentry); second kernel | No guest kernel; minimal host syscalls | Partial: `--rootless` is single-UID, no netstack/create/save-restore | Host cgroups; in-sandbox cgroups do not enforce between processes | netstack; `--network=none` | **Not integrated**: no adapter, no runsc on the host |
 | Apple Containerization 1.7.1 | Per-container VM via Virtualization.framework | No | Per-user CLI after admin install; not Linux-userns rootless | Per-VM `--cpus` / `--memory` (defaults 4 CPU / 1 GB) | vmnet; isolated per-network on macOS 26+ | **Unavailable**: macOS 26 / Apple silicon required |
@@ -29,16 +29,23 @@ Primary sources checked 2026-11-10. Versions are the latest published at that da
 
 ## Flags actually passed by the bubblewrap provider
 
-`--die-with-parent --new-session --unshare-all --cap-drop ALL`, read-only binds of `/usr`,
-`/bin`, `/lib`, `/lib64`, `/etc`, `--proc /proc`, `--dev /dev`, `--size 67108864 --tmpfs /tmp`,
-a writable bind of only the run workspace, `--clearenv`, `HOME=/tmp`, a fixed `PATH`, and then
-the task argv.
+`--die-with-parent --new-session --unshare-all --cap-drop ALL --seccomp 3`, read-only binds
+of `/usr`, `/bin`, `/lib`, `/lib64`, `/etc`, `--proc /proc`, `--dev /dev`,
+`--size 67108864 --tmpfs /tmp`, a writable bind of only the run workspace, `--clearenv`,
+`HOME=/tmp`, a fixed `PATH`, a fixed `/bin/sh` wrapper, and then the task argv.
 
-Known gaps, tracked in the findings ledger: no seccomp filter inside the namespace and no
-cgroup CPU/memory accounting. The per-run workspace ceiling is enforced live by the host
-executor's 25 ms sampler, not by the kernel or the provider flags; it is not a hard quota and
-a fast writer can overshoot between samples (ADR-0026). The sandbox `/tmp` is size-bounded to
-64 MiB, and the only other writable host path is the run workspace.
+The filter is a generated classic-BPF deny-list with an x86_64/arm64 architecture guard and
+`KILL_PROCESS` for the listed syscalls. The wrapper records the kernel's `Seccomp: 2` state on
+an inherited marker fd before it execs the task; a missing marker denies the run. The
+verifier runs its own filtered command and records its own filter evidence rather than
+trusting the executor. See ADR-0027.
+
+Known gaps: this is a deny-list, not an allow-list, so unlisted syscall families remain
+callable; Landlock is not present in the active LSM list; Docker's adapter remains unverified;
+and there is no cgroup CPU/memory accounting. The per-run workspace ceiling is enforced live
+by the host executor's 25 ms sampler, not by the kernel or the provider flags; it is not a
+hard quota and a fast writer can overshoot between samples (ADR-0026). The sandbox `/tmp` is
+size-bounded to 64 MiB, and the only other writable host path is the run workspace.
 
 ## Sources
 

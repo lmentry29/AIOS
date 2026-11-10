@@ -136,3 +136,59 @@ discard bound retained state, not the transient write. Symlinks are skipped, har
 counted per name, and writes outside `/workspace` are not attributed to the run (`/tmp` is a
 separate 64 MiB tmpfs, other tmpfs paths are not). Docker, gVisor, Seatbelt, and Apple
 Containerization remain unverified. See ADR-0026 and F-004.
+
+## 2026-11-10 — bubblewrap seccomp system-call filter (F-007)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. Active LSM list read from `/sys/kernel/security/lsm`:
+`capability,selinux` — **no Landlock**. `bwrap --help` advertises `--seccomp FD` and
+`--add-seccomp-fd FD`; a manual probe with a generated filter reported `Seccomp: 2` and
+`Seccomp_filters: 1` inside the namespace. Commands actually run:
+
+```sh
+pnpm --filter @aios/host run build
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+node tools/security/scan-secrets.mjs
+node tools/security/audit-policy.mjs
+```
+
+Full workspace gate: **46/46 tasks successful**; host **129 passed, 14 skipped** (the 14 skips
+are the live suites without `AIOS_BWRAP_DIR`). Live suites with the real binary: **14 passed**
+(9 existing boundary cases, 3 new seccomp cases, 2 existing quota cases). The CI live job was
+updated to run all three live files, not only the original boundary file.
+
+Drill output (verbatim, exit 0):
+
+```json
+{"drill":"seccomp-filter","kernel":"6.1.102","provider":"bubblewrap","filter":{"profile":"aios-seccomp-deny-v1-x64","sha256":"12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac","applied":true,"seccomp_mode":"2"},"denied":{"error":"SandboxSyscallDeniedError","message":"The sandboxed command was killed by the system-call filter for using a denied syscall.","filter_sha256":"12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac","workspace_entries":0,"matching_processes":0},"legitimate":{"provider":"bubblewrap","exit_code":"0","filter_applied":"true"},"next":{"exit_code":"0","workspace_entries":2}}
+```
+
+Observed properties:
+
+- The ordinary probe and legitimate run both report `Seccomp: 2` and filter SHA-256
+  `12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac`; the executor records
+  `syscall_filter`, `syscall_filter_sha256`, and `syscall_filter_applied:true` in successful
+  evidence.
+- A run that executed `/usr/bin/unshare -U true` was killed with bwrap status 159 (SIGSYS) and
+  mapped to `SandboxSyscallDeniedError`. The managed lifecycle test records
+  `sandbox_syscall_denied`; the verifier rejects the failed attempt with its execution id,
+  attempt, `failure_evidence_sha256`, and `failed_sandbox_filter_sha256` instead of accepting
+  a caller-supplied result.
+- The denied run left **0** workspace entries after discard and **0** processes matching its
+  unique marker. It was never reported as success.
+- The legitimate run exited 0 and the following run exited 0 in its own workspace (2 retained
+  workspaces), proving the denial is per-run and does not poison later execution.
+- Filter preflight failure is separately mapped to `sandbox_filter_unavailable`; a missing
+  per-run marker or failed verifier filter proof is rejected, not accepted.The filters are installed through `--seccomp 3` on the same `bwrap` invocation that already applies the
+  filesystem, PID, network, capability, and `/tmp` controls.
+- `secret-scan: no findings across 265 tracked files`; `audit-policy: no untriaged high or
+  critical advisories (1 triaged)` (zod GHSA-mrhx-c7xc-m3w5).
+
+Limits of this evidence: the filter is a **deny-list**, so unlisted syscalls remain available;
+Landlock is not active on this kernel; the arm64 profile table was generated but not live-run
+on this x86_64 host; Docker, Seatbelt, gVisor, and Apple Containerization remain unverified;
+the shared host kernel remains in scope; there is no cgroup CPU/memory accounting or hard disk
+quota. See ADR-0027 and F-007.

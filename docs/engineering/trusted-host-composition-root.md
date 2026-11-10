@@ -439,8 +439,10 @@ version containing the desired rules.
   bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured
   principal plus a separately executed command, but there is no signed verifier decision,
-  key rotation, or protection against a compromised host process. Bubblewrap lacks cgroup
-  accounting/seccomp and is suitable only for trusted local commands.
+  key rotation, or protection against a compromised host process. Bubblewrap installs a
+  generated seccomp deny-list before exec (ADR-0027), but still lacks cgroup accounting, has
+  no active Landlock profile, and is suitable only for trusted local commands; Docker,
+  Seatbelt, and gVisor remain unverified.
 - **Live integrations.** Vault, Gmail, and Notion readers are composed but untested against
   real services; per-note vault authorization remains collection-level.
 - **Founder experience.** The API is usable; there is no UI, and no Mission/Objective

@@ -187,8 +187,9 @@ provider is unavailable; they do not claim container isolation.
 
 1. **Execution isolation proof.** Docker/bubblewrap/Seatbelt implementations need testing on
    hosts where they actually run, including cancellation/container-kill behavior, mount
-   permissions, network denial, PID/memory limits, and hostile commands. Bubblewrap has no
-   cgroup accounting or seccomp profile and is trusted-local only.
+   permissions, network denial, PID/memory limits, and hostile commands. Bubblewrap has a
+   generated seccomp deny-list and live denial drill (ADR-0027), but no cgroup accounting, no
+   active Landlock, and remains trusted-local only; Docker/Seatbelt/gVisor are unverified.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
    a compromised host process.
