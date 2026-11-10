@@ -4,7 +4,7 @@
 
 The goal is not to create an unsupervised company-in-a-box. The goal is to make agentic engineering work more inspectable, repeatable, testable, and accountable to human operators.
 
-> **Project status: early-stage / not production-ready.** Seven packages have established domain runtime implementations. `orchestration` and `founder` now contain early runtime implementations, but neither is complete: execution is adapter-driven, policy and audit storage are not durable, the Obsidian evidence adapter has not been connected to a live vault, and orchestration persistence is in-memory. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
+> **Project status: early-stage / not production-ready.** Seven packages have established domain runtime implementations. `orchestration` and `founder` contain early runtime implementations, and `apps/host` is a trusted local composition root with durable operational Task/Workflow/evidence/run state, a hash-chained journal, and a fixed sandboxed-command execution path. It remains incomplete: no UI, no general capability/provider selection, no live Gmail/Notion/Founder-vault verification, no secret broker, and no signed verifier provenance. The host refuses dispatch when no isolation provider passes its probe; Docker, bubblewrap, and macOS Seatbelt are the only supported boundaries. Interfaces and architecture are still being validated against working software. Expect breaking changes. Do not use AIOS to control production infrastructure, make consequential decisions, or handle sensitive data without independent review and appropriate safeguards.
 
 ## Who this is for
 
@@ -49,6 +49,13 @@ pnpm test
 
 These are the repository's intended workspace checks; they are not a claim that every command currently passes on every platform. Report failures with the exact command, runtime versions, and error output. Do not infer that a package is production-ready from a successful build alone.
 
+Local execution additionally requires a supported isolation provider. The host never
+falls back to an unsandboxed subprocess: with Docker, the configured image must already be
+present locally; on Linux, `bwrap` must be able to create a user namespace; on macOS,
+`sandbox-exec` must apply the Seatbelt profile. If none is available, `/health` reports
+`dispatch: false` and dispatch returns 503. See ADR-0019 and
+[`docs/engineering/trusted-host-composition-root.md`](docs/engineering/trusted-host-composition-root.md).
+
 ## Design principles
 
 1. **Human accountability:** automation must not silently expand its own authority.
@@ -91,7 +98,8 @@ docs/
   engineering/     Runtime contracts, schemas, roadmap, and playbook
   process/         Status, decisions, and implementation divergence
   archive/         Historical and superseded material
-packages/          Nine planned @aios/* packages
+packages/          Nine @aios/* platform packages (private workspace implementation)
+apps/host/         Trusted local host application and composition root
 schemas/generated/ Generated JSON Schema (do not hand-edit)
 tests/             Cross-package integration and conformance tests
 ```

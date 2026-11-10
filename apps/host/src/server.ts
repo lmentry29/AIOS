@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { FounderAuthorizationError, FounderInputError } from '@aios/founder';
 import { OrchestrationError } from '@aios/orchestration';
 import type { HostConfig } from './config.js';
-import { HostHttpError, HostUnavailableError } from './errors.js';
+import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
@@ -104,6 +104,7 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknow
 
 function dispatchFailureCode(error: unknown): string {
   if (error instanceof HostUnavailableError) return 'adapter_unavailable';
+  if (error instanceof HostExecutionError) return 'execution_failed';
   if (error instanceof OrchestrationError) return 'orchestration_rejected';
   return 'dispatch_failed';
 }
@@ -114,6 +115,9 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   }
   if (error instanceof HostUnavailableError) {
     return { status: 503, code: 'adapter_unavailable', message: error.message };
+  }
+  if (error instanceof HostExecutionError) {
+    return { status: 422, code: 'execution_failed', message: error.message };
   }
   if (error instanceof FounderAuthorizationError) {
     return { status: 403, code: 'forbidden', message: 'Authorization policy denied this operation.' };

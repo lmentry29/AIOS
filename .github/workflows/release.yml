@@ -1,15 +1,15 @@
-name: Release
+name: Release build
 
+# @aios/* packages are private (ADR-0020). This workflow builds a reviewable
+# application artifact; it must not publish npm packages while they are private.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -21,8 +21,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
-      - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          publish: pnpm release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: aios-host-build
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/host/dist
+            packages/*/dist

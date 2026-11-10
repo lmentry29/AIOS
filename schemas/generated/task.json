@@ -133,6 +133,51 @@
           "const": "task",
           "type": "string"
         },
+        "execution": {
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "items": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "cwd": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "maxLength": 256,
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "local_command",
+              "type": "string"
+            },
+            "max_output_bytes": {
+              "maximum": 1048576,
+              "minimum": 1024,
+              "type": "integer"
+            },
+            "timeout_ms": {
+              "maximum": 300000,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "argv"
+          ],
+          "type": "object"
+        },
         "lifecycle_history": {
           "items": {
             "additionalProperties": false,
@@ -273,6 +318,45 @@
           },
           "type": "array"
         },
+        "verification": {
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "items": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "cwd": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "expected_exit_code": {
+              "default": 0,
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "local_command",
+              "type": "string"
+            },
+            "timeout_ms": {
+              "maximum": 300000,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "argv"
+          ],
+          "type": "object"
+        },
         "version": {
           "exclusiveMinimum": 0,
           "type": "integer"
@@ -309,6 +393,90 @@
         "work_hierarchy_parent",
         "owner_id",
         "owner_type"
+      ],
+      "type": "object"
+    },
+    "TaskExecutionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "cwd": {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "kind": {
+          "const": "local_command",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "maximum": 1048576,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "maximum": 300000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "argv"
+      ],
+      "type": "object"
+    },
+    "TaskVerificationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "cwd": {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "expected_exit_code": {
+          "default": 0,
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "local_command",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "maximum": 300000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "argv"
       ],
       "type": "object"
     }

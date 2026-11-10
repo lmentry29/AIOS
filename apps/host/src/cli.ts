@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { loadHostConfig } from './config.js';
+import { createLocalExecutionAdapters } from './execution/index.js';
 import { provisionPolicies } from './policy-admin.js';
 import { createHostRuntime } from './runtime.js';
 import { createHostServer } from './server.js';
@@ -8,9 +9,11 @@ import { createHostServer } from './server.js';
 /**
  * Local host CLI.
  *
- * `serve` starts the trusted local API. Execution and verification adapters are not
- * configured by the CLI because no production adapter exists yet: dispatch is reported as
- * disabled in `/health` and refused with 503, rather than simulated.
+ * `serve` starts the trusted local API. When `execution` is configured, the CLI
+ * composes a real fixed-command executor and a distinct independent verifier through
+ * one of the supported isolation providers. If the provider cannot establish its
+ * boundary, the host still starts but reports dispatch disabled and refuses dispatch
+ * with 503; it never falls back to an unsandboxed process.
  *
  * `publish-policy` is the human-only offline bootstrap path. It must run with the host
  * stopped, because the durable registry holds a single-process lock.
@@ -31,9 +34,28 @@ async function serve(configPath: string): Promise<void> {
     throw new Error('AIOS_OBSIDIAN_PASSWORD must contain at least 32 bytes when evidence readers are configured.');
   }
 
+  let adapters: Awaited<ReturnType<typeof createLocalExecutionAdapters>> | undefined;
+  if (config.execution) {
+    try {
+      adapters = await createLocalExecutionAdapters(config.execution);
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({
+        event: 'execution_unavailable',
+        reason: error instanceof Error ? error.message : 'Local execution provider could not be initialized.',
+      })}\n`);
+    }
+  }
+
   const runtime = createHostRuntime({
     config,
     ...(obsidianPassword === undefined ? {} : { obsidianPassword }),
+    ...(adapters === undefined
+      ? {}
+      : {
+          execution: adapters.execution,
+          verification: adapters.verification,
+          resolveAgent: async () => config.execution?.agent_id ?? '',
+        }),
   });
   const server = createHostServer(runtime);
   try {
@@ -44,6 +66,7 @@ async function serve(configPath: string): Promise<void> {
       port: address.port,
       authorization: 'shared',
       dispatch: runtime.executionConfigured && runtime.verificationConfigured,
+      execution_provider: adapters?.provider.id ?? null,
       evidence: runtime.evidenceConfigured,
     })}\n`);
   } catch (error) {

@@ -36,3 +36,16 @@ export class HostUnavailableError extends Error {
     this.name = 'HostUnavailableError';
   }
 }
+
+/**
+ * A configured executor or verifier could not produce verified work.
+ *
+ * Messages are intentionally generic and never include command output: commands are
+ * untrusted input, and a failure must not turn stderr into a journal or HTTP response.
+ */
+export class HostExecutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HostExecutionError';
+  }
+}

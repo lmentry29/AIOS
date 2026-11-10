@@ -20,9 +20,12 @@ nothing in the repository turned an HTTP request into a trusted principal.
 - Keeps policy administration off the network entirely.
 
 Operational state (Tasks, Workflows, Artifacts, dispatch runs) is durable through a
-hash-chained journal per ADR-0015. It does **not** close the other production blockers: no
-execution or verification adapter is invented, evidence readers remain unverified against a
-live Obsidian++, learning records are still in-memory, and there is no Founder UI yet.
+hash-chained journal per ADR-0015. The host can compose the fixed `local.exec` executor and
+an independently executed verifier (ADR-0019) when a Docker, bubblewrap, or Seatbelt
+provider passes its probe. It does **not** close the other production blockers: there is no
+general capability/provider runtime, no signed verifier provenance, evidence readers remain
+unverified against a live Obsidian++, learning records are still in-memory, and there is no
+Founder UI yet.
 
 ## Configuration
 
@@ -51,9 +54,23 @@ field fails startup instead of being silently ignored. A partial example (no sec
       "token_sha256": "<sha256 hex of a token you generate locally>",
       "label": "founder laptop"
     }
-  ]
+  ],
+  "execution": {
+    "workspace_directory": "/home/you/.aios/workspaces",
+    "agent_id": "00000000-0000-4000-8000-000000000006",
+    "verifier_id": "00000000-0000-4000-8000-000000000007",
+    "provider": "docker",
+    "image": "node:22-alpine",
+    "default_timeout_ms": 60000,
+    "max_output_bytes": 65536
+  }
 }
 ```
+
+The `execution` block is optional. `agent_id` and `verifier_id` must be distinct UUIDs;
+`provider` is `auto`, `bubblewrap`, `seatbelt`, or `docker`; Docker requires a local image
+and never pulls one implicitly. The host checks the provider before advertising dispatch and
+fails closed to 503 if it is unavailable.
 
 `obsidian` is optional and, when present, must be `http://127.0.0.1:<port>` or
 `http://[::1]:<port>` with no credentials, path, query, or fragment. The Obsidian++ password
@@ -159,9 +176,15 @@ single-process lock.
    `publish-policy`.
 4. `export AIOS_OBSIDIAN_PASSWORD=...` if evidence readers are configured.
 5. `aios-host serve --config /abs/host.json`.
-6. `GET /health` must report `dispatch: false` until an execution adapter and independent
-   verifier are supplied programmatically; dispatch then returns 503 rather than pretending
-   to execute.
+6. `GET /health` reports `dispatch: false` until a configured isolation provider passes its
+   probe and both the fixed executor and independent verifier are composed. If the provider
+   fails, the host still starts but dispatch returns 503 rather than falling back to a bare
+   process (ADR-0019).
+7. Configure execution only when the operator intends to run local commands:
+   `execution.workspace_directory` must be an owner-only parent outside the Obsidian vault,
+   `agent_id` and `verifier_id` must be distinct UUIDs, and `provider` is `auto`,
+   `bubblewrap`, `seatbelt`, or `docker`. Docker additionally requires a pre-pulled image.
+   The verifier runs its own command; it does not trust the executor's summary.
 
 ## Security properties, restated as tests
 
@@ -195,10 +218,14 @@ single-process lock.
   host process. Learning records remain in-memory. Backup/restore is a documented file copy,
   not an automated procedure. Dispatch is idempotent and leased, but there is no retry backoff
   or automatic resume of interrupted work.
-- **Execution and verification.** No production `AgentExecutionPort` or verifier exists. The
-  host composes only what it is given and fails closed otherwise. Verifier provider/process
-  independence is still unproven.
+- **Execution and verification.** The fixed `local.exec` path exists for Docker,
+  bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
+  intentionally unsupported. Verifier independence is enforced as a distinct configured
+  principal plus a separately executed command, but there is no signed verifier decision,
+  key rotation, or protection against a compromised host process. Bubblewrap lacks cgroup
+  accounting/seccomp and is suitable only for trusted local commands.
 - **Live integrations.** Vault, Gmail, and Notion readers are composed but untested against
   real services; per-note vault authorization remains collection-level.
-- **Founder experience.** The API is usable; there is no UI, and no mission/objective routes
-  beyond Founder search and the Task/Workflow reads listed above.
+- **Founder experience.** The API is usable; there is no UI, and no Mission/Objective
+  routes beyond Founder search and the Task/Workflow reads listed above. ADR-0017 records
+  why Mission cannot be invented casually.

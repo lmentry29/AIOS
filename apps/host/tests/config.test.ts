@@ -73,6 +73,44 @@ describe('host configuration', () => {
       .toThrow(HostConfigError);
   });
 
+  it('parses a fixed local execution and verification pair without allowing provider injection', () => {
+    const parsed = parseHostConfig(validConfig({
+      execution: {
+        workspace_directory: join(tmpdir(), 'aios-workspaces'),
+        agent_id: '11111111-1111-4111-8111-111111111111',
+        verifier_id: '22222222-2222-4222-8222-222222222222',
+        provider: 'docker',
+        image: 'node:22-alpine',
+      },
+    }));
+    expect(parsed.execution).toMatchObject({
+      provider: 'docker',
+      image: 'node:22-alpine',
+      default_timeout_ms: 60_000,
+      max_output_bytes: 64 * 1024,
+    });
+  });
+
+  it('rejects an execution verifier that is also the executor and unsafe provider wiring', () => {
+    const base = {
+      workspace_directory: join(tmpdir(), 'aios-workspaces'),
+      agent_id: '11111111-1111-4111-8111-111111111111',
+      verifier_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'docker',
+      image: 'node:22-alpine',
+    };
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, verifier_id: base.agent_id } })))
+      .toThrow(/must differ/);
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, image: undefined } })))
+      .toThrow(/image/);
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, image: 'node:22-alpine; rm -rf /' } })))
+      .toThrow(/image/);
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, provider: 'process' } })))
+      .toThrow(/provider/);
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, image: undefined, provider: 'bubblewrap' } })))
+      .not.toThrow();
+  });
+
   it('refuses to bind anything other than a literal loopback address', () => {
     expect(() => parseHostConfig(validConfig({ bind: { host: '0.0.0.0', port: 4780 } })))
       .toThrow(/loopback/);

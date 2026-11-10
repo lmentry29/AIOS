@@ -58,6 +58,35 @@ export interface HostConfig {
   bootstrap_principal_id: string;
   sessions: HostSessionEntry[];
   request_body_limit_bytes: number;
+  /**
+   * Optional fixed local-command execution (ADR-0019). When absent, dispatch is
+   * disabled and `/health` reports it as unavailable. Presence does not guarantee
+   * dispatch: the configured isolation provider must also pass its runtime checks.
+   */
+  execution?: HostExecutionConfig;
+}
+
+export type SandboxProviderKind = 'auto' | 'bubblewrap' | 'seatbelt' | 'docker';
+
+/**
+ * Fixed execution and verification wiring. Both commands are conceptually the same
+ * `local.exec` capability but use distinct Agent/verifier principals and distinct
+ * sandbox invocations. No task may select a provider or image at dispatch time.
+ */
+export interface HostExecutionConfig {
+  /** Absolute owner-only parent for per-run workspaces. Never the Obsidian vault. */
+  workspace_directory: string;
+  /** Agent UUID recorded as the executor of every command run by this host. */
+  agent_id: string;
+  /** Independent verifier UUID; must differ from `agent_id`. */
+  verifier_id: string;
+  provider: SandboxProviderKind;
+  /** Container image used by the Docker provider. Required for `docker`. */
+  image?: string;
+  /** Upper bound applied to every execution and verification command. */
+  default_timeout_ms: number;
+  /** Upper bound applied to captured stdout and stderr per stream. */
+  max_output_bytes: number;
 }
 
 const DEFAULT_BODY_LIMIT = 256 * 1024;
@@ -86,6 +115,7 @@ const TOP_LEVEL_KEYS = new Set([
   'bootstrap_principal_id',
   'sessions',
   'request_body_limit_bytes',
+  'execution',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,6 +167,81 @@ function parseBind(raw: unknown): HostConfig['bind'] {
     fail('bind.port', 'must be an integer between 0 and 65535');
   }
   return { host: raw.host as HostConfig['bind']['host'], port: raw.port };
+}
+
+function parseExecution(raw: unknown): HostExecutionConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) fail('execution', 'must be an object');
+  assertKnownKeys(raw, new Set([
+    'workspace_directory',
+    'agent_id',
+    'verifier_id',
+    'provider',
+    'image',
+    'default_timeout_ms',
+    'max_output_bytes',
+  ]), 'execution');
+
+  const workspaceDirectory = requireString(
+    raw.workspace_directory,
+    'execution.workspace_directory',
+    4096,
+  );
+  if (!isAbsolute(workspaceDirectory)) {
+    fail('execution.workspace_directory', 'must be an absolute path');
+  }
+  const agentId = requireUuid(raw.agent_id, 'execution.agent_id');
+  const verifierId = requireUuid(raw.verifier_id, 'execution.verifier_id');
+  if (agentId === verifierId) {
+    fail('execution.verifier_id', 'must differ from execution.agent_id');
+  }
+  if (raw.provider !== 'auto' && raw.provider !== 'bubblewrap'
+    && raw.provider !== 'seatbelt' && raw.provider !== 'docker') {
+    fail('execution.provider', 'must be auto, bubblewrap, seatbelt, or docker');
+  }
+  const provider = raw.provider;
+
+  let image: string | undefined;
+  if (raw.image !== undefined) {
+    image = requireString(raw.image, 'execution.image', 255);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(image)) {
+      fail('execution.image', 'must be a container image reference without whitespace or shell metacharacters');
+    }
+  }
+  if (provider === 'docker' && image === undefined) {
+    fail('execution.image', 'is required when provider is docker');
+  }
+  if (provider !== 'docker' && image !== undefined) {
+    fail('execution.image', 'is only valid with provider docker');
+  }
+
+  let defaultTimeoutMs = 60_000;
+  if (raw.default_timeout_ms !== undefined) {
+    const value = raw.default_timeout_ms;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 100 || value > 300_000) {
+      fail('execution.default_timeout_ms', 'must be an integer between 100 and 300000');
+    }
+    defaultTimeoutMs = value;
+  }
+
+  let maxOutputBytes = 64 * 1024;
+  if (raw.max_output_bytes !== undefined) {
+    const value = raw.max_output_bytes;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1024 || value > 1_048_576) {
+      fail('execution.max_output_bytes', 'must be an integer between 1024 and 1048576');
+    }
+    maxOutputBytes = value;
+  }
+
+  return {
+    workspace_directory: resolve(workspaceDirectory),
+    agent_id: agentId,
+    verifier_id: verifierId,
+    provider,
+    ...(image === undefined ? {} : { image }),
+    default_timeout_ms: defaultTimeoutMs,
+    max_output_bytes: maxOutputBytes,
+  };
 }
 
 function parseObsidian(raw: unknown): HostConfig['obsidian'] {
@@ -249,6 +354,7 @@ export function parseHostConfig(raw: unknown): HostConfig {
   }
 
   const obsidian = parseObsidian(raw.obsidian);
+  const execution = parseExecution(raw.execution);
 
   if (!isHumanPrincipal(raw.bootstrap_principal_id)) {
     fail('bootstrap_principal_id', 'must be a human principal');
@@ -281,6 +387,7 @@ export function parseHostConfig(raw: unknown): HostConfig {
     bootstrap_principal_id: bootstrapPrincipalId,
     sessions,
     request_body_limit_bytes: bodyLimit,
+    ...(execution === undefined ? {} : { execution }),
   };
 }
 

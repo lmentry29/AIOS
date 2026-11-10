@@ -10,8 +10,12 @@ into build order, milestones, and Definition of Done per phase.
 
 AIOS's architecture and engineering-readiness planning are complete and certified
 (`docs/process/v1-final-certification-report.md`). This repository is where that
-architecture becomes running code. As of repository initialization, **no package contains
-implementation logic** — everything under `packages/*/src/` is a scaffold.
+architecture becomes running code. The nine `packages/*` now contain domain
+implementations at different maturity levels, and `apps/host` is the trusted local
+composition root. Maturity is uneven: most operational stores and integrations still have
+in-memory or test-only adapters, and the host has no UI. Read
+`docs/process/project-state.md` and the ADR index; do not infer production readiness from a
+passing build.
 
 ## Rules that apply to every change
 
@@ -40,12 +44,14 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
    registry are test/development components, not a production security boundary. Do not
    change authorization semantics without an amending ADR, and do not claim production
    security until the host identity and durable policy/audit implementations exist.
-7. **Plugin/Adapter execution remains deferred.** ADR-0012 is Proposed and establishes
-   capability mediation as the intended requester-facing principle, but its replacement
-   runtime contract and Capability Registry schema are follow-on work. The first real
-   adapter integration is the reopening trigger for the deferred Plugin/Adapter execution
-   model. Do not invent an invocation model or expose provider selection to requesters
-   without the required architecture decision.
+7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
+   ADR-0012 is Proposed and establishes capability mediation as the intended
+   requester-facing principle, but its replacement runtime contract and Capability
+   Registry schema are follow-on work. ADR-0019 accepts one narrow implemented exception:
+   the fixed `local.exec` command contract in `apps/host/src/execution/`. That exception
+   does not authorize provider selection, model invocation, plugin discovery, or arbitrary
+   host execution. Do not generalize it without the required architecture decision and
+   sandbox/secret design.
 8. **`schemas/generated/**` is generated, never hand-edited.** Edit
    `packages/core/src/schema/*.ts` (Zod) instead and regenerate.
 9. **Commit convention:** Conventional Commits, plus an AI-attribution trailer on
@@ -57,11 +63,23 @@ implementation logic** — everything under `packages/*/src/` is a scaffold.
     Orchestration Kernel may mark a Task complete only after an independent verifier
     accepts the result and evidence. Never allow an executor to self-attest.
 12. **Founder Intelligence persists in the Obsidian vault.** ADR-0014 is Accepted: do not add a separate Founder Intelligence database. AIOS validates managed records against canonical schemas. Vault integration is read-and-propose by default; permanent Memory writes require explicit human review and authorization. Do not hydrate, migrate, rename, rewrite, or normalize existing notes without a reviewed proposal and a separate human-approved write action.
-13. **In-memory adapters are not production persistence.** Object, Task, Workflow,
-    evidence, learning, policy, and audit stores currently include in-memory
-    implementations for tests/development. Production use requires durable storage,
-    transactions, recovery, trusted identity, protected secrets, sandboxed execution,
-    and operational controls. Keep these limitations explicit in code and documentation.
+13. **Know which stores are durable and which are not.** Task, Workflow, Artifact/evidence,
+    and dispatch-run state are durable through the hash-chained operational journal
+    (ADR-0015), with idempotency, leases, and startup recovery. Learning records, the
+    canonical object store, and some policy/evidence paths still have in-memory or
+    test/development implementations. The journal is not compacted, has no migration
+    framework, and is single-process. Production use still requires protected secrets,
+    a completed sandbox/provider matrix, operational controls, and independent review.
+    Keep these limitations explicit in code and documentation.
+14. **No unrestricted host execution.** A task may run only through the fixed
+    `local.exec` contract and a provider that passes its own availability probe
+    (ADR-0019). A bare child process, shell string, test double, or fallback when the
+    provider is unavailable is a security defect, not a convenience. Evidence must be
+    bounded and hashed; never copy untrusted stdout/stderr into the journal or HTTP
+    responses, and never pass provider credentials through a Task environment.
+15. **UI is not a trust boundary.** `apps/host` rejects every `Origin` today. Do not add
+    CORS, browser token storage, or a UI route that bypasses session identity without an
+    accepted ADR covering origin, CSRF, and cookie behavior (ADR-0016).
 
 ## Where to file disagreement
 
