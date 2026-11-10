@@ -129,6 +129,61 @@ terminal in the required state, so even a direct concurrent call cannot append a
 from a `running` predecessor. The host is single-process by ADR-0015; cross-process redrives
 are not supported.
 
+### 6. Read-only attempt inspection
+
+Operators can inspect the chain without redriving it:
+
+- `GET /v1/tasks/:id/attempts` requires an exact `read_status` grant on the Task.
+- `GET /v1/workflows/:id/attempts` requires `read_status` on the Workflow and on every
+  declared step Task.
+
+Both routes authorize before resource lookup. Missing credentials are 401, denied grants are
+403, and an unknown identifier is 404 `not_found` once the caller holds the relevant grant.
+Malformed identifiers keep the existing 400 `invalid_identifier` behavior.
+
+The response is derived directly from the durable ledger's ordered attempts
+(`listForTask()`), not from a second store:
+
+```json
+{
+  "task_id": "...",
+  "attempts": [
+    {
+      "task_id": "...",
+      "execution_id": "...",
+      "attempt": 1,
+      "attempt_kind": "initial",
+      "state": "interrupted",
+      "predecessor_execution_ids": []
+    },
+    {
+      "task_id": "...",
+      "execution_id": "...",
+      "attempt": 2,
+      "attempt_kind": "resume",
+      "state": "interrupted",
+      "previous_execution_id": "<attempt 1>",
+      "predecessor_execution_ids": ["<attempt 1>"]
+    }
+  ]
+}
+```
+
+`attempts` is oldest-first and `attempt` is contiguous from 1. `previous_execution_id` is
+present only for `resume`/`retry`; `predecessor_execution_ids` is the complete ancestor chain
+oldest-first, ending with the immediate predecessor. A Workflow response is
+`{ workflow_id, tasks: [{ task_id, attempts }] }` in declared step order. The kernel validates
+contiguity and every predecessor link and fails closed if the chain is missing, mismatched,
+or cyclic.
+
+Inspection is read-only by construction: it calls only `getTask`/`getWorkflow`, the
+authorization evaluator, and the ledger's ordered read. It never transitions lifecycle state,
+appends an attempt, or invokes an executor/verifier. Like every authorized read under
+ADR-0013, it records the authorization decision in the policy audit chain; that is separate
+from the operational journal. The test reads a three-generation chain through both routes,
+asserts the operational journal is byte-identical before and after (SHA-256), reopens the
+persisted ledger, and verifies every attempt and revision is unchanged.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
@@ -146,6 +201,8 @@ are not supported.
   state use the latest attempt; audit readers can see every terminal predecessor.
 - A chain may contain more than two attempts. Each attempt's predecessor is the immediately
   preceding attempt, and all earlier records remain immutable as later generations append.
+- Attempt history is operator-auditable without a resume/retry attempt. The read-only view is
+  derived from the same ledger and cannot diverge from redrive eligibility.
 - Concurrent duplicate redrives fail closed with a typed 409; they do not queue and do not
   produce a parallel attempt or sandbox. Retrying after the first redrive has failed is a
   new, separately authorized operation, not a duplicate of the first request.
@@ -193,7 +250,13 @@ composition where possible:
 - startup with interrupted work performs reconciliation only and starts no sandbox;
 - cancellation of a resumed attempt still reaches the provider and cannot be overwritten by
   a late result; both earlier attempts stay immutable and an explicit retry appends a third
-  attempt.
+  attempt;
+- both inspection routes return a three-generation chain with all generations in order,
+  correct kinds, monotonic numbers, immediate links, and oldest-first predecessor chains;
+- single-attempt and failed-then-retried chains are returned correctly;
+- inspection leaves the operational journal byte-identical, appends no attempt, and leaves
+  every attempt state and revision unchanged after reopening the persisted ledger;
+- unauthenticated, unauthorized, and unknown-id inspection reuses 401/403/404 contracts.
 
 In the verification environment, `docker info` cannot reach a daemon, and `bwrap`, `podman`,
 and `sandbox-exec` are absent. Multi-generation resume and retry are therefore proven against

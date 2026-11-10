@@ -144,7 +144,10 @@ vault notes as operational storage.
   be interrupted and resumed again, and every successor links to its immediate predecessor.
   A duplicate concurrent resume/retry for the same Workflow or Task returns a typed 409
   `execution_conflict` before any second attempt or sandbox start; an in-process kernel claim
-  and the ledger's terminal-predecessor check both enforce it.
+  and the ledger's terminal-predecessor check both enforce it. Attempt history is available
+  read-only at `GET /v1/tasks/:id/attempts` and `GET /v1/workflows/:id/attempts` under exact
+  `read_status` grants; it returns the ledger's attempts oldest-first with immediate and
+  full predecessor links, and never appends, transitions, or executes.
 - **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; running
   Task executions are also marked `interrupted`; and their `active`/`monitored` Workflows and
   Tasks are transitioned to `suspended`. Interrupted work is never re-executed or completed
@@ -169,6 +172,8 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/v1/workflows?limit=` | Lists only Workflows on which the session has `read_status` |
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
+| GET | `/v1/tasks/:id/attempts` | Requires `read_status`; ordered attempts plus oldest-first predecessor chain; read-only |
+| GET | `/v1/workflows/:id/attempts` | Requires `read_status` on the Workflow and each step Task; per-Task chains in step order |
 | POST | `/v1/tasks/:id/cancel` | Requires exact `cancel`; optional bounded `reason`; 202, or 200 if already cancelled |
 | POST | `/v1/workflows/:id/resume` | Requires exact `resume` on the Workflow and each interrupted Task; completed Tasks are skipped |
 | POST | `/v1/tasks/:id/resume` | Requires exact `resume`; only an `interrupted` latest attempt; 200 idempotent when already completed |
@@ -264,6 +269,13 @@ single-process lock.
   and producing exactly one appended attempt and one sandbox start;
 - cancellation of a resumed attempt aborting the sandbox and leaving attempts 1 and 2
   immutable, followed by an explicit retry that appends attempt 3 and completes the Task;
+- Task and Workflow attempt inspection returning a persisted three-generation chain in order
+  with correct kinds, monotonic numbers, immediate links, and oldest-first predecessor
+  chains, plus single-attempt and failed-then-retried histories;
+- the same inspection leaving the operational journal byte-identical (SHA-256), appending no
+  attempt, and preserving every attempt state/revision after reopening the persisted ledger;
+- attempt inspection returning the existing 401, 403, and 404 contracts for missing,
+  unauthorized, and unknown callers;
 - a cancelled attempt refusing `resume` with 409 while an authorized `retry` appends a
   distinct attempt and preserves the cancelled record;
 - a failed attempt blocking Workflow resume until its Task is explicitly retried, then a

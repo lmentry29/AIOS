@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, attempt-chain hardening slice).
+Last updated: 2026-11-10 (Freebuff Cloud session, read-only attempt-inspection slice).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `a816fe3` (`fix(host): harden multi-generation resume and duplicate redrives`)
+- Verified code head: `0b01cec` (`feat(host): expose read-only attempt history`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `0b01cec` — read-only Task/Workflow attempt-chain inspection
   - `a816fe3` — multi-generation attempt chains, no-write reconciliation, duplicate redrive suppression
   - `ce876cf` — authorized resume/retry over append-only attempts
   - `eea8b2c` — verified Task execution lifecycle record
@@ -36,8 +37,8 @@ Last updated: 2026-11-10 (Freebuff Cloud session, attempt-chain hardening slice)
 - Docker CLI is present but the daemon is not reachable to this user; `bwrap`, `podman`, and
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
-- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `c4a26cd`. Checks for
-  `a816fe3` and the docs tip are observed after the push; this handoff does not assert them.
+- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `4b1dc5a`. Checks for
+  `0b01cec` and the docs tip are observed after the push; this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -206,7 +207,45 @@ crashes and duplicate requests.
   later resume returns 429 before any lifecycle or attempt write; after release, generation 3
   completes.
 
-## Verification actually executed at `a816fe3`
+## Completed — read-only attempt inspection (`0b01cec`)
+
+Operators can audit the full chain without redriving it.
+
+### Kernel projection
+
+- `TaskExecutionStatePort` exposes `history(taskId)` alongside `latest()`. The host maps it
+  directly to `ExecutionLedger.listForTask()`; there is no parallel attempt store.
+- `getTaskAttempts(taskId, actor)` and `getWorkflowAttempts(workflowId, actor)` return every
+  generation oldest-first with `execution_id`, `attempt`, `attempt_kind`, `state`,
+  `previous_execution_id` when present, and an oldest-first
+  `predecessor_execution_ids` chain ending at the immediate predecessor.
+- The projection validates contiguity and every predecessor link, failing closed on a
+  missing, mismatched, or cyclic chain. It never writes lifecycle state, appends an attempt,
+  or invokes an executor/verifier.
+- Workflow history requires `read_status` on the Workflow and on every step Task, in declared
+  step order. Task history requires `read_status` on the Task. Authorization precedes lookup.
+
+### HTTP surface
+
+- `GET /v1/tasks/:id/attempts` returns `{ task_id, attempts }`.
+- `GET /v1/workflows/:id/attempts` returns
+  `{ workflow_id, tasks: [{ task_id, attempts }] }` in declared step order.
+- Existing 401/403/404 contracts are reused; malformed UUIDs keep 400
+  `invalid_identifier`.
+- Like every authorized read, inspection records the authorization decision in the policy
+  audit chain. That is separate from the operational journal, which is unchanged.
+
+### Proof
+
+- Both routes return a persisted three-generation chain with all generations, correct kinds,
+  monotonic numbers, immediate links, and oldest-first predecessor chains.
+- Single-attempt and failed-then-retried chains return correctly.
+- The operational journal is byte-identical (SHA-256) before and after inspection, no attempt
+  is appended, and every attempt state/revision survives reopening the persisted ledger.
+- 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
+  Workflow.
+
+## Verification actually executed at `0b01cec`
 
 Local at commit time; CI is observed after the push, not asserted here.
 
@@ -223,19 +262,19 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **75 passed** (7 files) |
+| `@aios/host` | **78 passed** (7 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
 | `@aios/objects` | 32 passed |
 | `@aios/founder` | 50 passed |
-| `@aios/orchestration` | 26 passed |
+| `@aios/orchestration` | 27 passed |
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 15 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **454 passed** |
+| **Total** | **458 passed** |
 
 Schema regeneration produced no diff.
 
@@ -280,6 +319,16 @@ Schema regeneration produced no diff.
   `resume` only accepts `interrupted`, `retry` follows `failed`/`cancelled`, and a
   non-contiguous replay fails closed. A resumed attempt is interrupted once by reconciliation;
   a second pass creates no attempt and appends no journal bytes.
+- `http-host.test.ts` — Task and Workflow attempt inspection returns a persisted
+  three-generation chain in order with correct kinds, monotonic numbers, immediate links, and
+  oldest-first predecessor chains; single-attempt and failed-then-retried histories also
+  return correctly.
+- `http-host.test.ts` — inspection leaves the operational journal byte-identical (SHA-256),
+  appends no attempt, leaves every state/revision unchanged, and reopens to the same ledger.
+- `http-host.test.ts` — attempt inspection reuses 401 for no session, 403 for a missing
+  `read_status` grant, and 404 for a granted-but-unknown Task or Workflow.
+- `orchestration-kernel.test.ts` — the kernel projection returns the full chain without
+  executing or verifying and rejects an unknown Task after authorization.
 
 ### Security tests / evidence labels
 
@@ -288,6 +337,10 @@ Schema regeneration produced no diff.
   exit, executor-result digest binding, host 503/422 behavior, composed HTTP dispatch,
   authorized/denied cancellation, resume/retry authorization and lifecycle, real child
   SIGKILL, cap rejection, and journal-level crash reconciliation.
+- **Attempt-inspection evidence label:** inspection is read-only against the operational
+  journal and execution ledger; the test asserts the operational journal is byte-identical.
+  Authorization decisions still append to the separate policy audit chain under ADR-0013, so
+  the test does not claim that no audit write occurs.
 - **Resume/retry evidence label:** every resume/retry HTTP proof composes the real
   `LocalCommandExecutor`/`LocalCommandVerifier` around the labelled `stub-container` sandbox.
   It proves authorization-before-lookup, multi-generation attempt identity, no-write
@@ -353,13 +406,15 @@ Schema regeneration produced no diff.
 - Attempt chains are not capped at two; every generation links to its immediate predecessor,
   repeated reconciliation is a no-op, and concurrent duplicate redrives return 409 without
   appending a second attempt or starting a second sandbox.
+- Attempt history is a read-only projection of the execution ledger under exact `read_status`;
+  it returns ordered generations with predecessor chains and never redrives.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
 
 ## Next concrete work
 
-1. Observe CI on `a816fe3` and the docs tip; push only
+1. Observe CI on `0b01cec` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.
