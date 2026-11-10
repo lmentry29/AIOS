@@ -236,6 +236,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         },
         executionState: {
           latest: async (taskId) => operational?.executions.getForTask(taskId),
+          history: async (taskId) => operational?.executions.listForTask(taskId) ?? [],
         },
       },
       workflowStore,

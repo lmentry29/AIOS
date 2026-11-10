@@ -7,6 +7,7 @@ import {
   OrchestrationKernel,
   type AgentExecutionPort,
   type AuthorizationPort,
+  type TaskExecutionObservation,
 } from '../src/index.js';
 
 function task() {
@@ -274,5 +275,87 @@ describe('OrchestrationKernel', () => {
       /not completed/,
     );
     expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
+  it('returns the full attempt history without executing or mutating work', async () => {
+    const h = harness();
+    const current = h.tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    const firstId = randomUUID();
+    const secondId = randomUUID();
+    const thirdId = randomUUID();
+    const observations: TaskExecutionObservation[] = [
+      {
+        execution_id: firstId,
+        task_id: current.entity_id,
+        agent_id: h.agentId,
+        state: 'interrupted',
+        attempt: 1,
+        attempt_kind: 'initial',
+      },
+      {
+        execution_id: secondId,
+        task_id: current.entity_id,
+        agent_id: h.agentId,
+        state: 'interrupted',
+        attempt: 2,
+        attempt_kind: 'resume',
+        previous_execution_id: firstId,
+      },
+      {
+        execution_id: thirdId,
+        task_id: current.entity_id,
+        agent_id: h.agentId,
+        state: 'completed',
+        attempt: 3,
+        attempt_kind: 'resume',
+        previous_execution_id: secondId,
+      },
+    ];
+    const kernel = new OrchestrationKernel(h.tasks, {
+      authorization: h.authorization,
+      execution: h.execution,
+      verification: h.verification,
+      resolveAgent: async () => h.agentId,
+      executionState: {
+        latest: async (taskId) => observations.filter((item) => item.task_id === taskId).at(-1),
+        history: async (taskId) => observations.filter((item) => item.task_id === taskId),
+      },
+    });
+    await kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+    const lifecycleBefore = h.tasks.getTask(current.entity_id)?.lifecycle_state;
+
+    const taskHistory = await kernel.getTaskAttempts(current.entity_id, 'human:founder');
+    expect(taskHistory.task_id).toBe(current.entity_id);
+    expect(taskHistory.attempts.map((item) => [item.attempt, item.attempt_kind, item.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'interrupted'],
+      [3, 'resume', 'completed'],
+    ]);
+    expect(taskHistory.attempts[0]).toMatchObject({
+      execution_id: firstId,
+      predecessor_execution_ids: [],
+    });
+    expect(taskHistory.attempts[0]?.previous_execution_id).toBeUndefined();
+    expect(taskHistory.attempts[1]).toMatchObject({
+      execution_id: secondId,
+      previous_execution_id: firstId,
+      predecessor_execution_ids: [firstId],
+    });
+    expect(taskHistory.attempts[2]).toMatchObject({
+      execution_id: thirdId,
+      previous_execution_id: secondId,
+      predecessor_execution_ids: [firstId, secondId],
+    });
+
+    expect(await kernel.getWorkflowAttempts(wf.entity_id, 'human:founder')).toEqual({
+      workflow_id: wf.entity_id,
+      tasks: [taskHistory],
+    });
+    expect(h.tasks.getTask(current.entity_id)?.lifecycle_state).toBe(lifecycleBefore);
+    expect(h.execution.executeTask).not.toHaveBeenCalled();
+    expect(h.verification.verify).not.toHaveBeenCalled();
+
+    await expect(kernel.getTaskAttempts(randomUUID(), 'human:founder')).rejects.toThrow(/was not found/);
   });
 });

@@ -41,7 +41,7 @@ export interface ExecutionAttemptRequest {
   previous_execution_id: string;
 }
 
-/** Read-only view of the latest durable execution attempt for a Task. */
+/** Read-only view of one durable execution attempt for a Task. */
 export interface TaskExecutionObservation {
   execution_id: string;
   task_id: string;
@@ -54,6 +54,8 @@ export interface TaskExecutionObservation {
 
 export interface TaskExecutionStatePort {
   latest(taskId: string): Promise<TaskExecutionObservation | undefined>;
+  /** Full append-only attempt history, oldest first. */
+  history(taskId: string): Promise<TaskExecutionObservation[]>;
 }
 
 export interface TaskAttemptSummary {
@@ -83,6 +85,23 @@ export interface TaskRetryResult {
   lifecycle_state: LifecycleState;
   retried: boolean;
   execution?: TaskAttemptSummary;
+}
+
+/** One generation in the read-only attempt audit view. */
+export interface TaskAttemptHistoryEntry extends TaskAttemptSummary {
+  previous_execution_id?: string;
+  /** Every ancestor, oldest first, ending with the immediate predecessor. */
+  predecessor_execution_ids: string[];
+}
+
+export interface TaskAttemptHistory {
+  task_id: string;
+  attempts: TaskAttemptHistoryEntry[];
+}
+
+export interface WorkflowAttemptHistory {
+  workflow_id: string;
+  tasks: TaskAttemptHistory[];
 }
 
 type WorkflowResumePlanItem =
@@ -760,6 +779,66 @@ export class OrchestrationKernel {
     return this.options.executionState?.latest(taskId);
   }
 
+  /**
+   * Projects the ledger's ordered attempts into the public audit shape and verifies the
+   * chain before returning it. A broken or ambiguous chain fails closed rather than being
+   * presented as authoritative history.
+   */
+  private async readAttemptHistory(taskId: string): Promise<TaskAttemptHistoryEntry[]> {
+    if (!this.options.executionState) {
+      throw new OrchestrationError('Execution attempt history is not configured.');
+    }
+    const observations = await this.options.executionState.history(taskId);
+    const byExecutionId = new Map(observations.map((item) => [item.execution_id, item]));
+    return observations.map((observation, index) => {
+      if (observation.task_id !== taskId) {
+        throw new OrchestrationError('Execution attempt history returned a record for another Task.');
+      }
+      if (observation.attempt !== index + 1) {
+        throw new OrchestrationError('Execution attempt history is not contiguous.');
+      }
+      if (index === 0) {
+        if (observation.attempt_kind !== 'initial' || observation.previous_execution_id !== undefined) {
+          throw new OrchestrationError('Execution attempt history does not start with the initial attempt.');
+        }
+      } else if (observation.attempt_kind === 'initial'
+        || observation.previous_execution_id !== observations[index - 1]?.execution_id) {
+        throw new OrchestrationError('Execution attempt history has a mismatched predecessor.');
+      }
+
+      const predecessorExecutionIds: string[] = [];
+      const visited = new Set<string>();
+      let previousId = observation.previous_execution_id;
+      while (previousId !== undefined) {
+        if (visited.has(previousId)) {
+          throw new OrchestrationError('Execution attempt history contains a predecessor cycle.');
+        }
+        visited.add(previousId);
+        const previous = byExecutionId.get(previousId);
+        if (!previous) {
+          throw new OrchestrationError('Execution attempt history is missing a predecessor record.');
+        }
+        predecessorExecutionIds.unshift(previousId);
+        previousId = previous.previous_execution_id;
+      }
+      if (predecessorExecutionIds.length !== index) {
+        throw new OrchestrationError('Execution attempt history predecessor chain is incomplete.');
+      }
+
+      return {
+        task_id: observation.task_id,
+        execution_id: observation.execution_id,
+        attempt: observation.attempt,
+        attempt_kind: observation.attempt_kind,
+        state: observation.state,
+        ...(observation.previous_execution_id === undefined
+          ? {}
+          : { previous_execution_id: observation.previous_execution_id }),
+        predecessor_execution_ids: predecessorExecutionIds,
+      };
+    });
+  }
+
   private async assertAgentExecutable(agentId: string, task: TaskEntity): Promise<void> {
     if (!isEntityIdentifier(agentId)) {
       throw new OrchestrationError('Agent resolver returned an invalid Agent identifier.');
@@ -848,6 +927,64 @@ export class OrchestrationKernel {
       throw new OrchestrationError('Workflow read denied by authorization policy.');
     }
     return workflow;
+  }
+
+  /**
+   * Read-only attempt audit for one Task (ADR-0022).
+   *
+   * Authorization is the same exact `read_status` grant used by the HTTP read surface and
+   * precedes resource lookup. The returned view is derived only from the durable ledger's
+   * ordered attempt history; this method never transitions, appends, or starts execution.
+   */
+  async getTaskAttempts(taskId: string, actorId: string): Promise<TaskAttemptHistory> {
+    if (!isEntityIdentifier(taskId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Task attempt reads require valid Task and actor identifiers.');
+    }
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action: 'read_status',
+      resource_id: taskId,
+    }))) {
+      throw new OrchestrationError('Task attempt read denied by authorization policy.');
+    }
+    const task = this.tasks.getTask(taskId);
+    if (!task) throw new OrchestrationError(`Task "${taskId}" was not found.`);
+    return {
+      task_id: task.entity_id,
+      attempts: await this.readAttemptHistory(task.entity_id),
+    };
+  }
+
+  /**
+   * Read-only attempt audit for every Task in a Workflow's declared step order.
+   *
+   * Requires `read_status` on the Workflow and on each step Task. A Workflow read never
+   * exposes a Task's attempt history to a caller without that Task's own read grant.
+   */
+  async getWorkflowAttempts(workflowId: string, actorId: string): Promise<WorkflowAttemptHistory> {
+    if (!isEntityIdentifier(workflowId) || !isActorIdentifier(actorId)) {
+      throw new OrchestrationError('Workflow attempt reads require valid Workflow and actor identifiers.');
+    }
+    const workflow = await this.getWorkflow(workflowId, actorId);
+    const tasks: TaskAttemptHistory[] = [];
+    for (const taskId of workflow.steps) {
+      if (!(await this.options.authorization.authorize({
+        actor_id: actorId,
+        action: 'read_status',
+        resource_id: taskId,
+      }))) {
+        throw new OrchestrationError(
+          `Task attempt read denied by authorization policy for Task "${taskId}".`,
+        );
+      }
+      const task = this.tasks.getTask(taskId);
+      if (!task) throw new OrchestrationError(`Workflow step Task "${taskId}" was not found.`);
+      tasks.push({
+        task_id: task.entity_id,
+        attempts: await this.readAttemptHistory(task.entity_id),
+      });
+    }
+    return { workflow_id: workflow.entity_id, tasks };
   }
 
   async status(handle: WorkflowRunHandle, actorId: string): Promise<LifecycleState> {

@@ -469,6 +469,29 @@ function buildRoutes(runtime: HostRuntime): Route[] {
       },
     },
     {
+      pattern: /^\/v1\/tasks\/([^/]+)\/attempts$/,
+      allow: ['GET'],
+      handle: async ({ runtime: host, session }, params) => {
+        const taskId = uuidParam(params[1], 'taskId');
+        // Authorization precedes existence lookup, matching every other read route.
+        await requireAllowed(host, session, 'read_status', taskId);
+        const task = host.taskStore.getTask(taskId);
+        if (!task) throw new HostHttpError(404, 'not_found', 'Task was not found.');
+        return { status: 200, body: await host.kernel.getTaskAttempts(taskId, session.principal_id) };
+      },
+    },
+    {
+      pattern: /^\/v1\/workflows\/([^/]+)\/attempts$/,
+      allow: ['GET'],
+      handle: async ({ runtime: host, session }, params) => {
+        const workflowId = uuidParam(params[1], 'workflowId');
+        await requireAllowed(host, session, 'read_status', workflowId);
+        const workflow = host.workflowStore.get(workflowId);
+        if (!workflow) throw new HostHttpError(404, 'not_found', 'Workflow was not found.');
+        return { status: 200, body: await host.kernel.getWorkflowAttempts(workflowId, session.principal_id) };
+      },
+    },
+    {
       pattern: /^\/v1\/tasks\/([^/]+)\/cancel$/,
       allow: ['POST'],
       handle: async ({ runtime: host, session, req, readJson }, params) => {
