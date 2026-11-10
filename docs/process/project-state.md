@@ -40,8 +40,10 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
   findings ledger, and validation ledger. The CI `Security` workflow runs the live sandbox
   suite with `bubblewrap` installed, plus a tracked-file secret scan and a production
   dependency audit, under `contents: read`.
-- Open high finding F-002: the verifier does not yet recompute the executor's evidence
-  digest against the durable execution attempt. It is tracked, not silently accepted.
+- Independent verification is bound to the durable attempt: the verifier requires a
+  completed attempt, the recorded executor principal, and a matching result digest, and
+  records the execution ID and attempt in its decision evidence. Forged, unattempted, and
+  wrong-principal results are rejected before the verification command runs.
 
 ## Current package and application maturity
 
