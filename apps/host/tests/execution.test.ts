@@ -1,6 +1,10 @@
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TaskEntity } from '@aios/core';
 import { HostExecutionError, HostUnavailableError } from '../src/errors.js';
+import { createSandboxProvider } from '../src/execution/sandbox.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
@@ -81,6 +85,49 @@ describe('local command execution', () => {
       ],
     }))).rejects.toThrow(/at most one/);
     expect(sandbox.calls).toHaveLength(0);
+  });
+});
+
+describe('docker provider command construction', () => {
+  it('passes the isolation flags without a shell and keeps argv elements intact', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-fake-docker-'));
+    const argsFile = join(directory, 'args.txt');
+    const docker = join(directory, 'docker');
+    writeFileSync(docker, `#!/bin/sh
+if [ "$1" = "info" ]; then echo 'test-daemon'; exit 0; fi
+if [ "$1" = "image" ]; then echo 'sha256:test'; exit 0; fi
+if [ "$1" = "run" ]; then printf '%s\\n' "$@" > '${argsFile}'; exit 0; fi
+exit 1
+`);
+    chmodSync(docker, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${directory}${delimiter}${originalPath ?? ''}`;
+    try {
+      const provider = createSandboxProvider({ provider: 'docker', image: 'aios-test:local' });
+      await expect(provider.check()).resolves.toMatchObject({ available: true });
+      const workspace = mkdtempSync(join(directory, 'workspace-'));
+      const result = await provider.run({
+        argv: ['/bin/echo', 'hello world'],
+        workspaceDirectory: workspace,
+        cwd: '.',
+        timeoutMs: 1_000,
+        maxOutputBytes: 1024,
+        env: { LANG: 'C' },
+      });
+      expect(result.exitCode).toBe(0);
+      const args = readFileSync(argsFile, 'utf8').trim().split('\n');
+      expect(args).toContain('--network=none');
+      expect(args).toContain('--read-only');
+      expect(args).toContain('--cap-drop=ALL');
+      expect(args).toContain('--security-opt=no-new-privileges');
+      expect(args).toContain('--pids-limit=128');
+      expect(args).toContain('--memory=512m');
+      expect(args).toContain('--cpus=1');
+      expect(args).toContain('aios-test:local');
+      expect(args.slice(-2)).toEqual(['/bin/echo', 'hello world']);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 });
 

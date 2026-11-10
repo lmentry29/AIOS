@@ -79,6 +79,9 @@ first local slice and explicitly rejects a subprocess as a security boundary.
 
 `apps/host/tests/execution.test.ts` covers argv/no-shell, environment filtering, hashed
 evidence, non-zero/timeout/unavailable failure, cwd escape rejection, verifier independence,
-unexpected verification exit, and executor-result digest binding. `config.test.ts` rejects
-same-agent/verifier identities, unsafe images, and unsupported providers. `http-host.test.ts`
-proves dispatch remains 503 and lifecycle state unchanged when no adapters are configured.
+unexpected verification exit, executor-result digest binding, and Docker command
+construction via a fake CLI (flags/argv only; not real isolation). `config.test.ts` rejects
+same-agent/verifier identities, unsafe images, and unsupported providers.
+`http-host.test.ts` proves dispatch remains 503 and lifecycle state unchanged when no
+adapters are configured, and dispatches through the real executor/verifier pair with a
+clearly labelled test-only sandbox.

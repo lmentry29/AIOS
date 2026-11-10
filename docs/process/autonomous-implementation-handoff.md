@@ -91,7 +91,8 @@ pnpm -r run test
 Observed results after the execution slice and fixes:
 
 - build/typecheck/lint: pass (host lint passed after removing one unused type import).
-- `@aios/host`: **52 passed** (6 files), including 16 HTTP tests.
+- `@aios/host`: **53 passed** (6 files), including 16 HTTP tests and a fake-Docker CLI
+  test that verifies the exact isolation flags/argv without claiming real isolation.
 - `@aios/core`: **46 passed** (4 files).
 - `tests/conformance`: **107 passed** (6 files).
 - `tests/integration`: **43 passed** (6 files).
@@ -104,7 +105,8 @@ Observed results after the execution slice and fixes:
 
 - **Locally tested:** sandbox argv/no-shell, env filtering, hashed evidence, non-zero,
   timeout, unavailable provider, cwd escape, verifier independence, unexpected verifier
-  exit, executor-result digest binding, host 503/422 behavior, composed HTTP dispatch.
+  exit, executor-result digest binding, host 503/422 behavior, composed HTTP dispatch, and
+  Docker command construction via a fake CLI.
 - **Not integration tested here:** any real Docker, bubblewrap, or Seatbelt invocation. The
   daemon/tools are unavailable in this workspace.
 - **Not live-provider verified:** Obsidian++, Gmail, Notion, GitHub, or any model provider.
