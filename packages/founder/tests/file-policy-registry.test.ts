@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AccessPolicy } from '../src/authorization.js';
-import { AuthorizationService } from '../src/authorization.js';
+import { AuthorizationService, PolicyAdministrationService } from '../src/authorization.js';
 import { FilePolicyRegistry, FilePolicyRegistryError } from '../src/file-policy-registry.js';
 
 function setup() {
@@ -67,11 +67,12 @@ describe('FilePolicyRegistry', () => {
     const h = setup();
     const registry = new FilePolicyRegistry({ filePath: h.filePath });
     try {
-      await expect(registry.publish(h.policy, 'human:attacker')).rejects.toThrow(/human administrator/);
-      await registry.publish(h.policy, 'human:founder');
-      await expect(registry.publish(h.policy, 'human:founder')).rejects.toThrow(/immutable/);
-      await expect(registry.attach(randomUUID(), randomUUID(), 'human:founder')).rejects.toThrow(/unpublished policy/);
-      await expect(registry.revoke(h.resourceId, 'human:founder')).rejects.toThrow(/no attached policy/);
+      const admin = new PolicyAdministrationService('human:founder', registry, registry);
+      await expect(admin.publish(h.policy, 'human:attacker')).rejects.toThrow(/bootstrap principal/);
+      await admin.publish(h.policy, 'human:founder');
+      await expect(admin.publish(h.policy, 'human:founder')).rejects.toThrow(/immutable/);
+      await expect(admin.attach(h.resourceId, randomUUID(), 'human:founder')).rejects.toThrow(/missing, mismatched, or invalid/);
+      await expect(admin.revoke(h.resourceId, 'human:founder')).rejects.toThrow(/no attached policy/);
     } finally {
       registry.close();
       rmSync(h.directory, { recursive: true, force: true });
