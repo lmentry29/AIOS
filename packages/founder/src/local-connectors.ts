@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
 import type { FounderAuthorizationPort } from './index.js';
 import { vaultEvidenceSourceId } from './obsidian-evidence.js';
 
@@ -28,6 +27,7 @@ export interface GmailEvidenceRecord {
 export interface NotionApplicationEvidenceRecord {
   source_id: string;
   source_type: 'notion';
+  provider_id: string;
   position: string;
   company: string;
   status: string;
@@ -164,8 +164,9 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
     return payload.results.map((item, index): NotionApplicationEvidenceRecord => {
       if (!isRecord(item)) throw new LocalConnectorEvidenceError('Notion connector returned an invalid application record.');
       return Object.freeze({
-        source_id: stableSourceId(this.notionResourceId, `notion/application/${index}/${requiredText(item.position, 'position', 500)}/${requiredText(item.company, 'company', 500)}`),
+        source_id: stableSourceId(this.notionResourceId, `notion/application/${requiredText(item.id, 'page ID', 64)}`),
         source_type: 'notion',
+        provider_id: requiredText(item.id, 'page ID', 64),
         position: requiredText(item.position, 'position', 500),
         company: requiredText(item.company, 'company', 500),
         status: requiredText(item.status, 'status', 128),
