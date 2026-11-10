@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, permanent Memory approval binding).
+Last updated: 2026-11-10 (Freebuff Cloud session, durable authorization decision audit).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `503cefb` (`feat(learning): require human approval for permanent Memory writes`)
+- Verified code head: `15ff877` (`feat(host): journal every authorization decision with request correlation`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `15ff877` — durable authorization decision audit with request correlation
   - `503cefb` — human-approved, durable permanent Memory binding
   - `05769e1` — verifier-attributed, persisted evidence binding
   - `8cd427a` — all-or-nothing Workflow attempt inspection
@@ -41,8 +42,9 @@ Last updated: 2026-11-10 (Freebuff Cloud session, permanent Memory approval bind
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
 - GitHub Actions passed `ci`, `conformance`, and `schema-check` at `8cd427a` and its docs tip
-  `c64ba42`. Checks for the verifier-binding head `05769e1` and the permanent-Memory
-  approval head `503cefb` are observed after the push; this handoff does not assert them.
+  `c64ba42`. Checks for the verifier-binding head `05769e1`, the permanent-Memory approval
+  head `503cefb`, and the authorization-audit head `15ff877` are observed after the push;
+  this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -329,19 +331,19 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **86 passed** (8 files) |
+| `@aios/host` | **94 passed** (9 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
 | `@aios/objects` | 32 passed |
-| `@aios/founder` | 50 passed |
+| `@aios/founder` | 55 passed |
 | `@aios/orchestration` | 30 passed |
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 28 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **482 passed** |
+| **Total** | **495 passed** |
 
 Schema regeneration produced no diff.
 
@@ -499,6 +501,9 @@ Schema regeneration produced no diff.
 - Permanent Memory stages require a recorded human approval bound to the record, transition,
   and content; the approval and promotion are committed as one durable journal record.
   This is organizational Learning Memory, not Founder Intelligence, and adds no vault write.
+- Every authorization allow and deny is committed to `authorization-audit.jsonl` with the
+  host request id, principal, action/resource, policy/version, decision, fixed reason, and
+  decisive rule. An audit append failure denies, including an otherwise matching allow.
 
 ## Completed — permanent Memory approval binding (`503cefb`)
 
@@ -516,9 +521,27 @@ Schema regeneration produced no diff.
   `apps/host/tests/learning-store.test.ts` (3), and the host-boundary case in
   `apps/host/tests/http-host.test.ts` (39 HTTP total). Full workspace: **482 passed**.
 
+## Completed — durable authorization decision audit (`15ff877`)
+
+- `DurableAuthorizationAuditStore` appends every allow and deny to
+  `authorization-audit.jsonl` through `AppendOnlyJournal`: fsync'd appends, SHA-256 hash
+  chain, single-process lock, torn-tail recovery, and fail-closed corruption detection.
+- Records capture request id, principal, action, resource, policy/version, decision, fixed
+  reason, decisive rule index/effect, and timestamp. Unknown fields and non-fixed reasons are
+  rejected, keeping tokens and raw error text out of the journal.
+- HTTP operations propagate their request id through `SharedAuthorizationBoundary`, so every
+  decision made during one request shares its correlation id, including Founder and
+  Orchestration decisions. The audit read route is bootstrap-only and additionally requires
+  the exact `read_evidence` grant on the protected decision collection.
+- If the audit append fails, `AuthorizationService` returns deny even for an otherwise
+  matching allow; no phantom decision is recorded. Tests:
+  `apps/host/tests/authorization-audit-store.test.ts` (6),
+  `packages/founder/tests/authorization.test.ts` (22 total), and the restart/grant cases in
+  `apps/host/tests/http-host.test.ts` (41 HTTP total). Full workspace: **495 passed**.
+
 ## Next concrete work
 
-1. Observe CI on `503cefb` and the docs tip; push only
+1. Observe CI on `15ff877` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.

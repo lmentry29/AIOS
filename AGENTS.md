@@ -67,9 +67,12 @@ passing build.
     and dispatch-run state are durable through the hash-chained operational journal
     (ADR-0015), with idempotency, leases, and startup recovery. Learning records are durable
     in a separate hash-chained `learning.jsonl`, and permanent Memory stages require a
-    recorded human approval; the canonical object store used only for Founder queries and
-    some policy/evidence paths still have in-memory or test/development implementations. The
-    journals are not compacted, have no migration framework, and are single-process. Production use still requires protected secrets,
+    recorded human approval. In the host, every authorization allow and deny is durable in
+    `authorization-audit.jsonl` with request correlation (ADR-0013), and policy lifecycle
+    events are durable with policy state. The canonical object store used only for Founder
+    queries and some policy/evidence paths still has in-memory or test/development
+    implementations.
+    The journals are not compacted, have no migration framework, and are single-process. Production use still requires protected secrets,
     a completed sandbox/provider matrix, operational controls, and independent review.
     Keep these limitations explicit in code and documentation.
 14. **No unrestricted host execution.** A task may run only through the fixed

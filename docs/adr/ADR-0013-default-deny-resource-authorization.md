@@ -50,11 +50,36 @@ Every authorization decision and every policy lifecycle change MUST produce a du
 ## Implementation consequences
 
 - The existing `AuthorizationService` in `@aios/founder` implements exact matching, default deny, deny-overrides, input validation, and fail-closed policy resolution.
-- The current evaluator accepts immutable policy configuration at construction. `PolicyAdministrationService` restricts publish/attach/revoke to a configured human bootstrap principal; Agent UUIDs are rejected. It delegates each operation to a port whose implementation must atomically persist state and append audit. No concrete durable administration port is supplied yet; the evaluator is not a persistent policy registry.
+- The current evaluator accepts immutable policy configuration at construction. `PolicyAdministrationService` restricts publish/attach/revoke to a configured human bootstrap principal; Agent UUIDs are rejected. It delegates each operation to a port whose implementation must atomically persist state and append audit. `FilePolicyRegistry` supplies that durable administration port and lifecycle audit in the host; the evaluator reads the persisted policy snapshot.
 - `FounderInterface` authorizes canonical-entity and learning-memory content reads with `read_evidence`; decision creation requires `intake` on a configured protected decision-collection resource; decision reads require `read_evidence` on that collection and are filtered to artifacts belonging to that collection. Only human principals may record governance decisions or use the human review queue. Denied reads return no protected records, and denied writes fail closed.
 - Orchestration requires explicit requester identity and calls the authorization port for intake, dispatch, execution, coordination, status reads, and execution-evidence reads. Evidence reads are authorized against the parent Task's resource policy.
-- Production deployment remains blocked until authenticated identity, durable policy storage and administration, policy attachment/revocation controls, durable decision audit, and security testing are implemented.
+- Production deployment remains blocked until authenticated identity, policy recovery/rotation, independent external audit custody, and security testing are implemented. Durable policy storage/administration/attachment/revocation and durable decision audit are implemented in the host; see the implementation note below.
 - The access-policy field remains a UUID reference; this ADR does not silently redefine Canonical Entity schemas or add an unreviewed persisted entity subtype.
+
+### Implementation note — durable decision audit (2026-11-10)
+
+The host now implements the §6 decision-audit requirement without changing the authorization
+semantics above:
+
+- `apps/host/src/persistence/authorization-audit-store.ts` appends every allow and deny to a
+  dedicated `authorization-audit.jsonl` using the same hash-chained `AppendOnlyJournal`
+  contract as operational state: fsync before append returns, single-process lock, torn-tail
+  truncation on open, and fail-closed rejection of a malformed complete record or broken
+  hash chain.
+- Each record contains the request id, principal, action, resource, policy id/version,
+  decision, fixed reason code, the decisive rule index/effect when a rule matched, and a
+  timestamp. Unknown fields are rejected and reasons are fixed codes, so tokens and raw error
+  text are not serialized.
+- HTTP operations run under the host request id; the shared boundary supplies it to every
+  decision made during that operation, including Founder and Orchestration calls. The audit
+  read route remains bootstrap-only and additionally requires the exact `read_evidence`
+  grant on the protected decision collection.
+- If the append fails, `AuthorizationService` returns deny even for an otherwise matching
+  allow. No decision is observed without its durable record. Policy lifecycle events remain
+  atomically committed with policy state in `FilePolicyRegistry`.
+- Tests: `apps/host/tests/authorization-audit-store.test.ts`,
+  `packages/founder/tests/authorization.test.ts` (correlation, grant binding, fail-closed),
+  and the restart/grant cases in `apps/host/tests/http-host.test.ts`.
 
 ## Security properties and limits
 

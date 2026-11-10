@@ -22,9 +22,10 @@ nothing in the repository turned an HTTP request into a trusted principal.
 Operational state (Tasks, Workflows, Artifacts, dispatch runs) is durable through a
 hash-chained journal per ADR-0015. The host can compose the fixed `local.exec` executor and
 an independently executed verifier (ADR-0019) when a Docker, bubblewrap, or Seatbelt
-provider passes its probe. It does **not** close the other production blockers: there is no
-general capability/provider runtime, no signed verifier provenance, evidence readers remain
-unverified against a live Obsidian++, learning records are durable in a separate
+provider passes its probe. Authorization decisions are durable in a dedicated hash-chained
+journal with request correlation. It does **not** close the other production blockers: there
+is no general capability/provider runtime, no signed verifier provenance, evidence readers
+remain unverified against a live Obsidian++, learning records are durable in a separate
 approval-gated journal, and there is no Founder UI yet.
 
 ## Configuration
@@ -161,8 +162,8 @@ vault notes as operational storage.
 
 Known limitations, recorded rather than hidden: no journal compaction or snapshotting yet
 (the journal fails closed at 64 MiB), no schema-migration framework, backup/restore is a
-file-level copy with the host stopped, and the separate learning journal has the same
-no-compaction/migration limits.
+file-level copy with the host stopped, and the separate learning and authorization-audit
+journals have the same no-compaction/migration limits.
 
 ### Permanent Memory approvals
 
@@ -182,6 +183,23 @@ close-and-reopen and that a rejected approval leaves no permanent entry;
 content/transition binding, and human-only decisions; the host-boundary case in
 `apps/host/tests/http-host.test.ts` proves an unprivileged human is denied. No public HTTP
 Memory write route was added.
+
+### Authorization decision audit
+
+Every allow and deny from the single evaluator is appended to `authorization-audit.jsonl`
+using the same `AppendOnlyJournal` contract as operational state: fsync before append
+returns, a SHA-256 hash chain, single-process lock, torn-tail truncation on open, and
+fail-closed rejection of a malformed complete record. Records carry the request id,
+principal, action, resource, policy id/version, decision, fixed reason code, decisive rule
+index/effect when a rule matched, and timestamp; unknown fields and non-fixed reasons are
+rejected. The host request id is propagated through `SharedAuthorizationBoundary`, so every
+decision made while handling one request shares that correlation id.
+
+If the append fails, `AuthorizationService` returns deny even when a rule would have allowed
+the operation. Policy lifecycle events remain atomically committed with policy state in the
+policy registry. `GET /v1/audit/authorization` is bootstrap-only and also requires the exact
+`read_evidence` grant on the protected decision collection; no unauthenticated audit route
+exists.
 
 ## HTTP surface
 
@@ -211,7 +229,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET/POST | `/v1/founder/decisions` | Decision capture is human-only |
 | GET | `/v1/founder/queue` | Human-only review queue |
 | GET | `/v1/audit/policies` | Bootstrap principal only |
-| GET | `/v1/audit/authorization?limit=` | Bootstrap principal only |
+| GET | `/v1/audit/authorization?limit=` | Bootstrap principal plus exact `read_evidence` on the decision collection |
 
 Requests carrying a non-loopback `Host` header are rejected (DNS rebinding), as are requests
 carrying any `Origin` header (no browser cross-origin client exists yet, so there is no CORS
@@ -273,16 +291,18 @@ single-process lock.
 - agent impersonation and body-supplied actor rejection;
 - intake-only policy denying dispatch with no lifecycle writes;
 - full execute → independent verify → evidence retrieval;
-- one audit chain containing the executor, verifier, dispatch, and Founder reads;
+- one decision-audit chain containing decisions for the executor, verifier, dispatch, and
+  Founder reads, with request-id correlation and exact grant binding;
 - verification evidence bound to the configured verifier: a matching record reads back
   unchanged across a reopen, a swapped verifier configuration rejects the persisted record
   with `orchestration_rejected` and records no completion, and a record with no verifier
   identity is rejected while its Task stays `created`;
 - 503 and unchanged lifecycle state when adapters are absent;
 - conflict on re-dispatch of a completed workflow;
-- human-only governance and bootstrap-only audit reads;
+- human-only governance and bootstrap-only, policy-granted audit reads;
 - media-type, JSON, and body-limit enforcement;
-- policy-lock release and hash-chain re-verification after shutdown;
+- policy-lock and authorization-audit lock release, plus hash-chain re-verification after
+  shutdown;
 - authorized cancellation of an executing Task, with the sandbox stub aborted, the verifier
   skipped, and a terminal cancelled execution plus cancelled run recorded;
 - queued cancellation and denied cancellation, with no execution or ledger write on denial;
@@ -319,6 +339,10 @@ single-process lock.
   with no attempt or lifecycle write;
 - the concurrency cap rejecting a later-generation Workflow resume with 429 before any
   attempt/lifecycle write, then succeeding after capacity is released;
+- authorization allow and deny records with exact rule binding and default-deny reasons;
+- authorization decisions remaining ordered and readable after a host restart, correlated to
+  the guarded request id, with no token material in the journal;
+- authorization-audit tamper detection, torn-tail recovery, and append-failure denial;
 - restart recovery of Tasks/Workflows and running executions from the operational journal;
 - interrupted dispatch/execution recovered as `interrupted`, with its Workflow and Task
   `suspended`, and a second startup making no further changes;
