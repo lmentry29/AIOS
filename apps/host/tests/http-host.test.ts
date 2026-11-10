@@ -9,6 +9,9 @@ import { FilePolicyRegistry, PolicyAdministrationService } from '@aios/founder';
 import type { AgentExecutionPort, TaskVerificationPort } from '@aios/orchestration';
 import type { TaskEntity, WorkflowEntity } from '@aios/core';
 import { loadHostConfig } from '../src/config.js';
+import { LocalCommandExecutor } from '../src/execution/command-executor.js';
+import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
+import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
 import { createHostServer, type HostHttpServer } from '../src/server.js';
 import {
@@ -25,6 +28,7 @@ import {
   makeTask,
   makeWorkflow,
 } from './fixtures.js';
+import { StubSandbox, makeExecutionConfig } from './sandbox-fixture.js';
 
 interface Harness {
   baseUrl: string;
@@ -33,6 +37,7 @@ interface Harness {
   server: HostHttpServer;
   policyPath: string;
   configPath: string;
+  sandbox?: StubSandbox;
 }
 
 interface JsonResponse {
@@ -88,6 +93,7 @@ async function attachPolicy(policyPath: string, policy: AccessPolicy): Promise<v
 async function startHost(options: {
   policy?: AccessPolicy;
   withAdapters?: boolean;
+  withLocalAdapters?: boolean;
   directory?: string;
 } = {}): Promise<Harness> {
   const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'aios-host-http-'));
@@ -111,11 +117,25 @@ async function startHost(options: {
   if (options.policy) await attachPolicy(policyPath, options.policy);
 
   const config = loadHostConfig(configPath);
+  let sandbox: StubSandbox | undefined;
+  let localAdapters: { execution: LocalCommandExecutor; verification: LocalCommandVerifier } | undefined;
+  if (options.withLocalAdapters) {
+    sandbox = new StubSandbox();
+    const executionConfig = makeExecutionConfig(join(directory, 'workspaces'));
+    const workspaces = new RunWorkspaceManager(executionConfig.workspace_directory);
+    localAdapters = {
+      execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces),
+      verification: new LocalCommandVerifier(executionConfig, sandbox, workspaces),
+    };
+  }
   const runtime = createHostRuntime({
     config,
     ...(options.withAdapters
       ? { execution, verification, resolveAgent: async () => AGENT_ID }
       : {}),
+    ...(localAdapters === undefined
+      ? {}
+      : { ...localAdapters, resolveAgent: async () => AGENT_ID }),
   });
   const server = createHostServer(runtime);
   const address = await server.listen();
@@ -130,6 +150,7 @@ async function startHost(options: {
     server,
     policyPath,
     configPath,
+    ...(sandbox === undefined ? {} : { sandbox }),
   };
 }
 
@@ -360,6 +381,32 @@ describe('trusted host HTTP surface', () => {
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'dispatch', decision: 'allow' }));
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'read_evidence', decision: 'allow' }));
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'read_status', decision: 'allow' }));
+  });
+
+  it('dispatches through the real fixed executor and independent verifier adapters', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'composed'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    const dispatched = await dispatch(harness, workflow.entity_id);
+    expect(dispatched.status).toBe(200);
+    expect(dispatched.body?.lifecycle_state).toBe('completed');
+    expect(harness.sandbox?.calls).toHaveLength(2);
+    expect(harness.sandbox?.calls[0]?.argv).toEqual(['/bin/echo', 'composed']);
+    expect(harness.sandbox?.calls[1]?.argv).toEqual(['/bin/true']);
+    expect(harness.sandbox?.calls[1]?.workspaceDirectory).toBe(harness.sandbox?.calls[0]?.workspaceDirectory);
+
+    const stored = harness.runtime.taskStore.getTask(task.entity_id);
+    expect(stored?.lifecycle_state).toBe('completed');
+    expect(stored?.audit_trail_ref).toBeTruthy();
   });
 
   it('refuses to dispatch when no execution or verification adapter is configured', async () => {

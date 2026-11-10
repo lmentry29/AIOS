@@ -113,6 +113,12 @@ class DockerSandbox implements SandboxProvider {
     const workspace = assertWorkspace(spec.workspaceDirectory);
     const mount = `type=bind,src=${workspace},dst=/workspace,rw`;
     const workdir = spec.cwd === undefined ? '/workspace' : `/workspace/${spec.cwd}`;
+    // The workspace is mode 0700. Running the container as the host UID/GID keeps
+    // that permission meaningful; a fixed nobody UID would make every command fail
+    // to read its own workspace. On non-POSIX hosts the container default is used.
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
+    const user = uid === undefined || gid === undefined ? undefined : `${uid}:${gid}`;
     const args = [
       'run',
       '--rm',
@@ -126,7 +132,7 @@ class DockerSandbox implements SandboxProvider {
       '--cpus=1',
       '--mount', mount,
       '--workdir', workdir,
-      '--user', '65534:65534',
+      ...(user === undefined ? [] : ['--user', user]),
       '--env', 'HOME=/tmp',
       '--env', 'TMPDIR=/tmp',
       ...Object.entries(spec.env).flatMap(([key, value]) => ['--env', `${key}=${value}`]),

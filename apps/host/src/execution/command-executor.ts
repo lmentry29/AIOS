@@ -57,6 +57,14 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (!intent || intent.kind !== 'local_command') {
       throw new HostExecutionError('Task has no local_command execution intent; refusing to invent work.');
     }
+    // One command is evidence for one declared Action at most. Mapping a single
+    // exit status onto several Action records would manufacture completion that the
+    // command never independently demonstrated.
+    if (task.actions.length > 1) {
+      throw new HostExecutionError(
+        'The local_command adapter can complete at most one declared Action; split the Task or use a verifiable multi-action adapter.',
+      );
+    }
 
     const workspace = this.workspaces.getOrCreate(task.entity_id);
     const cwd = this.workspaces.resolveCwd(workspace, intent.cwd);

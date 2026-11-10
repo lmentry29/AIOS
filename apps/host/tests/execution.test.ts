@@ -1,61 +1,11 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TaskEntity } from '@aios/core';
-import type { HostExecutionConfig } from '../src/config.js';
 import { HostExecutionError, HostUnavailableError } from '../src/errors.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
-import type {
-  SandboxCheck,
-  SandboxProvider,
-  SandboxResult,
-  SandboxRunSpec,
-} from '../src/execution/sandbox.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { AGENT_ID, VERIFIER_ID, makeTask } from './fixtures.js';
-
-class StubSandbox implements SandboxProvider {
-  readonly id = 'stub-container';
-  readonly assurance = 'container' as const;
-  calls: SandboxRunSpec[] = [];
-  checkResult: SandboxCheck = { available: true, reason: 'stub is available' };
-  result: Partial<SandboxResult> = {};
-
-  async check(): Promise<SandboxCheck> {
-    return this.checkResult;
-  }
-
-  async run(spec: SandboxRunSpec): Promise<SandboxResult> {
-    this.calls.push(spec);
-    return {
-      exitCode: 0,
-      signal: null,
-      stdout: Buffer.from('ok\n'),
-      stderr: Buffer.alloc(0),
-      timedOut: false,
-      truncated: false,
-      durationMs: 7,
-      provider: this.id,
-      assurance: this.assurance,
-      ...this.result,
-    };
-  }
-}
-
-function executionConfig(overrides: Partial<HostExecutionConfig> = {}): HostExecutionConfig {
-  return {
-    workspace_directory: mkdtempSync(join(tmpdir(), 'aios-execution-')),
-    agent_id: AGENT_ID,
-    verifier_id: VERIFIER_ID,
-    provider: 'docker',
-    image: 'node:22-alpine',
-    default_timeout_ms: 5_000,
-    max_output_bytes: 16 * 1024,
-    ...overrides,
-  };
-}
+import { StubSandbox, makeExecutionConfig as executionConfig } from './sandbox-fixture.js';
 
 function executableTask(overrides: Record<string, unknown> = {}): TaskEntity {
   return makeTask({
@@ -124,6 +74,12 @@ describe('local command execution', () => {
       execution: { kind: 'local_command', argv: ['/bin/true'], cwd: '../escape' },
     }))).rejects.toBeInstanceOf(HostExecutionError);
     await expect(executor.executeTask(AGENT_ID, makeTask())).rejects.toThrow(/no local_command/);
+    await expect(executor.executeTask(AGENT_ID, executableTask({
+      actions: [
+        { action_id: '11111111-1111-4111-8111-111111111113', status: 'pending', executed_by: AGENT_ID },
+        { action_id: '11111111-1111-4111-8111-111111111114', status: 'pending', executed_by: AGENT_ID },
+      ],
+    }))).rejects.toThrow(/at most one/);
     expect(sandbox.calls).toHaveLength(0);
   });
 });
