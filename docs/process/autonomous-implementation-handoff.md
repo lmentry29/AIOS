@@ -126,9 +126,12 @@ Results at `f36e25b`:
 - Baseline before the change was also green (same commands, same totals minus the new host
   suite), so no existing test regressed.
 
-Not verified: GitHub Actions on this commit (no push, no CI run); live Obsidian++/Gmail/Notion
-calls (no local services or credentials); anything requiring a real executor, verifier, or
-durable operational store.
+GitHub Actions on the pushed head `dde7a5e`: **CI, Conformance, and Schema Check all passed**
+(runs `42765520967`, `42765521237`, `42765520945`). Later commits on this branch only change
+documentation, not code.
+
+Not verified: live Obsidian++/Gmail/Notion calls (no local services or credentials); anything
+requiring a real executor, verifier, or durable operational store.
 
 ## Current blocker
 
