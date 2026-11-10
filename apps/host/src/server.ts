@@ -7,12 +7,14 @@ import type { HostConfig } from './config.js';
 import { HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
+import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
 import type { HostRuntime } from './runtime.js';
 
 const SERVICE = 'aios-host';
 const VERSION = '0.1.0';
 const JSON_TYPE = /^application\/json\s*(;|$)/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,200}$/;
 
 interface RouteResponse {
   status: number;
@@ -98,6 +100,12 @@ async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknow
   } catch {
     throw new HostHttpError(400, 'invalid_json', 'The request body is not valid JSON.');
   }
+}
+
+function dispatchFailureCode(error: unknown): string {
+  if (error instanceof HostUnavailableError) return 'adapter_unavailable';
+  if (error instanceof OrchestrationError) return 'orchestration_rejected';
+  return 'dispatch_failed';
 }
 
 function mapError(error: unknown): { status: number; code: string; message: string } {
@@ -349,6 +357,8 @@ function buildRoutes(runtime: HostRuntime): Route[] {
             dispatch: dispatchEnabled,
             evidence: runtime.evidenceConfigured,
           },
+          storage: 'durable',
+          recovered_workflows: runtime.recoveredWorkflows.length,
         },
       }),
     },
@@ -444,7 +454,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/workflows\/([^/]+)\/dispatch$/,
       allow: ['POST'],
-      handle: async ({ runtime: host, session }, params) => {
+      handle: async ({ runtime: host, session, req }, params) => {
         const workflowId = uuidParam(params[1], 'workflowId');
         if (!host.executionConfigured || !host.verificationConfigured) {
           throw new HostUnavailableError(
@@ -456,12 +466,66 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         await requireAllowed(host, session, 'read_status', workflowId);
         const workflow = host.workflowStore.get(workflowId);
         if (!workflow) throw new HostHttpError(404, 'not_found', 'Workflow was not found.');
-        const handle = await host.kernel.dispatch(workflow, session.principal_id);
-        const current = host.workflowStore.get(handle.workflow_id);
-        return {
-          status: 200,
-          body: { workflow_id: handle.workflow_id, lifecycle_state: current?.lifecycle_state ?? 'unknown' },
-        };
+
+        const idempotencyKey = req.headers['idempotency-key'];
+        if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY.test(idempotencyKey)) {
+          throw new HostHttpError(
+            400,
+            'idempotency_key_required',
+            'Dispatch requires an Idempotency-Key header of 8-200 characters from [A-Za-z0-9._:-].',
+          );
+        }
+
+        let started: StartedRun;
+        try {
+          started = host.runs.start({
+            workflow_id: workflowId,
+            actor_id: session.principal_id,
+            idempotency_key: idempotencyKey,
+            lease_ms: host.config.dispatch_lease_ms,
+          });
+        } catch (error) {
+          if (error instanceof DispatchConflictError) {
+            throw new HostHttpError(409, 'dispatch_conflict', error.message);
+          }
+          throw error;
+        }
+
+        if (started.replayed) {
+          const current = host.workflowStore.get(workflowId);
+          return {
+            status: 200,
+            body: {
+              workflow_id: workflowId,
+              lifecycle_state: current?.lifecycle_state ?? 'unknown',
+              replayed: true,
+              run_id: started.run.run_id,
+            },
+          };
+        }
+
+        const stopHeartbeat = host.runs.heartbeat(started.run.run_id);
+        try {
+          const handle = await host.kernel.dispatch(workflow, session.principal_id);
+          host.runs.complete(started.run.run_id);
+          const current = host.workflowStore.get(handle.workflow_id);
+          return {
+            status: 200,
+            body: {
+              workflow_id: handle.workflow_id,
+              lifecycle_state: current?.lifecycle_state ?? 'unknown',
+              replayed: false,
+              run_id: started.run.run_id,
+            },
+          };
+        } catch (error) {
+          // A rejected or failed dispatch is journaled before the error is returned, so a
+          // restart cannot re-run it or mistake it for completed work.
+          host.runs.fail(started.run.run_id, dispatchFailureCode(error));
+          throw error;
+        } finally {
+          stopHeartbeat();
+        }
       },
     },
     {

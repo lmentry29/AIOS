@@ -25,6 +25,7 @@ function setup(): { directory: string; configPath: string; policyPath: string; r
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 4780 },
     policy_file: policyPath,
+    operational_store: { directory: join(directory, 'operational') },
     decision_collection_id: DECISION_COLLECTION_ID,
     resources: { vault: VAULT_RESOURCE_ID, gmail: GMAIL_RESOURCE_ID, notion: NOTION_RESOURCE_ID },
     bootstrap_principal_id: FOUNDER,

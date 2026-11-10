@@ -19,9 +19,10 @@ nothing in the repository turned an HTTP request into a trusted principal.
 - Exposes a small, reviewed read/execute surface over loopback HTTP.
 - Keeps policy administration off the network entirely.
 
-It does **not** close the other production blockers: operational stores are still in-memory,
-no execution or verification adapter is invented, evidence readers remain unverified against
-a live Obsidian++, and there is no Founder UI yet.
+Operational state (Tasks, Workflows, Artifacts, dispatch runs) is durable through a
+hash-chained journal per ADR-0015. It does **not** close the other production blockers: no
+execution or verification adapter is invented, evidence readers remain unverified against a
+live Obsidian++, learning records are still in-memory, and there is no Founder UI yet.
 
 ## Configuration
 
@@ -34,6 +35,8 @@ field fails startup instead of being silently ignored. A partial example (no sec
   "schema_version": 1,
   "bind": { "host": "127.0.0.1", "port": 4780 },
   "policy_file": "/home/you/.aios/policy-state.json",
+  "operational_store": { "directory": "/home/you/.aios/operational" },
+  "dispatch_lease_ms": 300000,
   "decision_collection_id": "00000000-0000-4000-8000-000000000001",
   "resources": {
     "vault": "00000000-0000-4000-8000-000000000002",
@@ -73,6 +76,38 @@ name their own actor: `/v1/intake` requires `created_by` and `owner_id` to equal
 principal, and `/v1/founder/decisions` requires `decided_by` (when present) to match it.
 Caller-supplied actor strings are never treated as authentication, per ADR-0013.
 
+## Durable operational state (ADR-0015)
+
+Tasks, Workflows, Artifacts, and dispatch runs are stored in an owner-only directory as a
+single `operational.jsonl` journal. It is deliberately separate from the Obsidian vault:
+ADR-0014 remains the Founder Intelligence substrate, and this host never reads or writes
+vault notes as operational storage.
+
+- **Durability.** Each record is one JSON line, fsync'd before the write is acknowledged.
+- **Integrity.** Every record carries a sequence, the previous hash, and a SHA-256 hash over
+  canonical JSON. Open verifies the full chain; an altered or reordered committed record
+  fails closed instead of loading.
+- **Torn writes.** A crash can leave an unterminated final line. Only that tail is truncated
+  on open; a *complete* record that fails validation is corruption, not a tail.
+- **Single process.** A lock file with stale-PID recovery prevents two hosts sharing the
+  journal. Multi-process concurrency is not supported; the repository ports are the seam for
+  a different substrate later.
+- **Replay, not re-execution.** Entities are restored through `ObjectStore.restore()`, which
+  validates the schema and only allows monotonic versions with append-only history prefixes.
+  Replay therefore cannot invent timestamps, versions, or lifecycle entries.
+- **Idempotency and leases.** `POST /v1/workflows/:id/dispatch` requires an
+  `Idempotency-Key` header. A completed run is replayed for the same key; a second key (or a
+  second caller) while a lease is live receives `409 dispatch_conflict`. Leases are renewed
+  while dispatch runs and expire if the worker disappears.
+- **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; their
+  `active`/`monitored` Workflows and active Tasks are transitioned to `suspended`. Interrupted
+  work is never completed by recovery, and `/health` reports how many Workflows were
+  recovered.
+
+Known limitations, recorded rather than hidden: no journal compaction or snapshotting yet
+(the journal fails closed at 64 MiB), no schema-migration framework, backup/restore is a
+file-level copy with the host stopped, and learning records are still in-memory.
+
 ## HTTP surface
 
 Loopback only, no CORS headers, `no-store` responses.
@@ -85,7 +120,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
 | GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage and `read_evidence` |
 | POST | `/v1/intake` | `{ kind: "task" \| "workflow", entity }`; provenance must match the session |
-| POST | `/v1/workflows/:id/dispatch` | Authorizes before revealing existence; 503 without adapters |
+| POST | `/v1/workflows/:id/dispatch` | Requires `Idempotency-Key`; replays a completed key, 409 while another lease is live, 503 without adapters |
 | POST | `/v1/founder/query` | Authorization-filtered canonical and learning search |
 | POST | `/v1/founder/evidence-query` | Requires composed vault reader |
 | POST | `/v1/founder/gmail/search` | Separate Gmail resource grant |
@@ -146,14 +181,20 @@ single-process lock.
 - conflict on re-dispatch of a completed workflow;
 - human-only governance and bootstrap-only audit reads;
 - media-type, JSON, and body-limit enforcement;
-- policy-lock release and hash-chain re-verification after shutdown.
+- policy-lock release and hash-chain re-verification after shutdown;
+- restart recovery of Tasks/Workflows from the operational journal;
+- interrupted dispatch recovered as `interrupted`, with its Workflow and Task `suspended`;
+- idempotent replay of a completed dispatch and rejection of a conflicting one;
+- missing `Idempotency-Key`, expired-lease reclaim, tamper detection, and torn-tail recovery
+  (`tests/persistence.test.ts`).
 
 ## What remains open
 
-- **Operational persistence.** Tasks, Workflows, Artifacts, and learning records are the
-  in-memory adapters. Leases, idempotency keys, retries, transactional dispatch, and crash
-  recovery are not implemented. A restart loses operational state; the policy registry and
-  its audit survive.
+- **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
+  journal is not compacted or snapshotted, has no migration framework, and supports only one
+  host process. Learning records remain in-memory. Backup/restore is a documented file copy,
+  not an automated procedure. Dispatch is idempotent and leased, but there is no retry backoff
+  or automatic resume of interrupted work.
 - **Execution and verification.** No production `AgentExecutionPort` or verifier exists. The
   host composes only what it is given and fails closed otherwise. Verifier provider/process
   independence is still unproven.

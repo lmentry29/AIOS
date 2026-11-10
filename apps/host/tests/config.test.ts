@@ -21,6 +21,7 @@ function validConfig(overrides: Record<string, unknown> = {}): Record<string, un
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
     policy_file: join(directory, 'policy-state.json'),
+    operational_store: { directory: join(directory, 'operational') },
     decision_collection_id: DECISION_COLLECTION_ID,
     resources: {
       vault: VAULT_RESOURCE_ID,
@@ -56,6 +57,7 @@ describe('host configuration', () => {
     const parsed = parseHostConfig(validConfig());
     expect(parsed.bind).toEqual({ host: '127.0.0.1', port: 0 });
     expect(parsed.request_body_limit_bytes).toBe(256 * 1024);
+    expect(parsed.dispatch_lease_ms).toBe(5 * 60 * 1000);
     expect(parsed.sessions).toHaveLength(1);
     expect(parsed.sessions[0]?.principal_id).toBe(FOUNDER);
   });
@@ -116,6 +118,19 @@ describe('host configuration', () => {
     }))).toThrow(/distinct/);
     expect(() => parseHostConfig(validConfig({ policy_file: 'relative/policy.json' })))
       .toThrow(/absolute/);
+  });
+
+  it('requires an absolute operational-store directory and a bounded dispatch lease', () => {
+    expect(() => parseHostConfig(validConfig({ operational_store: { directory: 'relative/state' } })))
+      .toThrow(/operational_store.directory/);
+    expect(() => parseHostConfig(validConfig({ operational_store: {} })))
+      .toThrow(/operational_store.directory/);
+    expect(() => parseHostConfig(validConfig({ operational_store: { directory: '/tmp/x', extra: true } })))
+      .toThrow(/unsupported field/);
+    expect(() => parseHostConfig(validConfig({ dispatch_lease_ms: 1_000 })))
+      .toThrow(/dispatch_lease_ms/);
+    expect(() => parseHostConfig(validConfig({ dispatch_lease_ms: 60 * 60 * 1000 + 1 })))
+      .toThrow(/dispatch_lease_ms/);
   });
 
   it('rejects an expired-session timestamp it cannot parse', () => {

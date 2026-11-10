@@ -24,5 +24,8 @@ The contract, configuration schema, route table, security properties, and open b
 documented in
 [`docs/engineering/trusted-host-composition-root.md`](../../docs/engineering/trusted-host-composition-root.md).
 
-This host is not production-ready: operational stores are still in-memory, live evidence
-integrations are unverified, and no real executor or verifier ships with the repository.
+Task, Workflow, Artifact, and dispatch-run state is durable through a hash-chained journal
+(ADR-0015). Dispatch requires an `Idempotency-Key`, holds a renewable lease, and is recovered
+as interrupted rather than completed after a crash. Learning records are still in-memory,
+live evidence integrations are unverified, and no real executor or verifier ships with the
+repository, so this host is not yet production-ready.

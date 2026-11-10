@@ -33,6 +33,16 @@ export interface HostConfig {
   };
   /** Absolute path to the durable policy/audit state file. */
   policy_file: string;
+  /**
+   * Owner-only directory for the durable operational journal (Tasks, Workflows,
+   * Artifacts, dispatch runs). Never the Obsidian vault: ADR-0014 keeps Founder
+   * Intelligence in the vault and ADR-0015 keeps operational state separate.
+   */
+  operational_store: {
+    directory: string;
+  };
+  /** Dispatch lease duration in milliseconds; renewed while a dispatch is running. */
+  dispatch_lease_ms: number;
   /** Protected Founder decision collection resource UUID. */
   decision_collection_id: string;
   resources: {
@@ -55,6 +65,9 @@ const MIN_BODY_LIMIT = 1024;
 const MAX_BODY_LIMIT = 1024 * 1024;
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_SESSIONS = 32;
+const DEFAULT_DISPATCH_LEASE_MS = 5 * 60 * 1000;
+const MIN_DISPATCH_LEASE_MS = 5_000;
+const MAX_DISPATCH_LEASE_MS = 60 * 60 * 1000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HUMAN_PRINCIPAL = /^human:[^\s:*]+$/;
@@ -65,6 +78,8 @@ const TOP_LEVEL_KEYS = new Set([
   'schema_version',
   'bind',
   'policy_file',
+  'operational_store',
+  'dispatch_lease_ms',
   'decision_collection_id',
   'resources',
   'obsidian',
@@ -198,6 +213,30 @@ export function parseHostConfig(raw: unknown): HostConfig {
   const policyFile = requireString(raw.policy_file, 'policy_file', 4096);
   if (!isAbsolute(policyFile)) fail('policy_file', 'must be an absolute path');
 
+  if (!isRecord(raw.operational_store)) fail('operational_store', 'must be an object');
+  assertKnownKeys(raw.operational_store, new Set(['directory']), 'operational_store');
+  const operationalDirectory = requireString(
+    raw.operational_store.directory,
+    'operational_store.directory',
+    4096,
+  );
+  if (!isAbsolute(operationalDirectory)) {
+    fail('operational_store.directory', 'must be an absolute path');
+  }
+
+  let dispatchLeaseMs = DEFAULT_DISPATCH_LEASE_MS;
+  if (raw.dispatch_lease_ms !== undefined) {
+    const value = raw.dispatch_lease_ms;
+    if (typeof value !== 'number' || !Number.isInteger(value)
+      || value < MIN_DISPATCH_LEASE_MS || value > MAX_DISPATCH_LEASE_MS) {
+      fail(
+        'dispatch_lease_ms',
+        `must be an integer between ${MIN_DISPATCH_LEASE_MS} and ${MAX_DISPATCH_LEASE_MS}`,
+      );
+    }
+    dispatchLeaseMs = value;
+  }
+
   const decisionCollectionId = requireUuid(raw.decision_collection_id, 'decision_collection_id');
 
   if (!isRecord(raw.resources)) fail('resources', 'must be an object');
@@ -234,6 +273,8 @@ export function parseHostConfig(raw: unknown): HostConfig {
     schema_version: 1,
     bind,
     policy_file: resolve(policyFile),
+    operational_store: { directory: resolve(operationalDirectory) },
+    dispatch_lease_ms: dispatchLeaseMs,
     decision_collection_id: decisionCollectionId,
     resources: { vault, gmail, notion },
     ...(obsidian === undefined ? {} : { obsidian }),

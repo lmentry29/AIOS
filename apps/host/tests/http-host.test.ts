@@ -88,14 +88,17 @@ async function attachPolicy(policyPath: string, policy: AccessPolicy): Promise<v
 async function startHost(options: {
   policy?: AccessPolicy;
   withAdapters?: boolean;
+  directory?: string;
 } = {}): Promise<Harness> {
-  const directory = mkdtempSync(join(tmpdir(), 'aios-host-http-'));
+  const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'aios-host-http-'));
   const policyPath = join(directory, 'policy-state.json');
   const configPath = join(directory, 'host.json');
   writeFileSync(configPath, JSON.stringify({
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
     policy_file: policyPath,
+    operational_store: { directory: join(directory, 'operational') },
+    dispatch_lease_ms: 5_000,
     decision_collection_id: DECISION_COLLECTION_ID,
     resources: { vault: VAULT_RESOURCE_ID, gmail: GMAIL_RESOURCE_ID, notion: NOTION_RESOURCE_ID },
     bootstrap_principal_id: FOUNDER,
@@ -189,6 +192,13 @@ async function intake(harness: Harness, kind: 'task' | 'workflow', entity: TaskE
   });
 }
 
+function dispatch(harness: Harness, workflowId: string, idempotencyKey = randomUUID()) {
+  return call(harness, 'POST', `/v1/workflows/${workflowId}/dispatch`, {
+    token: FOUNDER_TOKEN,
+    headers: { 'idempotency-key': idempotencyKey },
+  });
+}
+
 describe('trusted host HTTP surface', () => {
   it('serves health without authentication and exposes no local configuration', async () => {
     const harness = await startHost();
@@ -258,9 +268,7 @@ describe('trusted host HTTP surface', () => {
     expect(deniedIntake.status).toBe(403);
     expect(harness.runtime.taskStore.getTask(task.entity_id)).toBeUndefined();
 
-    const deniedDispatch = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, {
-      token: FOUNDER_TOKEN,
-    });
+    const deniedDispatch = await dispatch(harness, workflow.entity_id);
     expect(deniedDispatch.status).toBe(403);
     expect(harness.runtime.workflowStore.get(workflow.entity_id)).toBeUndefined();
   });
@@ -295,9 +303,7 @@ describe('trusted host HTTP surface', () => {
     expect((await intake(harness, 'task', task)).status).toBe(201);
     expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
 
-    const denied = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, {
-      token: FOUNDER_TOKEN,
-    });
+    const denied = await dispatch(harness, workflow.entity_id);
     expect(denied.status).toBe(403);
     expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('created');
     expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('created');
@@ -314,9 +320,7 @@ describe('trusted host HTTP surface', () => {
     expect((await intake(harness, 'task', task)).status).toBe(201);
     expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
 
-    const dispatched = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, {
-      token: FOUNDER_TOKEN,
-    });
+    const dispatched = await dispatch(harness, workflow.entity_id);
     expect(dispatched.status).toBe(200);
     expect(dispatched.body?.lifecycle_state).toBe('completed');
 
@@ -366,16 +370,14 @@ describe('trusted host HTTP surface', () => {
     expect((await intake(harness, 'task', task)).status).toBe(201);
     expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
 
-    const disabled = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, {
-      token: FOUNDER_TOKEN,
-    });
+    const disabled = await dispatch(harness, workflow.entity_id);
     expect(disabled.status).toBe(503);
     expect(disabled.body?.error).toBe('adapter_unavailable');
     expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('created');
     expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('created');
   });
 
-  it('rejects a second dispatch of an already completed workflow', async () => {
+  it('replays a completed dispatch for the same idempotency key and rejects a different one', async () => {
     const task = makeTask();
     const workflow = makeWorkflow([task.entity_id]);
     const harness = await startHost({
@@ -384,9 +386,24 @@ describe('trusted host HTTP surface', () => {
     });
     await intake(harness, 'task', task);
     await intake(harness, 'workflow', workflow);
-    expect((await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, { token: FOUNDER_TOKEN })).status).toBe(200);
 
-    const second = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, { token: FOUNDER_TOKEN });
+    const first = await dispatch(harness, workflow.entity_id, 'replay-key-0001');
+    expect(first.status).toBe(200);
+    expect(first.body?.replayed).toBe(false);
+
+    const replay = await dispatch(harness, workflow.entity_id, 'replay-key-0001');
+    expect(replay.status).toBe(200);
+    expect(replay.body?.replayed).toBe(true);
+    expect(replay.body?.run_id).toBe(first.body?.run_id);
+    expect(replay.body?.lifecycle_state).toBe('completed');
+
+    const missingKey = await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, {
+      token: FOUNDER_TOKEN,
+    });
+    expect(missingKey.status).toBe(400);
+    expect(missingKey.body?.error).toBe('idempotency_key_required');
+
+    const second = await dispatch(harness, workflow.entity_id, 'replay-key-0002');
     expect(second.status).toBe(409);
     expect(second.body?.error).toBe('orchestration_rejected');
   });
@@ -480,7 +497,7 @@ describe('trusted host HTTP surface', () => {
     });
     await intake(harness, 'task', task);
     await intake(harness, 'workflow', workflow);
-    await call(harness, 'POST', `/v1/workflows/${workflow.entity_id}/dispatch`, { token: FOUNDER_TOKEN });
+    await dispatch(harness, workflow.entity_id);
 
     await harness.server.close();
     harness.runtime.close();
@@ -492,5 +509,48 @@ describe('trusted host HTTP surface', () => {
     } finally {
       registry.close();
     }
+  });
+
+  it('restores durable operational state and suspends interrupted work after restart', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-restart-'));
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const ownedTask = { ...task, assigned_workflow: workflow.entity_id } as TaskEntity;
+
+    const first = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withAdapters: true,
+      directory,
+    });
+    expect((await intake(first, 'task', ownedTask)).status).toBe(201);
+    expect((await intake(first, 'workflow', workflow)).status).toBe(201);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'validated', FOUNDER);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'active', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'validated', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'active', FOUNDER);
+    first.runtime.runs.start({
+      workflow_id: workflow.entity_id,
+      actor_id: FOUNDER,
+      idempotency_key: 'interrupted-dispatch-0001',
+    });
+
+    // Simulate a host crash: the run is journaled as running, then the process stops
+    // without completing it.
+    await first.server.close();
+    first.runtime.close();
+
+    const second = await startHost({ directory });
+    expect(second.runtime.recoveredWorkflows).toEqual([workflow.entity_id]);
+    expect(second.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(second.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(second.runtime.runs.list()[0]?.state).toBe('interrupted');
+
+    const read = await call(second, 'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN });
+    expect(read.status).toBe(200);
+    expect((read.body?.task as Record<string, unknown>).lifecycle_state).toBe('suspended');
+
+    const health = await call(second, 'GET', '/health');
+    expect(health.body?.storage).toBe('durable');
+    expect(health.body?.recovered_workflows).toBe(1);
   });
 });

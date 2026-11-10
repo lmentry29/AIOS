@@ -81,6 +81,23 @@ const ALLOWED_LIFECYCLE_TRANSITIONS: Record<LifecycleState, readonly LifecycleSt
   archived: [],
 };
 
+/** Replay may extend appended collections, never rewrite or truncate them. */
+function assertAppendOnlyPrefix(
+  entityId: string,
+  field: string,
+  current: readonly unknown[],
+  restored: readonly unknown[],
+): void {
+  if (restored.length < current.length) {
+    throw new AppendOnlyFieldError(entityId, [field]);
+  }
+  for (let index = 0; index < current.length; index += 1) {
+    if (!valuesEqual(current[index], restored[index])) {
+      throw new AppendOnlyFieldError(entityId, [field]);
+    }
+  }
+}
+
 function isLifecycleTransitionAllowed(
   current: CanonicalEntity,
   to: LifecycleState,
@@ -224,6 +241,37 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   get(entityId: string): T | undefined {
     const entity = this.records.get(entityId);
     return entity ? this.clone(entity) : undefined;
+  }
+
+  /**
+   * Recovery-only hydration of a previously validated snapshot.
+   *
+   * A durable adapter replays journal records through this method instead of re-running
+   * `create`/`update`/`transitionLifecycle`, because replay must not invent new timestamps,
+   * versions, or lifecycle-history entries. The write is still validated: the schema is
+   * applied, an existing record may only advance (`version` strictly increases and
+   * `lifecycle_history`/`relationships` extend the existing arrays as prefixes), and a
+   * duplicate first write is rejected.
+   *
+   * Do NOT use this from request paths. It exists for adapters whose own storage already
+   * proved integrity (for example a hash-chained journal) and is not a way to bypass the
+   * lifecycle graph, immutability rules, or append-only guards.
+   */
+  restore(entity: T): T {
+    const parsed = this.schema.parse(entity);
+    if (parsed.access_policy !== undefined && this.options.allowAccessPolicyOnCreate !== true) {
+      throw new AccessPolicyMutationError(parsed.entity_id);
+    }
+    const current = this.records.get(parsed.entity_id);
+    if (current) {
+      if (parsed.version <= current.version) {
+        throw new InvalidLifecycleTransitionError(parsed.entity_id, current.lifecycle_state, parsed.lifecycle_state);
+      }
+      assertAppendOnlyPrefix(parsed.entity_id, 'lifecycle_history', current.lifecycle_history, parsed.lifecycle_history);
+      assertAppendOnlyPrefix(parsed.entity_id, 'relationships', current.relationships, parsed.relationships);
+    }
+    this.records.set(parsed.entity_id, parsed);
+    return this.clone(parsed);
   }
 
   list(filter?: { entityType?: CanonicalEntity['entity_type'] }): T[] {

@@ -1,5 +1,5 @@
 import type { ArtifactEntity, CanonicalEntity, TaskEntity, WorkflowEntity } from '@aios/core';
-import { ArtifactEntity as ArtifactSchema, CanonicalEntity as CanonicalEntitySchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
+import { CanonicalEntity as CanonicalEntitySchema } from '@aios/core';
 import {
   AuthorizationService,
   AuthorizedLocalConnectorEvidenceReader,
@@ -16,13 +16,28 @@ import {
   type TaskVerificationDecision,
   type TaskVerificationPort,
 } from '@aios/orchestration';
-import { TaskStore } from '@aios/work-hierarchy';
 import { SharedAuthorizationBoundary } from './authorization.js';
 import type { HostConfig } from './config.js';
 import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
+import {
+  DurableOperationalStore,
+  type DurableCollection,
+  type DurableRunCoordinator,
+  type DurableTaskRepository,
+} from './persistence/operational-store.js';
 
 const UNCONFIGURED_VERIFIER_ID = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * Actor recorded for host-initiated crash recovery.
+ *
+ * `ActorRef` admits only a UUID or `human:<id>`. Recording the founder would fabricate
+ * human attribution for a transition the host made on its own, so recovery is attributed
+ * to this stable system actor instead. It is not a registered Agent and holds no
+ * capability; it exists only to label recovery entries in append-only lifecycle history.
+ */
+const HOST_RECOVERY_ACTOR_ID = '00000000-0000-4000-8000-0000000000a1';
 
 /**
  * Refuses execution until a real adapter is supplied.
@@ -73,13 +88,43 @@ export interface HostRuntime {
   boundary: SharedAuthorizationBoundary;
   kernel: OrchestrationKernel;
   founder: FounderInterface;
-  taskStore: TaskStore;
-  workflowStore: ObjectStore<WorkflowEntity>;
-  artifactStore: ObjectStore<ArtifactEntity>;
+  /** Durable operational repositories (ADR-0015). */
+  operational: DurableOperationalStore;
+  runs: DurableRunCoordinator;
+  taskStore: DurableTaskRepository;
+  workflowStore: DurableCollection<WorkflowEntity>;
+  artifactStore: DurableCollection<ArtifactEntity>;
+  /** Workflows whose interrupted dispatch was recovered at startup. */
+  recoveredWorkflows: string[];
   executionConfigured: boolean;
   verificationConfigured: boolean;
   evidenceConfigured: boolean;
   close(): void;
+}
+
+/**
+ * Refuses to leave recovered Workflows looking active.
+ *
+ * A run journaled by a previous host boot cannot still be executing. Marking it interrupted
+ * is not enough on its own: the Workflow and its active Tasks would otherwise stay `active`
+ * with no owner, and a later reader would mistake an interrupted dispatch for in-flight
+ * work. `active`/`monitored` can reach `suspended` in the canonical graph; `suspended` can
+ * be resumed deliberately, which is exactly the operator decision this creates.
+ */
+function suspendInterruptedWork(store: DurableOperationalStore): string[] {
+  const affected = store.runs.recover();
+  for (const workflowId of affected) {
+    const workflow = store.workflows.get(workflowId);
+    if (workflow && (workflow.lifecycle_state === 'active' || workflow.lifecycle_state === 'monitored')) {
+      store.workflows.transitionLifecycle(workflowId, 'suspended', HOST_RECOVERY_ACTOR_ID);
+    }
+    for (const task of store.tasks.listTasks()) {
+      if (task.assigned_workflow !== workflowId) continue;
+      if (task.lifecycle_state !== 'active' && task.lifecycle_state !== 'monitored') continue;
+      store.tasks.transitionTaskLifecycle(task.entity_id, 'suspended', HOST_RECOVERY_ACTOR_ID);
+    }
+  }
+  return affected;
 }
 
 function resolveAgentUnlessConfigured(
@@ -99,10 +144,12 @@ function resolveAgentUnlessConfigured(
  * configuration-backed bearer sessions rather than caller-supplied actor strings.
  *
  * Deliberate non-claims:
- * - Operational stores (Tasks, Workflows, Artifacts, learning records) are still the
- *   in-memory adapters. Durable operational persistence, leases, retries, and crash recovery
- *   remain open; this factory does not pretend otherwise.
- * - No execution or verification adapter is invented. Missing adapters fail closed.
+ * - Tasks, Workflows, Artifacts, and dispatch runs are durable through the hash-chained
+ *   operational journal (ADR-0015) with idempotency keys and leases. Founder Intelligence
+ *   remains in the Obsidian vault (ADR-0014); this does not create a second Founder store.
+ * - Learning records and the canonical object store used only for Founder queries remain
+ *   in-memory. No execution or verification adapter is invented: missing adapters fail
+ *   closed.
  * - The vault/Gmail/Notion readers are composed against the shared evaluator but are only
  *   live once the local Obsidian++ service and credentials exist.
  */
@@ -117,6 +164,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   }
 
   const policies = new FilePolicyRegistry({ filePath: config.policy_file });
+  let operational: DurableOperationalStore | undefined;
   try {
     const authorization = new AuthorizationService(
       policies,
@@ -126,9 +174,14 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     const boundary = new SharedAuthorizationBoundary(authorization);
     const identity = new TrustedIdentityService(config.sessions);
 
-    const taskStore = new TaskStore();
-    const workflowStore = new ObjectStore<WorkflowEntity>(WorkflowSchema);
-    const artifactStore = new ObjectStore<ArtifactEntity>(ArtifactSchema);
+    operational = new DurableOperationalStore({
+      directory: config.operational_store.directory,
+      leaseMs: config.dispatch_lease_ms,
+    });
+    const recoveredWorkflows = suspendInterruptedWork(operational);
+    const taskStore = operational.tasks;
+    const workflowStore = operational.workflows;
+    const artifactStore = operational.artifacts;
     const objectStore = new ObjectStore<CanonicalEntity>(CanonicalEntitySchema);
     const learning = new LearningService();
 
@@ -188,15 +241,22 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       boundary,
       kernel,
       founder,
+      operational,
+      runs: operational.runs,
       taskStore,
       workflowStore,
       artifactStore,
+      recoveredWorkflows,
       executionConfigured: options.execution !== undefined,
       verificationConfigured: options.verification !== undefined,
       evidenceConfigured: config.obsidian !== undefined,
-      close: () => policies.close(),
+      close: () => {
+        operational?.close();
+        policies.close();
+      },
     };
   } catch (error) {
+    operational?.close();
     policies.close();
     throw error;
   }

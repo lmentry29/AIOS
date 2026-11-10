@@ -4,4 +4,6 @@ export * from './authorization.js';
 export * from './runtime.js';
 export * from './server.js';
 export * from './policy-admin.js';
+export * from './persistence/journal.js';
+export * from './persistence/operational-store.js';
 export * from './errors.js';

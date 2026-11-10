@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskEntity as TaskEntityType } from '@aios/core';
 import { ObjectStore } from '../src/store.js';
-import { AccessPolicyMutationError, EntityIdConflictError, EntityNotFoundError, ImmutableEntityError, InvalidLifecycleTransitionError } from '../src/errors.js';
+import { AccessPolicyMutationError, AppendOnlyFieldError, EntityIdConflictError, EntityNotFoundError, ImmutableEntityError, InvalidLifecycleTransitionError } from '../src/errors.js';
 
 function baseFields(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date().toISOString();
@@ -409,5 +409,39 @@ describe('ObjectStore — Task-shaped entity insertion (COM §10 evidence)', () 
     // The data loss persists through subsequent operations too, since
     // transitionLifecycle() also parses against the base schema.
     expect((transitioned as unknown as TaskEntityType).assigned_agent).toBeUndefined();
+  });
+});
+
+describe('ObjectStore — recovery-only restore', () => {
+  it('hydrates an exact snapshot without bumping versions or rewriting history', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+    const transitioned = store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+
+    const recovery = new ObjectStore();
+    const restored = recovery.restore(transitioned);
+
+    expect(restored).toEqual(transitioned);
+    expect(restored.version).toBe(2);
+    expect(recovery.get(created.entity_id)).toEqual(transitioned);
+  });
+
+  it('refuses replay that rewinds a version or rewrites append-only history', () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
+    const transitioned = store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
+
+    const recovery = new ObjectStore();
+    recovery.restore(created);
+    recovery.restore(transitioned);
+
+    // A replayed snapshot may only advance the record.
+    expect(() => recovery.restore(transitioned)).toThrow(InvalidLifecycleTransitionError);
+    // It may also never rewrite or truncate append-only history.
+    expect(() => recovery.restore({
+      ...transitioned,
+      version: transitioned.version + 1,
+      lifecycle_history: [],
+    })).toThrow(AppendOnlyFieldError);
   });
 });
