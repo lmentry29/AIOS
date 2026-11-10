@@ -1643,6 +1643,168 @@ describe('trusted host HTTP surface', () => {
     ]);
   });
 
+  it('denies Workflow attempt inspection all-or-nothing when any step Task lacks read_status', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-attempt-all-or-nothing-'));
+    const readable = makeTask();
+    const restricted = makeTask();
+    const laterWorkflow = makeWorkflow([readable.entity_id, restricted.entity_id]);
+    const firstWorkflow = makeWorkflow([restricted.entity_id, readable.entity_id]);
+    const base = makePolicy(readable.entity_id, laterWorkflow.entity_id);
+    const policy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        ...base.rules,
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['intake'],
+          resource_ids: [restricted.entity_id, firstWorkflow.entity_id],
+        },
+      ],
+    };
+    const harness = await startHost({ policy, directory });
+    expect((await intake(harness, 'task', readable)).status).toBe(201);
+    expect((await intake(harness, 'task', restricted)).status).toBe(201);
+    expect((await intake(harness, 'workflow', laterWorkflow)).status).toBe(201);
+    expect((await intake(harness, 'workflow', firstWorkflow)).status).toBe(201);
+
+    // Both Tasks carry real durable attempts, so a partial payload would be observable.
+    const firstAttempt = harness.runtime.executions.start({
+      task_id: readable.entity_id,
+      workflow_id: laterWorkflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+    const secondAttempt = harness.runtime.executions.resume({
+      task_id: readable.entity_id,
+      workflow_id: laterWorkflow.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: firstAttempt.execution_id,
+    });
+    harness.runtime.executions.complete(secondAttempt.execution_id, [`result_sha256:${'c'.repeat(64)}`]);
+    harness.runtime.executions.start({
+      task_id: restricted.entity_id,
+      workflow_id: laterWorkflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+
+    const journalPath = join(directory, 'operational', 'operational.jsonl');
+    const journalBefore = readFileSync(journalPath);
+    const journalHashBefore = createHash('sha256').update(journalBefore).digest('hex');
+    const readableAttempts = harness.runtime.executions.listForTask(readable.entity_id);
+    const restrictedAttempts = harness.runtime.executions.listForTask(restricted.entity_id);
+    expect(readableAttempts.map((record) => [record.attempt, record.state])).toEqual([
+      [1, 'interrupted'],
+      [2, 'completed'],
+    ]);
+    expect(restrictedAttempts).toHaveLength(1);
+
+    // The ungranted step is first in one Workflow and later in the other; both deny whole.
+    for (const workflowId of [laterWorkflow.entity_id, firstWorkflow.entity_id]) {
+      const denied = await workflowAttemptsRequest(harness, workflowId);
+      expect(denied.status).toBe(403);
+      expect(denied.body?.error).toBe('forbidden');
+      expect(denied.body).not.toHaveProperty('tasks');
+      expect(denied.body).not.toHaveProperty('attempts');
+      expect(JSON.stringify(denied.body)).not.toContain(readable.entity_id);
+      expect(JSON.stringify(denied.body)).not.toContain('predecessor_execution_ids');
+    }
+
+    const journalAfter = readFileSync(journalPath);
+    expect(journalAfter.equals(journalBefore)).toBe(true);
+    expect(createHash('sha256').update(journalAfter).digest('hex')).toBe(journalHashBefore);
+    expect(harness.runtime.executions.listForTask(readable.entity_id)).toEqual(readableAttempts);
+    expect(harness.runtime.executions.listForTask(restricted.entity_id)).toEqual(restrictedAttempts);
+
+    await harness.server.close();
+    harness.runtime.close();
+    const reopened = await startHost({ directory });
+    expect(reopened.runtime.executions.listForTask(readable.entity_id)).toEqual(readableAttempts);
+    expect(reopened.runtime.executions.listForTask(restricted.entity_id)).toEqual(restrictedAttempts);
+  });
+
+  it('returns every step Task history when the whole Workflow is authorized', async () => {
+    const first = makeTask();
+    const second = makeTask();
+    const workflow = makeWorkflow([first.entity_id, second.entity_id]);
+    const policy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['intake', 'read_status'],
+          resource_ids: [first.entity_id, second.entity_id, workflow.entity_id],
+        },
+      ],
+    };
+    const harness = await startHost({ policy });
+    expect((await intake(harness, 'task', first)).status).toBe(201);
+    expect((await intake(harness, 'task', second)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const firstInitial = harness.runtime.executions.start({
+      task_id: first.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+    const firstResume = harness.runtime.executions.resume({
+      task_id: first.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: firstInitial.execution_id,
+    });
+    harness.runtime.executions.reconcile();
+    const firstFinal = harness.runtime.executions.resume({
+      task_id: first.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: firstResume.execution_id,
+    });
+    harness.runtime.executions.complete(firstFinal.execution_id, [`result_sha256:${'d'.repeat(64)}`]);
+    harness.runtime.executions.start({
+      task_id: second.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+
+    const firstRead = await taskAttemptsRequest(harness, first.entity_id);
+    const secondRead = await taskAttemptsRequest(harness, second.entity_id);
+    expect(firstRead.status).toBe(200);
+    expect(secondRead.status).toBe(200);
+    const firstAttempts = firstRead.body?.attempts as Array<Record<string, unknown>>;
+    expect(firstAttempts.map((item) => [item.attempt, item.attempt_kind, item.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'interrupted'],
+      [3, 'resume', 'completed'],
+    ]);
+    expect(firstAttempts.map((item) => item.execution_id)).toEqual([
+      firstInitial.execution_id,
+      firstResume.execution_id,
+      firstFinal.execution_id,
+    ]);
+    expect(firstAttempts.map((item) => item.predecessor_execution_ids)).toEqual([
+      [],
+      [firstInitial.execution_id],
+      [firstInitial.execution_id, firstResume.execution_id],
+    ]);
+
+    const workflowRead = await workflowAttemptsRequest(harness, workflow.entity_id);
+    expect(workflowRead.status).toBe(200);
+    expect(workflowRead.body).toEqual({
+      workflow_id: workflow.entity_id,
+      tasks: [
+        { task_id: first.entity_id, attempts: firstAttempts },
+        { task_id: second.entity_id, attempts: secondRead.body?.attempts },
+      ],
+    });
+  });
+
   it('inspects single-attempt and failed-then-retried histories', async () => {
     const singleTask = makeTask();
     const failedTask = makeTask();
@@ -1732,12 +1894,20 @@ describe('trusted host HTTP surface', () => {
     const unauthenticated = await call(harness, 'GET', `/v1/tasks/${task.entity_id}/attempts`);
     expect(unauthenticated.status).toBe(401);
     expect(unauthenticated.body?.error).toBe('unauthenticated');
+    const unauthenticatedWorkflow = await call(harness, 'GET', `/v1/workflows/${workflow.entity_id}/attempts`);
+    expect(unauthenticatedWorkflow.status).toBe(401);
+    expect(unauthenticatedWorkflow.body?.error).toBe('unauthenticated');
 
     const unauthorized = await call(harness, 'GET', `/v1/tasks/${task.entity_id}/attempts`, {
       token: AGENT_TOKEN,
     });
     expect(unauthorized.status).toBe(403);
     expect(unauthorized.body?.error).toBe('forbidden');
+    const unauthorizedWorkflow = await call(harness, 'GET', `/v1/workflows/${workflow.entity_id}/attempts`, {
+      token: AGENT_TOKEN,
+    });
+    expect(unauthorizedWorkflow.status).toBe(403);
+    expect(unauthorizedWorkflow.body?.error).toBe('forbidden');
 
     const unknownTask = await taskAttemptsRequest(harness, unknownTaskId);
     expect(unknownTask.status).toBe(404);

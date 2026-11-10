@@ -965,8 +965,22 @@ export class OrchestrationKernel {
     if (!isEntityIdentifier(workflowId) || !isActorIdentifier(actorId)) {
       throw new OrchestrationError('Workflow attempt reads require valid Workflow and actor identifiers.');
     }
-    const workflow = await this.getWorkflow(workflowId, actorId);
-    const tasks: TaskAttemptHistory[] = [];
+    // Authorize the Workflow before lookup, matching the host read routes. The HTTP route
+    // performs the same check so an ungranted caller cannot distinguish an unknown id from
+    // a known one; this keeps direct kernel callers on the same ordering.
+    if (!(await this.options.authorization.authorize({
+      actor_id: actorId,
+      action: 'read_status',
+      resource_id: workflowId,
+    }))) {
+      throw new OrchestrationError('Workflow attempt read denied by authorization policy.');
+    }
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) throw new OrchestrationError(`Workflow "${workflowId}" was not found.`);
+
+    // Authorize every declared step before resolving one or reading any attempt history.
+    // Workflow inspection is all-or-nothing: a denial on a later Task must not expose the
+    // histories of earlier authorized siblings or cause those ledger reads to happen.
     for (const taskId of workflow.steps) {
       if (!(await this.options.authorization.authorize({
         actor_id: actorId,
@@ -977,8 +991,17 @@ export class OrchestrationKernel {
           `Task attempt read denied by authorization policy for Task "${taskId}".`,
         );
       }
+    }
+
+    const stepTasks: TaskEntity[] = [];
+    for (const taskId of workflow.steps) {
       const task = this.tasks.getTask(taskId);
       if (!task) throw new OrchestrationError(`Workflow step Task "${taskId}" was not found.`);
+      stepTasks.push(task);
+    }
+
+    const tasks: TaskAttemptHistory[] = [];
+    for (const task of stepTasks) {
       tasks.push({
         task_id: task.entity_id,
         attempts: await this.readAttemptHistory(task.entity_id),

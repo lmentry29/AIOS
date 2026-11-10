@@ -7,6 +7,7 @@ import {
   OrchestrationKernel,
   type AgentExecutionPort,
   type AuthorizationPort,
+  type AuthorizationRequest,
   type TaskExecutionObservation,
 } from '../src/index.js';
 
@@ -357,5 +358,61 @@ describe('OrchestrationKernel', () => {
     expect(h.verification.verify).not.toHaveBeenCalled();
 
     await expect(kernel.getTaskAttempts(randomUUID(), 'human:founder')).rejects.toThrow(/was not found/);
+  });
+
+  it('denies Workflow attempt history before deriving any Task history when one step lacks read_status', async () => {
+    for (const restrictedAt of ['first', 'later'] as const) {
+      const h = harness();
+      const readableBefore = h.tasks.createTask(task());
+      const restricted = h.tasks.createTask(task());
+      const readableAfter = h.tasks.createTask(task());
+      const steps = restrictedAt === 'first'
+        ? [restricted.entity_id, readableAfter.entity_id]
+        : [readableBefore.entity_id, restricted.entity_id];
+      const wf = workflow(steps);
+      const granted = new Set([
+        wf.entity_id,
+        ...(restrictedAt === 'first' ? [readableAfter.entity_id] : [readableBefore.entity_id]),
+      ]);
+      const authorize = vi.fn(async (request: AuthorizationRequest) => (
+        request.action !== 'read_status' || granted.has(request.resource_id)
+      ));
+      const history = vi.fn(async () => [] as TaskExecutionObservation[]);
+      const kernel = new OrchestrationKernel(h.tasks, {
+        authorization: { authorize },
+        execution: h.execution,
+        verification: h.verification,
+        resolveAgent: async () => h.agentId,
+        executionState: { latest: async () => undefined, history },
+      });
+      await kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+      authorize.mockClear();
+
+      const denial = await kernel.getWorkflowAttempts(wf.entity_id, 'human:founder')
+        .then(() => undefined, (error: unknown) => error);
+      expect(denial).toBeInstanceOf(OrchestrationError);
+      expect((denial as Error).message).toMatch(/denied by authorization policy/);
+      expect(history).not.toHaveBeenCalled();
+      expect(authorize.mock.calls.map(([request]) => request.resource_id)).toEqual(
+        restrictedAt === 'first'
+          ? [wf.entity_id, restricted.entity_id]
+          : [wf.entity_id, readableBefore.entity_id, restricted.entity_id],
+      );
+      for (const created of [readableBefore, restricted, readableAfter]) {
+        expect(h.tasks.getTask(created.entity_id)?.lifecycle_state).toBe('created');
+      }
+    }
+
+    // Authorization still precedes lookup: an unknown Workflow must not reveal nonexistence.
+    const h = harness();
+    const kernel = new OrchestrationKernel(h.tasks, {
+      authorization: { authorize: async () => false },
+      execution: h.execution,
+      verification: h.verification,
+      resolveAgent: async () => h.agentId,
+    });
+    await expect(kernel.getWorkflowAttempts(randomUUID(), 'human:founder')).rejects.toThrow(
+      /denied by authorization policy/,
+    );
   });
 });
