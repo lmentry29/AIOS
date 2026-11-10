@@ -30,6 +30,9 @@ export interface LocalEvidenceRuntime {
  * provision explicit resource grants through PolicyAdministrationService.
  */
 export function createLocalEvidenceRuntime(options: LocalEvidenceRuntimeOptions): LocalEvidenceRuntime {
+  if (new Set([options.vaultResourceId, options.gmailResourceId, options.notionResourceId]).size !== 3) {
+    throw new Error('Vault, Gmail, and Notion must use three distinct resource UUIDs.');
+  }
   const policies = new FilePolicyRegistry({ filePath: options.policyFilePath });
   try {
     const authorization = new AuthorizationService(
@@ -38,19 +41,19 @@ export function createLocalEvidenceRuntime(options: LocalEvidenceRuntimeOptions)
       policies,
     );
     const vault = new AuthorizedVaultEvidenceReader({
-      baseUrl: options.obsidianBaseUrl,
+      baseUrl: options.obsidianBaseUrl ?? 'http://127.0.0.1:4444',
       password: options.obsidianPassword,
       vaultResourceId: options.vaultResourceId,
-      fetch: options.fetch,
-      timeoutMs: options.timeoutMs,
+      fetch: options.fetch ?? globalThis.fetch,
+      timeoutMs: options.timeoutMs ?? 10_000,
     }, authorization);
     const connectors = new AuthorizedLocalConnectorEvidenceReader({
-      baseUrl: options.obsidianBaseUrl,
+      baseUrl: options.obsidianBaseUrl ?? 'http://127.0.0.1:4444',
       password: options.obsidianPassword,
       gmailResourceId: options.gmailResourceId,
       notionResourceId: options.notionResourceId,
-      fetch: options.fetch,
-      timeoutMs: options.timeoutMs,
+      fetch: options.fetch ?? globalThis.fetch,
+      timeoutMs: options.timeoutMs ?? 10_000,
     }, authorization);
     return {
       policies,
