@@ -79,6 +79,71 @@ describe('FilePolicyRegistry', () => {
     }
   });
 
+  it('atomically publishes and attaches a higher-version replacement', async () => {
+    const h = setup();
+    const registry = new FilePolicyRegistry({ filePath: h.filePath });
+    try {
+      await registry.publishAndAttach(h.policy, [h.resourceId], 'human:founder');
+      const replacement: AccessPolicy = {
+        policy_id: randomUUID(),
+        version: 2,
+        rules: [{
+          effect: 'allow',
+          subject_ids: ['human:founder'],
+          actions: ['read_evidence'],
+          resource_ids: [h.resourceId],
+        }],
+      };
+      await registry.publishAndAttach(replacement, [h.resourceId], 'human:founder');
+      expect(await registry.resolve(h.resourceId)).toBe(replacement.policy_id);
+      expect(registry.listPolicyAudit().map((event) => event.operation))
+        .toEqual(['publish', 'attach', 'publish', 'attach']);
+      expect(registry.listPolicyAudit()[3]?.previous_policy_id).toBe(h.policy.policy_id);
+
+      registry.close();
+      const reopened = new FilePolicyRegistry({ filePath: h.filePath });
+      try {
+        expect(await reopened.resolve(h.resourceId)).toBe(replacement.policy_id);
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      registry.close();
+      rmSync(h.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid or stale atomic publications without touching policy state', async () => {
+    const h = setup();
+    const registry = new FilePolicyRegistry({ filePath: h.filePath });
+    try {
+      await registry.publishAndAttach(h.policy, [h.resourceId], 'human:founder');
+      const before = readFileSync(h.filePath, 'utf8');
+
+      const stale: AccessPolicy = { ...h.policy, policy_id: randomUUID(), version: 1 };
+      await expect(registry.publishAndAttach(stale, [h.resourceId], 'human:founder'))
+        .rejects.toMatchObject({ code: 'version_conflict' });
+
+      const baseRule = h.policy.rules[0];
+      if (!baseRule) throw new Error('Policy fixture rule missing.');
+      const invalid = {
+        ...h.policy,
+        policy_id: randomUUID(),
+        version: 2,
+        rules: [{ ...baseRule, actions: ['not_an_action'] }],
+      } as unknown as AccessPolicy;
+      await expect(registry.publishAndAttach(invalid, [h.resourceId], 'human:founder'))
+        .rejects.toMatchObject({ code: 'invalid_policy' });
+
+      expect(readFileSync(h.filePath, 'utf8')).toBe(before);
+      expect(await registry.resolve(h.resourceId)).toBe(h.policy.policy_id);
+      expect(registry.listPolicyAudit()).toHaveLength(2);
+    } finally {
+      registry.close();
+      rmSync(h.directory, { recursive: true, force: true });
+    }
+  });
+
   it('verifies the audit hash chain on reopen and rejects out-of-band edits', async () => {
     const h = setup();
     const registry = new FilePolicyRegistry({ filePath: h.filePath });

@@ -3,6 +3,7 @@ import type { AccessPolicy } from '@aios/founder';
 import type { TaskEntity, WorkflowEntity } from '@aios/core';
 
 export const FOUNDER = 'human:founder';
+export const OPERATOR = 'human:operator';
 export const AGENT_ID = '11111111-1111-4111-8111-111111111111';
 export const VERIFIER_ID = '22222222-2222-4222-8222-222222222222';
 export const VAULT_RESOURCE_ID = '33333333-3333-4333-8333-333333333333';
@@ -11,6 +12,7 @@ export const NOTION_RESOURCE_ID = '55555555-5555-4555-8555-555555555555';
 export const DECISION_COLLECTION_ID = '66666666-6666-4666-8666-666666666666';
 
 export const FOUNDER_TOKEN = 'founder-token-0123456789abcdef';
+export const OPERATOR_TOKEN = 'operator-token-abcdef0123456789';
 export const AGENT_TOKEN = 'agent-token-fedcba9876543210';
 
 function base(createdBy: string) {
@@ -65,7 +67,7 @@ export function makePolicy(
 ): AccessPolicy {
   const founderActions = options.intakeOnly
     ? ['intake' as const]
-    : (['intake', 'dispatch', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence'] as const);
+    : (['intake', 'dispatch', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy'] as const);
   return {
     policy_id: randomUUID(),
     version: 1,

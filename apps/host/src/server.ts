@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { FounderAuthorizationError, FounderInputError } from '@aios/founder';
+import { FounderAuthorizationError, FounderInputError, PolicyPublicationError } from '@aios/founder';
 import {
   ExecutionAttemptConflictError,
   ExecutionCapacityError,
@@ -12,6 +12,7 @@ import type { HostConfig } from './config.js';
 import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
+import { parseRuntimePolicyPublication } from './policy-admin.js';
 import { ExecutionConflictError } from './persistence/execution-ledger.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
 import { withRequestId } from './request-context.js';
@@ -177,7 +178,8 @@ function logFailure(requestId: string, path: string, mapped: { status: number; c
  *   supported yet, so there is no CORS surface to get wrong.
  * - Every authenticated route derives its actor from the verified session. A request body
  *   may never name its own actor.
- * - Policy administration is not exposed over HTTP at all. It is a separate offline CLI.
+ * - Runtime policy administration is a human-only `POST /v1/policies` path requiring an
+ *   exact `administer_policy` grant on every target. The offline bootstrap CLI remains.
  * - Response bodies are `no-store`, and error responses never include stack traces or
  *   caller-supplied payloads.
  */
@@ -333,7 +335,7 @@ export class HostHttpServer {
 async function requireAllowed(
   runtime: HostRuntime,
   session: AuthenticatedSession,
-  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry',
+  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry' | 'administer_policy',
   resourceId: string,
 ): Promise<void> {
   const allowed = await runtime.boundary.authorize({
@@ -342,6 +344,28 @@ async function requireAllowed(
     resource_id: resourceId,
   });
   if (!allowed) throw new HostHttpError(403, 'forbidden', 'Authorization policy denied this operation.');
+}
+
+async function requirePolicyAdministration(
+  runtime: HostRuntime,
+  session: AuthenticatedSession,
+  resourceIds: readonly string[],
+): Promise<void> {
+  for (const resourceId of resourceIds) {
+    const allowed = await runtime.boundary.authorize({
+      actor_id: session.principal_id,
+      action: 'administer_policy',
+      resource_id: resourceId,
+    });
+    if (!allowed) {
+      throw new HostHttpError(
+        403,
+        'policy_admin_denied',
+        'An exact administer_policy grant is required on every target resource.',
+      );
+    }
+  }
+  requireHuman(session);
 }
 
 function requireHuman(session: AuthenticatedSession): void {
@@ -413,6 +437,40 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           human: isHumanPrincipal(session.principal_id),
         },
       }),
+    },
+    {
+      pattern: /^\/v1\/policies$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session, readJson }) => {
+        const document = parseRuntimePolicyPublication(jsonBody(await readJson()));
+        // All targets are authorized before any mutation. The registry then validates the
+        // policy, monotonic version, and rule scope and commits policy plus attachments as
+        // one atomic snapshot. An audit-append failure on any decision denies the request.
+        await requirePolicyAdministration(host, session, document.attach_to);
+        try {
+          await host.policies.publishAndAttach(
+            document.policy,
+            document.attach_to,
+            session.principal_id,
+          );
+        } catch (error) {
+          if (error instanceof PolicyPublicationError) {
+            const status = error.code === 'version_conflict' || error.code === 'policy_exists'
+              ? 409
+              : 400;
+            throw new HostHttpError(status, error.code, error.message);
+          }
+          throw error;
+        }
+        return {
+          status: 201,
+          body: {
+            policy_id: document.policy.policy_id,
+            version: document.policy.version,
+            attached: document.attach_to,
+          },
+        };
+      },
     },
     {
       pattern: /^\/v1\/tasks$/,

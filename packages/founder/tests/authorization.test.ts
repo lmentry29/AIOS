@@ -26,6 +26,42 @@ describe('AuthorizationService', () => {
     expect(await auth.authorize({ actor_id: actorId, action: 'read_evidence', resource_id: resourceId })).toBe(true);
   });
 
+  it('requires an exact human administer_policy grant', async () => {
+    const adminPolicy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [actorId],
+        actions: ['administer_policy'],
+        resource_ids: [resourceId],
+      }],
+    };
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([adminPolicy]),
+      async () => adminPolicy.policy_id,
+      audit,
+    );
+
+    expect(await auth.authorize({ actor_id: actorId, action: 'administer_policy', resource_id: resourceId })).toBe(true);
+    expect(await auth.authorize({ actor_id: 'human:other', action: 'administer_policy', resource_id: resourceId })).toBe(false);
+    expect(await auth.authorize({ actor_id: actorId, action: 'administer_policy', resource_id: randomUUID() })).toBe(false);
+    expect(audit.list()).toContainEqual(expect.objectContaining({
+      action: 'administer_policy',
+      decision: 'allow',
+      reason: 'matching_allow',
+      matched_rule_index: 0,
+      matched_rule_effect: 'allow',
+    }));
+    const adminRule = adminPolicy.rules[0];
+    if (!adminRule) throw new Error('Admin policy fixture rule missing.');
+    expect(() => new StaticAccessPolicyStore([{
+      ...adminPolicy,
+      rules: [{ ...adminRule, subject_ids: [randomUUID()] }],
+    }])).toThrow(/human/);
+  });
+
   it('denies when the resource has no policy or references an unknown policy', async () => {
     const noPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => undefined, new InMemoryAuthorizationAuditStore());
     const unknownPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => randomUUID(), new InMemoryAuthorizationAuditStore());

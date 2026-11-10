@@ -26,6 +26,7 @@ const ACTIONS = new Set([
   'retry',
   'read_status',
   'read_evidence',
+  'administer_policy',
 ]);
 const REASONS = new Set([
   'matching_allow',

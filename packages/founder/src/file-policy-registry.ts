@@ -44,6 +44,20 @@ export class FilePolicyRegistryError extends Error {
   }
 }
 
+export type PolicyPublicationErrorCode =
+  | 'invalid_policy'
+  | 'invalid_targets'
+  | 'policy_exists'
+  | 'version_conflict';
+
+/** A rejected runtime publication with a stable, wire-safe reason code. */
+export class PolicyPublicationError extends FilePolicyRegistryError {
+  constructor(readonly code: PolicyPublicationErrorCode, message: string) {
+    super(message);
+    this.name = 'PolicyPublicationError';
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -94,7 +108,7 @@ function appendEvent(state: FilePolicyState, kind: AuditKind, payload: PolicyLif
 function validateDecisionRecord(value: AuthorizationDecisionAudit): void {
   if (!isRecord(value) || !isUuid(value.request_id)
     || !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id))
-    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence'].includes(value.action))
+    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy'].includes(value.action))
     || !(value.resource_id === null || isUuid(value.resource_id))
     || !(value.policy_id === null || isUuid(value.policy_id))
     || !(value.policy_version === null || (Number.isSafeInteger(value.policy_version) && value.policy_version >= 1))
@@ -230,6 +244,97 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
       event_id: randomUUID(), operation: 'publish', actor_id: actorId,
       policy_id: snapshot.policy_id, policy_version: snapshot.version, timestamp: new Date().toISOString(),
     });
+    this.commit(next);
+  }
+
+  /**
+   * Publishes an immutable replacement and attaches it to every target in one atomic commit.
+   *
+   * This is the runtime-administration primitive: validation, scope checks, version checks,
+   * policy lifecycle events, and all attachment changes are written as one validated state
+   * snapshot. A rejected publication therefore leaves both the effective attachment and the
+   * on-disk state untouched. Versions must increase for an existing attachment, so a stale
+   * or replayed policy cannot silently replace a newer one.
+   */
+  async publishAndAttach(
+    policy: AccessPolicy,
+    resourceIds: readonly string[],
+    actorId: string,
+  ): Promise<void> {
+    this.assertOpen();
+    if (!isHumanPrincipal(actorId)) {
+      throw new FilePolicyRegistryError('Policy publication requires an authenticated human administrator.');
+    }
+    if (!Array.isArray(resourceIds) || resourceIds.length === 0 || resourceIds.length > 64
+      || resourceIds.some((id) => !isUuid(id)) || new Set(resourceIds).size !== resourceIds.length) {
+      throw new PolicyPublicationError('invalid_targets', 'Policy publication requires 1-64 distinct resource UUIDs.');
+    }
+
+    let snapshot: AccessPolicy;
+    try {
+      new StaticAccessPolicyStore([policy]);
+      snapshot = clone(policy);
+    } catch {
+      throw new PolicyPublicationError('invalid_policy', 'Policy failed validation.');
+    }
+    if (this.state.policies[snapshot.policy_id]) {
+      throw new PolicyPublicationError('policy_exists', 'Published policies are immutable; publish a new policy ID.');
+    }
+
+    const targets = new Set(resourceIds);
+    const referenced = new Set<string>();
+    for (const rule of snapshot.rules) {
+      for (const resourceId of rule.resource_ids) {
+        referenced.add(resourceId);
+        if (!targets.has(resourceId)) {
+          throw new PolicyPublicationError(
+            'invalid_policy',
+            'Policy rules may reference only the resources in this publication.',
+          );
+        }
+      }
+    }
+    for (const resourceId of targets) {
+      if (!referenced.has(resourceId)) {
+        throw new PolicyPublicationError(
+          'invalid_policy',
+          'Every attachment target must be referenced by at least one policy rule.',
+        );
+      }
+    }
+
+    const next = clone(this.state);
+    const previousPolicies = new Map<string, string | undefined>();
+    for (const resourceId of resourceIds) {
+      const previousPolicyId = next.resource_policies[resourceId];
+      previousPolicies.set(resourceId, previousPolicyId);
+      if (previousPolicyId !== undefined) {
+        const previous = next.policies[previousPolicyId];
+        if (!previous) throw new FilePolicyRegistryError('Attached policy is missing from the registry.');
+        if (snapshot.version <= previous.version) {
+          throw new PolicyPublicationError(
+            'version_conflict',
+            'Replacement policy version must exceed the effective version for every target.',
+          );
+        }
+      }
+    }
+
+    next.policies[snapshot.policy_id] = snapshot;
+    appendEvent(next, 'policy_lifecycle', {
+      event_id: randomUUID(), operation: 'publish', actor_id: actorId,
+      policy_id: snapshot.policy_id, policy_version: snapshot.version, timestamp: new Date().toISOString(),
+    });
+    for (const resourceId of resourceIds) {
+      const previousPolicyId = previousPolicies.get(resourceId);
+      next.resource_policies[resourceId] = snapshot.policy_id;
+      appendEvent(next, 'policy_lifecycle', {
+        event_id: randomUUID(), operation: 'attach', actor_id: actorId,
+        policy_id: snapshot.policy_id, policy_version: snapshot.version, resource_id: resourceId,
+        ...(previousPolicyId === undefined ? {} : { previous_policy_id: previousPolicyId }),
+        timestamp: new Date().toISOString(),
+      });
+    }
     this.commit(next);
   }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy';
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
@@ -142,6 +142,9 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
 
   constructor(policies: readonly AccessPolicy[]) {
     for (const policy of policies) {
+      if (!isRecord(policy) || !hasOnlyFields(policy, POLICY_FIELDS)) {
+        throw new Error('Access policy contains an unsupported field.');
+      }
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
       if (!Number.isSafeInteger(policy.version) || policy.version < 1) {
         throw new Error(`Access policy "${policy.policy_id}" requires a positive integer version.`);
@@ -151,6 +154,14 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
         throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
       }
       for (const rule of policy.rules as readonly AccessRule[]) {
+        if (!isRecord(rule) || !hasOnlyFields(rule, RULE_FIELDS)) {
+          throw new Error(`Access policy "${policy.policy_id}" contains an unsupported rule field.`);
+        }
+        if (!Array.isArray(rule.subject_ids) || !rule.subject_ids.every((id: unknown) => typeof id === 'string')
+          || !Array.isArray(rule.actions) || !rule.actions.every((action: unknown) => typeof action === 'string')
+          || !Array.isArray(rule.resource_ids) || !rule.resource_ids.every((id: unknown) => typeof id === 'string')) {
+          throw new Error(`Every rule in access policy "${policy.policy_id}" must define string subjects, actions, and resources.`);
+        }
         if (rule.effect !== 'allow' && rule.effect !== 'deny') throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
         if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
           throw new Error(`Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
@@ -160,6 +171,10 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
         }
         if (rule.actions.some((action: string) => !isAccessAction(action))) {
           throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
+        }
+        if (rule.actions.includes('administer_policy')
+          && rule.subject_ids.some((id: string) => !isHumanPrincipal(id))) {
+          throw new Error(`Access policy "${policy.policy_id}" may grant administer_policy only to human principals.`);
         }
       }
       this.policies.set(policy.policy_id, Object.freeze({
@@ -371,6 +386,17 @@ export class AuthorizationService {
   }
 }
 
+const POLICY_FIELDS = new Set(['policy_id', 'version', 'rules']);
+const RULE_FIELDS = new Set(['effect', 'subject_ids', 'actions', 'resource_ids']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyFields(value: object, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
 function isActorRef(value: string): boolean {
   return isUuid(value) || isHumanPrincipal(value);
 }
@@ -380,7 +406,7 @@ function isHumanPrincipal(value: string): boolean {
 }
 
 function isAccessAction(value: string): value is AccessAction {
-  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence'].includes(value);
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy'].includes(value);
 }
 
 function isUuid(value: string): boolean {

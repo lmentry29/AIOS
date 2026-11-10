@@ -24,6 +24,8 @@ import {
   FOUNDER_TOKEN,
   GMAIL_RESOURCE_ID,
   NOTION_RESOURCE_ID,
+  OPERATOR,
+  OPERATOR_TOKEN,
   VAULT_RESOURCE_ID,
   VERIFIER_ID,
   makePolicy,
@@ -121,6 +123,7 @@ async function startHost(options: {
     bootstrap_principal_id: FOUNDER,
     sessions: [
       { session_id: randomUUID(), principal_id: FOUNDER, token_sha256: sha256(FOUNDER_TOKEN), label: 'founder laptop' },
+      { session_id: randomUUID(), principal_id: OPERATOR, token_sha256: sha256(OPERATOR_TOKEN), label: 'policy operator' },
       { session_id: randomUUID(), principal_id: AGENT_ID, token_sha256: sha256(AGENT_TOKEN), label: 'agent worker' },
     ],
     ...(localExecutionConfig === undefined ? {} : { execution: localExecutionConfig }),
@@ -264,6 +267,27 @@ function withoutActions(policy: AccessPolicy, removed: readonly AccessAction[]):
   };
 }
 
+function policyForTargets(
+  resourceIds: readonly string[],
+  options: {
+    policyId?: string;
+    version?: number;
+    actions?: readonly AccessAction[];
+    subjects?: readonly string[];
+  } = {},
+): AccessPolicy {
+  return {
+    policy_id: options.policyId ?? randomUUID(),
+    version: options.version ?? 2,
+    rules: [{
+      effect: 'allow',
+      subject_ids: options.subjects ?? [FOUNDER],
+      actions: options.actions ?? ['read_status', 'administer_policy'],
+      resource_ids: [...resourceIds],
+    }],
+  };
+}
+
 function suspendWorkflow(harness: Harness, workflowId: string): void {
   harness.runtime.workflowStore.transitionLifecycle(workflowId, 'validated', FOUNDER);
   harness.runtime.workflowStore.transitionLifecycle(workflowId, 'active', FOUNDER);
@@ -323,7 +347,7 @@ describe('trusted host HTTP surface', () => {
     expect(crossOrigin.body?.error).toBe('cross_origin_rejected');
   });
 
-  it('rejects unknown routes, wrong methods, and any policy-administration endpoint', async () => {
+  it('rejects unknown routes and wrong methods, and authenticates policy administration', async () => {
     const harness = await startHost();
     expect((await call(harness, 'GET', '/v1/unknown')).status).toBe(404);
 
@@ -331,8 +355,13 @@ describe('trusted host HTTP surface', () => {
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.get('allow')).toBe('GET');
 
-    // Policy administration is an offline CLI surface, never an HTTP route.
-    expect((await call(harness, 'POST', '/v1/policies', { token: FOUNDER_TOKEN, body: {} })).status).toBe(404);
+    const unauthenticated = await call(harness, 'POST', '/v1/policies', { body: {} });
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.body?.error).toBe('unauthenticated');
+
+    const wrongPolicyMethod = await call(harness, 'GET', '/v1/policies', { token: FOUNDER_TOKEN });
+    expect(wrongPolicyMethod.status).toBe(405);
+    expect(wrongPolicyMethod.headers.get('allow')).toBe('POST');
     expect((await call(harness, 'POST', '/v1/policy/attach', { token: FOUNDER_TOKEN, body: {} })).status).toBe(404);
   });
 
@@ -2167,5 +2196,291 @@ describe('permanent Memory approvals through the trusted host boundary', () => {
     await learning.promote(id, 'published', approval.approval_id);
     expect(learning.getKnowledge(id)?.stage).toBe('published');
     expect(learning.getMemoryApproval(approval.approval_id)?.status).toBe('consumed');
+  });
+});
+
+describe('runtime policy administration', () => {
+  it('publishes an exact-granted replacement that immediately decides later authorization', async () => {
+    const task = makeTask();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['intake'],
+          resource_ids: [task.entity_id],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['administer_policy'],
+          resource_ids: [task.entity_id],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+
+    // The initial policy deliberately lacks read_status. The replacement grants it. A
+    // non-bootstrap human holds the exact admin grant, proving administration is not a
+    // bootstrap-only path.
+    expect((await call(harness, 'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN })).status).toBe(403);
+    const replacement = policyForTargets([task.entity_id]);
+    const published = await call(harness, 'POST', '/v1/policies', {
+      token: OPERATOR_TOKEN,
+      body: { policy: replacement, attach_to: [task.entity_id] },
+    });
+    expect(published.status).toBe(201);
+    expect(published.body).toMatchObject({
+      policy_id: replacement.policy_id,
+      version: 2,
+      attached: [task.entity_id],
+    });
+    expect(await harness.runtime.policies.resolve(task.entity_id)).toBe(replacement.policy_id);
+    expect((await call(harness, 'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN })).status).toBe(200);
+
+    const decision = harness.runtime.authorizationAudit.list().find((record) =>
+      record.request_id === published.headers.get('x-request-id')
+      && record.action === 'administer_policy',
+    );
+    expect(decision).toMatchObject({
+      actor_id: OPERATOR,
+      resource_id: task.entity_id,
+      policy_id: initial.policy_id,
+      policy_version: 1,
+      decision: 'allow',
+      reason: 'matching_allow',
+      matched_rule_index: 1,
+      matched_rule_effect: 'allow',
+    });
+
+    const policyBytes = readFileSync(harness.policyPath, 'utf8');
+    const auditBytes = readFileSync(
+      join(harness.runtime.config.operational_store.directory, 'authorization-audit.jsonl'),
+      'utf8',
+    );
+    expect(policyBytes).not.toContain(FOUNDER_TOKEN);
+    expect(auditBytes).not.toContain(FOUNDER_TOKEN);
+    expect(auditBytes).not.toContain('Bearer');
+  });
+
+  it('denies an unauthorized principal and mismatched action, resource, or scope', async () => {
+    const resourceA = randomUUID();
+    const resourceB = randomUUID();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['administer_policy', 'read_status'],
+          resource_ids: [resourceA],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['read_status'],
+          resource_ids: [resourceB],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [AGENT_ID],
+          actions: ['read_status'],
+          resource_ids: [resourceA],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    const policyAuditCount = harness.runtime.policies.listPolicyAudit().length;
+
+    const agentCandidate = policyForTargets([resourceA]);
+    const agentDenied = await call(harness, 'POST', '/v1/policies', {
+      token: AGENT_TOKEN,
+      body: { policy: agentCandidate, attach_to: [resourceA] },
+    });
+    expect(agentDenied.status).toBe(403);
+    expect(agentDenied.body?.error).toBe('policy_admin_denied');
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: agentDenied.headers.get('x-request-id'),
+      actor_id: AGENT_ID,
+      action: 'administer_policy',
+      resource_id: resourceA,
+      decision: 'deny',
+      reason: 'no_matching_allow',
+      matched_rule_index: null,
+      matched_rule_effect: null,
+    }));
+
+    const resourceCandidate = policyForTargets([resourceB]);
+    const resourceDenied = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: resourceCandidate, attach_to: [resourceB] },
+    });
+    expect(resourceDenied.status).toBe(403);
+    expect(resourceDenied.body?.error).toBe('policy_admin_denied');
+
+    const scopeCandidate = policyForTargets([resourceA, resourceB]);
+    const scopeDenied = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: scopeCandidate, attach_to: [resourceA, resourceB] },
+    });
+    expect(scopeDenied.status).toBe(403);
+    expect(scopeDenied.body?.error).toBe('policy_admin_denied');
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: scopeDenied.headers.get('x-request-id'),
+      action: 'administer_policy',
+      resource_id: resourceA,
+      decision: 'allow',
+    }));
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: scopeDenied.headers.get('x-request-id'),
+      action: 'administer_policy',
+      resource_id: resourceB,
+      decision: 'deny',
+      reason: 'no_matching_allow',
+    }));
+
+    expect(await harness.runtime.policies.get(agentCandidate.policy_id)).toBeUndefined();
+    expect(await harness.runtime.policies.get(resourceCandidate.policy_id)).toBeUndefined();
+    expect(await harness.runtime.policies.get(scopeCandidate.policy_id)).toBeUndefined();
+    expect(await harness.runtime.policies.resolve(resourceA)).toBe(initial.policy_id);
+    expect(await harness.runtime.policies.resolve(resourceB)).toBe(initial.policy_id);
+    expect(harness.runtime.policies.listPolicyAudit()).toHaveLength(policyAuditCount);
+  });
+
+  it('rejects malformed, unsigned, unsupported, or schema-invalid publications without applying them', async () => {
+    const resource = randomUUID();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [FOUNDER],
+        actions: ['administer_policy', 'read_status'],
+        resource_ids: [resource],
+      }],
+    };
+    const harness = await startHost({ policy: initial });
+    const beforeState = readFileSync(harness.policyPath, 'utf8');
+    const beforePolicyId = await harness.runtime.policies.resolve(resource);
+
+    // The current host trust model authenticates the administrator with a bearer session;
+    // no detached policy signature is accepted. An unauthenticated publication is rejected
+    // before the body is parsed.
+    expect((await call(harness, 'POST', '/v1/policies', {
+      body: { policy: policyForTargets([resource], { version: 2 }), attach_to: [resource] },
+    })).status).toBe(401);
+
+    const malformed = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      rawBody: '{',
+    });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body?.error).toBe('invalid_json');
+
+    const invalidPolicy = {
+      ...policyForTargets([resource], { version: 2 }),
+      rules: [{
+        effect: 'allow',
+        subject_ids: [FOUNDER],
+        actions: ['not_an_action'],
+        resource_ids: [resource],
+      }],
+    } as unknown as AccessPolicy;
+    const schemaInvalid = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: invalidPolicy, attach_to: [resource] },
+    });
+    expect(schemaInvalid.status).toBe(400);
+    expect(schemaInvalid.body?.error).toBe('invalid_policy');
+
+    const unsupported = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: policyForTargets([resource], { version: 0 }), attach_to: [resource] },
+    });
+    expect(unsupported.status).toBe(400);
+    expect(unsupported.body?.error).toBe('invalid_policy');
+
+    const stale = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: policyForTargets([resource], { version: 1 }), attach_to: [resource] },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body?.error).toBe('version_conflict');
+
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeState);
+    expect(await harness.runtime.policies.resolve(resource)).toBe(beforePolicyId);
+    expect(await harness.runtime.policies.get(invalidPolicy.policy_id)).toBeUndefined();
+    expect(harness.runtime.policies.listPolicyAudit()).toHaveLength(2);
+  });
+
+  it('does not mutate policy when the authorization audit append fails', async () => {
+    const resource = randomUUID();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [FOUNDER],
+        actions: ['administer_policy', 'read_status'],
+        resource_ids: [resource],
+      }],
+    };
+    const harness = await startHost({ policy: initial });
+    const beforeState = readFileSync(harness.policyPath, 'utf8');
+    const candidate = policyForTargets([resource], { version: 2 });
+
+    harness.runtime.authorizationAudit.close();
+    const blocked = await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: candidate, attach_to: [resource] },
+    });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body?.error).toBe('policy_admin_denied');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeState);
+    expect(await harness.runtime.policies.get(candidate.policy_id)).toBeUndefined();
+    expect(await harness.runtime.policies.resolve(resource)).toBe(initial.policy_id);
+    expect(harness.runtime.policies.listPolicyAudit()).toHaveLength(2);
+  });
+
+  it('keeps an admin-published replacement and its decision audit across restart', async () => {
+    const task = makeTask();
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-policy-restart-'));
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [FOUNDER],
+        actions: ['intake', 'administer_policy'],
+        resource_ids: [task.entity_id],
+      }],
+    };
+    const harness = await startHost({ policy: initial, directory });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    const replacement = policyForTargets([task.entity_id]);
+    expect((await call(harness, 'POST', '/v1/policies', {
+      token: FOUNDER_TOKEN,
+      body: { policy: replacement, attach_to: [task.entity_id] },
+    })).status).toBe(201);
+    const before = harness.runtime.authorizationAudit.list();
+
+    await harness.server.close();
+    harness.runtime.close();
+
+    const restarted = createHostRuntime({ config: loadHostConfig(harness.configPath) });
+    const server = createHostServer(restarted);
+    const address = await server.listen();
+    cleanups.push(async () => {
+      await server.close();
+      restarted.close();
+    });
+    expect(await restarted.policies.resolve(task.entity_id)).toBe(replacement.policy_id);
+    expect(restarted.authorizationAudit.list().slice(0, before.length)).toEqual(before);
+    expect((await call({ ...harness, baseUrl: `http://${address.host}:${address.port}` },
+      'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN })).status).toBe(200);
   });
 });

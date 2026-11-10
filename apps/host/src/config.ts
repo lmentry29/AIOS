@@ -54,7 +54,10 @@ export interface HostConfig {
   obsidian?: {
     base_url: string;
   };
-  /** Human principal allowed to read the authorization audit. Never a policy administrator. */
+  /**
+   * Human principal allowed to read the authorization audit. Policy administration is
+   * separately gated by exact `administer_policy` grants; this field is not an admin bypass.
+   */
   bootstrap_principal_id: string;
   sessions: HostSessionEntry[];
   request_body_limit_bytes: number;
