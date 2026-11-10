@@ -64,6 +64,7 @@ field fails startup instead of being silently ignored. A partial example (no sec
     "image": "node:22-alpine",
     "default_timeout_ms": 60000,
     "max_output_bytes": 65536,
+    "workspace_max_bytes": 268435456,
     "max_concurrent_tasks": 1
   }
 }
@@ -72,8 +73,11 @@ field fails startup instead of being silently ignored. A partial example (no sec
 The `execution` block is optional. `agent_id` and `verifier_id` must be distinct UUIDs;
 `provider` is `auto`, `bubblewrap`, `seatbelt`, or `docker`; Docker requires a local image
 and never pulls one implicitly. The host checks the provider before advertising dispatch and
-fails closed to 503 if it is unavailable. `max_concurrent_tasks` is optional, must be an
-integer from 1 to 32, and defaults to 1. A dispatch beyond the cap is rejected with 429
+fails closed to 503 if it is unavailable. `workspace_max_bytes` is optional, must be an integer
+from 1024 to 8 GiB, and defaults to 256 MiB. It is enforced while the run is live by sampling
+the per-task workspace, not by a filesystem quota; an over-cap run is aborted, its workspace is
+discarded, and the durable failure reason is `disk_quota_exceeded` (ADR-0026).
+`max_concurrent_tasks` is optional, must be an integer from 1 to 32, and defaults to 1. A dispatch beyond the cap is rejected with 429
 `execution_capacity_exceeded` before any lifecycle write; it is not queued and it does not
 start a sandbox invocation.
 

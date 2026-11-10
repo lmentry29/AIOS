@@ -83,3 +83,56 @@ Drill output (verbatim, exit 0):
 - Full workspace gate (`build`, `typecheck`, `lint`, `test`) exited 0.
 
 Limits of this evidence: the archive is not signed or encrypted, restore is offline only, and no multi-host or concurrent-restore drill was attempted (the journal lock refuses a live host).
+
+## 2026-11-10 — live per-run workspace disk quota (F-004)
+
+Host: Linux 6.1.102 x86_64, Node 26.13.0, pnpm 11.11.0, unprivileged UID. `bwrap` 0.9.0 at
+`/tmp/bwrap-root/usr/bin`. Commands actually run, in this order:
+
+```sh
+pnpm --filter @aios/host run build
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/workspace-quota.test.ts tests/workspace-quota-live.test.ts tests/config.test.ts \
+  tests/execution.test.ts tests/verifier-binding.test.ts tests/managed-execution.test.ts
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+node tools/security/scan-secrets.mjs
+node tools/security/audit-policy.mjs
+```
+
+Focused quota/config/execution/verifier suites: **32 passed** (5 new quota regressions, 2 of
+them live-drill regressions in the live run below). Full workspace gate: **46/46 tasks
+successful**, host **122 passed, 11 skipped** (the 11 skips are the live suites without
+`AIOS_BWRAP_DIR`). Live boundary plus quota suites with the real binary: **11 passed** (9
+existing boundary cases and 2 new quota drills).
+
+Drill output (verbatim, exit 0):
+
+```json
+{"drill":"workspace-quota","cap_bytes":1048576,"over_cap":{"error":"WorkspaceQuotaExceededError","message":"Workspace exceeded its 1048576-byte limit; the run was stopped.","workspace_entries":0,"matching_processes":0},"under_cap":{"provider":"bubblewrap","exit_code":"0","workspace_entries":1,"workspace_bytes":65536},"sequential":{"provider":"bubblewrap","workspace_entries":2,"workspace_bytes":[65536,32768]}}
+```
+
+Observed properties:
+
+- The over-cap task ran a continuously appending writer under real bubblewrap. It was stopped
+  while live, raised `WorkspaceQuotaExceededError`, left **0** workspace entries (discarded),
+  and left **0** processes matching its unique command marker. It was never reported as a
+  success.
+- The under-cap task completed under bubblewrap with exit code 0 and exactly 65,536 bytes in
+  its own workspace. A second sequential task completed independently at 32,768 bytes; the
+  first run's ceiling did not affect it. The existing 9-case live boundary suite still passed.
+- The managed lifecycle test journals `state: failed` with `reason_code:
+  disk_quota_exceeded`; the verifier rejects that attempt with its execution ID, attempt, and
+  `failure_evidence_sha256`, rather than accepting a caller-supplied result. The verifier's own
+  over-cap command is also rejected and its workspace discarded.
+- `secret-scan: no findings across 261 tracked files`; `audit-policy: no untriaged high or
+  critical advisories (1 triaged)` (zod GHSA-mrhx-c7xc-m3w5).
+
+Limits of this evidence: this is host-side **sampling enforcement**, not a filesystem or block
+quota. The 25 ms interval allows a fast writer to overshoot before abort; the final sample and
+discard bound retained state, not the transient write. Symlinks are skipped, hardlinks are
+counted per name, and writes outside `/workspace` are not attributed to the run (`/tmp` is a
+separate 64 MiB tmpfs, other tmpfs paths are not). Docker, gVisor, Seatbelt, and Apple
+Containerization remain unverified. See ADR-0026 and F-004.

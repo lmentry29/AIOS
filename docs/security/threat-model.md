@@ -48,9 +48,14 @@ Founder Intelligence vault's own access controls.
   gVisor or a VM boundary is required for hostile multi-tenant workloads; neither is validated
   in this repository yet.
 - **Resource exhaustion.** bubblewrap has no cgroup CPU/memory controls. Deadlines, bounded
-  output, a size-bounded `/tmp`, process-group kill, and one-command-per-task are the current
-  controls; a memory bomb can still stress the host. Docker provider has cgroup flags but was
-  not executable on the validation host.
+  output, a size-bounded `/tmp` (64 MiB), process-group kill, and one-command-per-task are the
+  current controls; a memory bomb can still stress the host. The per-run workspace ceiling is
+  sampled every 25 ms while the run is live, aborts and discards an over-cap workspace, and is
+  journaled as `disk_quota_exceeded` (ADR-0026). It is **not a hard filesystem quota**: a fast
+  writer can overshoot between samples, symlinks are skipped, hardlinks are counted per name,
+  and writes outside `/workspace` (for example other tmpfs paths) are not attributed to the
+  run. There is no unprivileged block/loop quota on this host. Docker provider has cgroup flags
+  but was not executable on the validation host.
 - **macOS.** `sandbox-exec` is deprecated; a supported macOS path requires Apple
   Containerization on macOS 26 / Apple silicon, which is not implemented or validated here.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor

@@ -30,12 +30,15 @@ Primary sources checked 2026-11-10. Versions are the latest published at that da
 ## Flags actually passed by the bubblewrap provider
 
 `--die-with-parent --new-session --unshare-all --cap-drop ALL`, read-only binds of `/usr`,
-`/bin`, `/lib`, `/lib64`, `/etc`, `--proc /proc`, `--dev /dev`, `--tmpfs /tmp`, a writable bind
-of only the run workspace, `--clearenv`, `HOME=/tmp`, a fixed `PATH`, and then the task argv.
+`/bin`, `/lib`, `/lib64`, `/etc`, `--proc /proc`, `--dev /dev`, `--size 67108864 --tmpfs /tmp`,
+a writable bind of only the run workspace, `--clearenv`, `HOME=/tmp`, a fixed `PATH`, and then
+the task argv.
 
-Known gaps, tracked in the findings ledger: no seccomp filter inside the namespace, no cgroup
-CPU/memory accounting, and no per-workspace disk quota (a post-run workspace size check is the
-current control).
+Known gaps, tracked in the findings ledger: no seccomp filter inside the namespace and no
+cgroup CPU/memory accounting. The per-run workspace ceiling is enforced live by the host
+executor's 25 ms sampler, not by the kernel or the provider flags; it is not a hard quota and
+a fast writer can overshoot between samples (ADR-0026). The sandbox `/tmp` is size-bounded to
+64 MiB, and the only other writable host path is the run workspace.
 
 ## Sources
 
