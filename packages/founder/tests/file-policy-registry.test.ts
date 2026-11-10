@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -111,6 +111,7 @@ describe('FilePolicyRegistry', () => {
   it('rejects non-absolute paths and invalid state files', () => {
     expect(() => new FilePolicyRegistry({ filePath: 'relative/policies.json' })).toThrow(/absolute file path/);
     const h = setup();
+    mkdirSync(join(h.directory, 'state'), { recursive: true });
     writeFileSync(h.filePath, '{not-json', { flag: 'w', mode: 0o600 });
     expect(() => new FilePolicyRegistry({ filePath: h.filePath })).toThrow(/invalid JSON/);
     rmSync(h.directory, { recursive: true, force: true });
