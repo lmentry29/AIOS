@@ -1,0 +1,144 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { HostConfigError } from '../src/errors.js';
+import { loadHostConfig, parseHostConfig } from '../src/config.js';
+import {
+  DECISION_COLLECTION_ID,
+  FOUNDER,
+  GMAIL_RESOURCE_ID,
+  NOTION_RESOURCE_ID,
+  VAULT_RESOURCE_ID,
+} from './fixtures.js';
+
+const TOKEN_HASH = createHash('sha256').update('founder-token-0123456789abcdef').digest('hex');
+
+function validConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const directory = mkdtempSync(join(tmpdir(), 'aios-host-config-'));
+  return {
+    schema_version: 1,
+    bind: { host: '127.0.0.1', port: 0 },
+    policy_file: join(directory, 'policy-state.json'),
+    decision_collection_id: DECISION_COLLECTION_ID,
+    resources: {
+      vault: VAULT_RESOURCE_ID,
+      gmail: GMAIL_RESOURCE_ID,
+      notion: NOTION_RESOURCE_ID,
+    },
+    bootstrap_principal_id: FOUNDER,
+    sessions: [
+      {
+        session_id: randomUUID(),
+        principal_id: FOUNDER,
+        token_sha256: TOKEN_HASH,
+        label: 'founder laptop',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function writeRawConfig(contents: string, mode = 0o600): string {
+  const directory = mkdtempSync(join(tmpdir(), 'aios-host-load-'));
+  const path = join(directory, 'host.json');
+  writeFileSync(path, contents, { mode });
+  return path;
+}
+
+function writeConfig(document: unknown, mode = 0o600): string {
+  return writeRawConfig(JSON.stringify(document), mode);
+}
+
+describe('host configuration', () => {
+  it('accepts a loopback, owner-only document and applies safe defaults', () => {
+    const parsed = parseHostConfig(validConfig());
+    expect(parsed.bind).toEqual({ host: '127.0.0.1', port: 0 });
+    expect(parsed.request_body_limit_bytes).toBe(256 * 1024);
+    expect(parsed.sessions).toHaveLength(1);
+    expect(parsed.sessions[0]?.principal_id).toBe(FOUNDER);
+  });
+
+  it('normalizes a loopback Obsidian++ URL and rejects any other shape', () => {
+    expect(parseHostConfig(validConfig({ obsidian: { base_url: 'http://127.0.0.1:4444' } })).obsidian)
+      .toEqual({ base_url: 'http://127.0.0.1:4444' });
+    expect(() => parseHostConfig(validConfig({ obsidian: { base_url: 'http://example.com:4444' } })))
+      .toThrow(HostConfigError);
+    expect(() => parseHostConfig(validConfig({ obsidian: { base_url: 'https://127.0.0.1:4444' } })))
+      .toThrow(HostConfigError);
+    expect(() => parseHostConfig(validConfig({ obsidian: { base_url: 'http://127.0.0.1:4444/vault' } })))
+      .toThrow(HostConfigError);
+  });
+
+  it('refuses to bind anything other than a literal loopback address', () => {
+    expect(() => parseHostConfig(validConfig({ bind: { host: '0.0.0.0', port: 4780 } })))
+      .toThrow(/loopback/);
+    expect(() => parseHostConfig(validConfig({ bind: { host: 'localhost', port: 4780 } })))
+      .toThrow(/loopback/);
+    expect(() => parseHostConfig(validConfig({ bind: { host: '::', port: 4780 } })))
+      .toThrow(/loopback/);
+  });
+
+  it('rejects a plaintext token field instead of ignoring it', () => {
+    const sessions = [{
+      session_id: randomUUID(),
+      principal_id: FOUNDER,
+      token: 'founder-token-0123456789abcdef',
+    }];
+    // The unknown field is rejected outright, so a plaintext token can never be ignored
+    // in favour of a missing digest.
+    expect(() => parseHostConfig(validConfig({ sessions }))).toThrow(/unsupported field "token"/);
+  });
+
+  it('rejects duplicate session digests and duplicate session identifiers', () => {
+    const session = {
+      session_id: randomUUID(),
+      principal_id: FOUNDER,
+      token_sha256: TOKEN_HASH,
+    };
+    expect(() => parseHostConfig(validConfig({ sessions: [session, { ...session, session_id: randomUUID() }] })))
+      .toThrow(/duplicates another session/);
+    expect(() => parseHostConfig(validConfig({ sessions: [session, { ...session, token_sha256: 'a'.repeat(64) }] })))
+      .toThrow(/duplicates another session/);
+  });
+
+  it('requires a human bootstrap principal with a configured session', () => {
+    expect(() => parseHostConfig(validConfig({ bootstrap_principal_id: randomUUID() })))
+      .toThrow(/human principal/);
+    expect(() => parseHostConfig(validConfig({ bootstrap_principal_id: 'human:other' })))
+      .toThrow(/bootstrap_principal_id/);
+  });
+
+  it('requires three distinct evidence resource UUIDs and an absolute policy path', () => {
+    expect(() => parseHostConfig(validConfig({
+      resources: { vault: VAULT_RESOURCE_ID, gmail: VAULT_RESOURCE_ID, notion: NOTION_RESOURCE_ID },
+    }))).toThrow(/distinct/);
+    expect(() => parseHostConfig(validConfig({ policy_file: 'relative/policy.json' })))
+      .toThrow(/absolute/);
+  });
+
+  it('rejects an expired-session timestamp it cannot parse', () => {
+    const sessions = [{
+      session_id: randomUUID(),
+      principal_id: FOUNDER,
+      token_sha256: TOKEN_HASH,
+      expires_at: 'tomorrow-ish',
+    }];
+    expect(() => parseHostConfig(validConfig({ sessions }))).toThrow(/ISO-8601/);
+  });
+
+  it('loads a 0600 regular file and refuses a readable-by-others file', () => {
+    expect(loadHostConfig(writeConfig(validConfig(), 0o600)).bootstrap_principal_id).toBe(FOUNDER);
+    expect(() => loadHostConfig(writeConfig(validConfig(), 0o644))).toThrow(/owner-only/);
+  });
+
+  it('refuses a symlinked or non-JSON configuration file', () => {
+    const target = writeConfig(validConfig(), 0o600);
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-link-'));
+    const link = join(directory, 'host.json');
+    symlinkSync(target, link);
+    expect(() => loadHostConfig(link)).toThrow(/symlink/);
+    expect(() => loadHostConfig(writeRawConfig('{ not json', 0o600))).toThrow(/valid JSON/);
+  });
+});

@@ -24,6 +24,37 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
 
+  apps/host:
+    dependencies:
+      '@aios/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@aios/founder':
+        specifier: workspace:*
+        version: link:../../packages/founder
+      '@aios/learning':
+        specifier: workspace:*
+        version: link:../../packages/learning
+      '@aios/objects':
+        specifier: workspace:*
+        version: link:../../packages/objects
+      '@aios/orchestration':
+        specifier: workspace:*
+        version: link:../../packages/orchestration
+      '@aios/work-hierarchy':
+        specifier: workspace:*
+        version: link:../../packages/work-hierarchy
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@20.19.43)
+
   packages/agents:
     dependencies:
       '@aios/core':
@@ -134,15 +165,15 @@ importers:
 
   packages/orchestration:
     dependencies:
-      '@aios/objects':
-        specifier: workspace:*
-        version: link:../objects
       '@aios/agents':
         specifier: workspace:*
         version: link:../agents
       '@aios/core':
         specifier: workspace:*
         version: link:../core
+      '@aios/objects':
+        specifier: workspace:*
+        version: link:../objects
       '@aios/work-hierarchy':
         specifier: workspace:*
         version: link:../work-hierarchy
@@ -231,12 +262,12 @@ importers:
       '@aios/founder':
         specifier: workspace:*
         version: link:../../packages/founder
-      '@aios/orchestration':
-        specifier: workspace:*
-        version: link:../../packages/orchestration
       '@aios/objects':
         specifier: workspace:*
         version: link:../../packages/objects
+      '@aios/orchestration':
+        specifier: workspace:*
+        version: link:../../packages/orchestration
       '@aios/work-hierarchy':
         specifier: workspace:*
         version: link:../../packages/work-hierarchy

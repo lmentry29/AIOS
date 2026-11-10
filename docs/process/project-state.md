@@ -64,6 +64,32 @@ These are GitHub Actions results; no local-machine execution or production deplo
 9. **Security operations:** No completed threat model, penetration test, SLOs, operational monitoring/alerting, incident response runbook, or disaster-recovery validation.
 10. **Operational proof:** The repository has test coverage and a deterministic test harness, but no verified continuously running deployment or real external provider integration.
 
+## Addendum — 2026-11-10 (local-only verification, no CI run)
+
+This addendum records work performed in a cloud workspace against branch
+`community/open-source-foundation` at base commit `c2d369d26224ecc75c2f0c376944cedd7d1019dd`.
+It is local evidence only: no GitHub Actions run accompanied it, and CI results below still
+refer to the earlier commit they name.
+
+- `apps/host/` was added as the trusted local composition root (an application, not a tenth
+  package). It loads owner-only configuration, authenticates bearer sessions against stored
+  SHA-256 digests, composes one `FilePolicyRegistry` and one `AuthorizationService`, injects
+  the same boundary into Founder and Orchestration, and serves a loopback-only reviewed API.
+  Policy administration remains an offline human-only CLI; no policy mutation route exists.
+- Blockers 1 (trusted composition root) and 2 (identity) are now **partially** addressed:
+  identity/session binding and shared authorization exist and are tested over real loopback
+  HTTP. Operational persistence, real execution adapters, and an independent production
+  verifier remain unimplemented, so the host dispatches only when a caller supplies those
+  adapters and otherwise fails closed with 503.
+- Baseline at that commit, executed locally with Node 26.13.0 and pnpm 11.11.0:
+  `pnpm -r run build`, `typecheck`, `lint`, and `test` all exited 0 before the change
+  (107 conformance tests, 43 integration tests, plus per-package unit tests). Turborepo was
+  invoked as `turbo run <task> --root .` where possible; the cloud worktree's gitdir lives
+  outside the checkout, so Turbo's default cache path resolved outside the writable tree.
+
+Do not read this addendum as a production-readiness claim. The maturity table above and the
+blocker list below remain the authoritative status until a fresh full audit replaces them.
+
 ## Next work order
 
 1. Keep the PR draft and work on the implementation branch; do not claim production readiness.
