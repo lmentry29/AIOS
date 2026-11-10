@@ -6,8 +6,9 @@ the branch above the previously verified merge head `8c950e6`, which merged `ups
 at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
 `schema-check` (run `42887224921`) workflows with PR #1 mergeable/clean. Docs commit
 `aa86a4e` sits above the code head, and `aa86a4e` passed `ci` (run `42892775891`),
-`conformance` (run `42892776172`), and `schema-check` (run `42892775877`). A final docs-only
-record commit follows; its own runs are separate.
+`conformance` (run `42892776172`), and `schema-check` (run `42892775877`). Docs-only
+record commit `c1dfa71` follows and passed the same three workflows; the security-hardening
+commits are newer still and are recorded in `docs/security/validation-ledger.md`.
 
 ## Repository and active change
 
@@ -24,6 +25,23 @@ record commit follows; its own runs are separate.
   succeeded on `aa86a4e`; see Validation evidence for run ids.
 - Do not push `main`. The implementation branch may be pushed to
   `upstream community/open-source-foundation`.
+
+## Security hardening (2026-11-10)
+
+- The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
+  passed 9/9 adversarial cases covering host-file reads, workspace symlink escape, network
+  interfaces, environment clearing, PID-namespace privacy, writes outside the workspace,
+  effective capabilities, and background-workload cleanup. Docker, Seatbelt, gVisor, and
+  Apple Containerization remain unverified or unavailable and are labelled as such in
+  `docs/security/sandbox-matrix.md`.
+- Timeout and cancellation now kill the provider's whole process group (with a direct-child
+  fallback), covered by real parent/grandchild tests.
+- Living security documentation lives in `docs/security/`: threat model, provider matrix,
+  findings ledger, and validation ledger. The CI `Security` workflow runs the live sandbox
+  suite with `bubblewrap` installed, plus a tracked-file secret scan and a production
+  dependency audit, under `contents: read`.
+- Open high finding F-002: the verifier does not yet recompute the executor's evidence
+  digest against the durable execution attempt. It is tracked, not silently accepted.
 
 ## Current package and application maturity
 
