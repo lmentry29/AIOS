@@ -23,6 +23,7 @@ export interface AccessRequest {
 }
 
 export interface AuthorizationDecisionAudit {
+  /** Correlation id: the guarded host operation's request id when one exists. */
   request_id: string;
   actor_id: string | null;
   action: string | null;
@@ -30,7 +31,12 @@ export interface AuthorizationDecisionAudit {
   policy_id: string | null;
   policy_version: number | null;
   decision: 'allow' | 'deny';
+  /** Fixed reason code, e.g. matching_allow, explicit_deny, no_matching_allow. */
   reason: string;
+  /** Zero-based index of the decisive rule in the resolved policy; null for default deny. */
+  matched_rule_index?: number | null;
+  /** Effect of the decisive rule; null when no rule decided the outcome. */
+  matched_rule_effect?: 'allow' | 'deny' | null;
   timestamp: string;
 }
 
@@ -288,6 +294,8 @@ export class AuthorizationService {
     const resourceId = request && typeof request.resource_id === 'string' ? request.resource_id : null;
     let policyId: string | null = null;
     let policyVersion: number | null = null;
+    let matchedRuleIndex: number | null = null;
+    let matchedRuleEffect: 'allow' | 'deny' | null = null;
     let decision: 'allow' | 'deny' = 'deny';
     let reason = 'invalid_request';
 
@@ -310,16 +318,24 @@ export class AuthorizationService {
           } else {
             policyVersion = policy.version;
             const rules = policy.rules as readonly AccessRule[];
-            const matching = rules.filter((rule: AccessRule) =>
-              rule.subject_ids.includes(actorId)
-              && rule.actions.includes(action)
-              && rule.resource_ids.includes(resourceId),
-            );
-            if (matching.some((rule) => rule.effect === 'deny')) {
+            const matching = rules
+              .map((rule, index) => ({ rule, index }))
+              .filter(({ rule }) =>
+                rule.subject_ids.includes(actorId)
+                && rule.actions.includes(action)
+                && rule.resource_ids.includes(resourceId),
+              );
+            const denying = matching.find(({ rule }) => rule.effect === 'deny');
+            const allowing = matching.find(({ rule }) => rule.effect === 'allow');
+            if (denying) {
               reason = 'explicit_deny';
-            } else if (matching.some((rule) => rule.effect === 'allow')) {
+              matchedRuleIndex = denying.index;
+              matchedRuleEffect = 'deny';
+            } else if (allowing) {
               decision = 'allow';
               reason = 'matching_allow';
+              matchedRuleIndex = allowing.index;
+              matchedRuleEffect = 'allow';
             } else {
               reason = 'no_matching_allow';
             }
@@ -340,6 +356,8 @@ export class AuthorizationService {
       policy_version: policyVersion,
       decision,
       reason,
+      matched_rule_index: matchedRuleIndex,
+      matched_rule_effect: matchedRuleEffect,
       timestamp: new Date().toISOString(),
     };
 

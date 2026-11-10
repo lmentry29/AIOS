@@ -22,6 +22,7 @@ import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
 import { ManagedExecutionPort, type CancellableExecutionPort } from './execution/managed-execution.js';
 import type { ExecutionLedger } from './persistence/execution-ledger.js';
+import { DurableAuthorizationAuditStore } from './persistence/authorization-audit-store.js';
 import { DurableLearningStore } from './persistence/learning-store.js';
 import {
   DurableOperationalStore,
@@ -88,6 +89,8 @@ export interface HostRuntime {
   identity: TrustedIdentityService;
   /** The single evaluator shared by every surface. */
   authorization: AuthorizationService;
+  /** Durable allow/deny decisions, correlated to the guarded host operation. */
+  authorizationAudit: DurableAuthorizationAuditStore;
   boundary: SharedAuthorizationBoundary;
   kernel: OrchestrationKernel;
   founder: FounderInterface;
@@ -173,8 +176,9 @@ function resolveAgentUnlessConfigured(
  * Composes the trusted local host.
  *
  * This is the composition root blocker in the PR description: one durable policy registry,
- * one evaluator, one audit chain, shared by Founder and Orchestration; identity derived from
- * configuration-backed bearer sessions rather than caller-supplied actor strings.
+ * one evaluator, one dedicated decision-audit journal, shared by Founder and Orchestration;
+ * identity derived from configuration-backed bearer sessions rather than caller-supplied
+ * actor strings. Policy lifecycle events remain atomically committed with policy state.
  *
  * Deliberate non-claims:
  * - Tasks, Workflows, Artifacts, and dispatch runs are durable through the hash-chained
@@ -200,11 +204,16 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   const policies = new FilePolicyRegistry({ filePath: config.policy_file });
   let operational: DurableOperationalStore | undefined;
   let learningStore: DurableLearningStore | undefined;
+  let authorizationAudit: DurableAuthorizationAuditStore | undefined;
   try {
+    const auditStore = new DurableAuthorizationAuditStore({
+      directory: config.operational_store.directory,
+    });
+    authorizationAudit = auditStore;
     const authorization = new AuthorizationService(
       policies,
       (resourceId) => policies.resolve(resourceId),
-      policies,
+      auditStore,
     );
     const boundary = new SharedAuthorizationBoundary(authorization);
     const identity = new TrustedIdentityService(config.sessions);
@@ -301,6 +310,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       policies,
       identity,
       authorization,
+      authorizationAudit: auditStore,
       boundary,
       kernel,
       founder,
@@ -318,12 +328,14 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       verificationConfigured: options.verification !== undefined,
       evidenceConfigured: config.obsidian !== undefined,
       close: () => {
+        authorizationAudit?.close();
         learningStore?.close();
         operational?.close();
         policies.close();
       },
     };
   } catch (error) {
+    authorizationAudit?.close();
     learningStore?.close();
     operational?.close();
     policies.close();

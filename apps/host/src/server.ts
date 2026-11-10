@@ -14,6 +14,7 @@ import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
 import { ExecutionConflictError } from './persistence/execution-ledger.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
+import { withRequestId } from './request-context.js';
 import type { HostRuntime } from './runtime.js';
 
 const SERVICE = 'aios-host';
@@ -312,7 +313,9 @@ export class HostHttpServer {
           return parsed === undefined ? undefined : jsonBody(parsed);
         },
       };
-      const response = await route.handle(context, match);
+      // Keep the request id in scope for every authorization decision made by this
+      // operation, including decisions inside orchestration and Founder calls.
+      const response = await withRequestId(requestId, () => route.handle(context, match));
       this.send(res, response.status, response.body, requestId);
     } catch (error) {
       const mapped = mapError(error);
@@ -333,7 +336,7 @@ async function requireAllowed(
   action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry',
   resourceId: string,
 ): Promise<void> {
-  const allowed = await runtime.authorization.authorize({
+  const allowed = await runtime.boundary.authorize({
     actor_id: session.principal_id,
     action,
     resource_id: resourceId,
@@ -861,8 +864,12 @@ function buildRoutes(runtime: HostRuntime): Route[] {
       allow: ['GET'],
       handle: async ({ runtime: host, session, url }) => {
         requireBootstrap(session, host.config);
+        // A second, policy-based condition: the bootstrap principal still needs the exact
+        // read_evidence grant on the protected decision collection. No unauthenticated or
+        // bootstrap-implied read path exists.
+        await requireAllowed(host, session, 'read_evidence', host.config.decision_collection_id);
         const limit = auditLimit(url);
-        const records = host.policies.listAuthorizationAudit();
+        const records = host.authorizationAudit.list();
         return { status: 200, body: { records: records.slice(-limit), total: records.length } };
       },
     },

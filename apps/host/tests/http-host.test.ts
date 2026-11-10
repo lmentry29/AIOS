@@ -13,6 +13,7 @@ import { loadHostConfig } from '../src/config.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
+import { DurableAuthorizationAuditStore } from '../src/persistence/authorization-audit-store.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
 import { createHostServer, type HostHttpServer } from '../src/server.js';
 import {
@@ -684,18 +685,66 @@ describe('trusted host HTTP surface', () => {
     expect(spoofed.body?.error).toBe('actor_mismatch');
   });
 
-  it('restricts authorization-audit reads to the bootstrap principal', async () => {
-    const harness = await startHost();
+  it('restricts authorization-audit reads to the bootstrap principal with an exact grant', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({ policy: makePolicy(task.entity_id, workflow.entity_id) });
     const denied = await call(harness, 'GET', '/v1/audit/authorization', { token: AGENT_TOKEN });
     expect(denied.status).toBe(403);
     expect(denied.body?.error).toBe('bootstrap_principal_required');
 
     const allowed = await call(harness, 'GET', '/v1/audit/authorization', { token: FOUNDER_TOKEN });
     expect(allowed.status).toBe(200);
-    expect(allowed.body?.total).toBe(0);
+    expect(allowed.body?.total).toBeGreaterThan(0);
+    const records = allowed.body?.records as Array<Record<string, unknown>>;
+    expect(records).toContainEqual(expect.objectContaining({
+      actor_id: FOUNDER,
+      action: 'read_evidence',
+      resource_id: DECISION_COLLECTION_ID,
+      decision: 'allow',
+      reason: 'matching_allow',
+      matched_rule_effect: 'allow',
+    }));
+    expect(JSON.stringify(records)).not.toContain(FOUNDER_TOKEN);
 
     expect((await call(harness, 'GET', '/v1/audit/authorization?limit=0', { token: FOUNDER_TOKEN })).status).toBe(400);
     expect((await call(harness, 'GET', '/v1/audit/policies', { token: FOUNDER_TOKEN })).status).toBe(200);
+  });
+
+  it('denies authorization-audit reads without the exact read_evidence grant', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+
+    const noPolicy = await startHost();
+    const noPolicyDenied = await call(noPolicy, 'GET', '/v1/audit/authorization', { token: FOUNDER_TOKEN });
+    expect(noPolicyDenied.status).toBe(403);
+    expect(noPolicy.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: noPolicyDenied.headers.get('x-request-id'),
+      actor_id: FOUNDER,
+      action: 'read_evidence',
+      resource_id: DECISION_COLLECTION_ID,
+      decision: 'deny',
+      reason: 'resource_policy_missing_or_invalid',
+      matched_rule_index: null,
+      matched_rule_effect: null,
+    }));
+
+    const narrowed = await startHost({
+      policy: withoutActions(makePolicy(task.entity_id, workflow.entity_id), ['read_evidence']),
+    });
+    const denied = await call(narrowed, 'GET', '/v1/audit/authorization', { token: FOUNDER_TOKEN });
+    expect(denied.status).toBe(403);
+    expect(denied.body?.error).toBe('forbidden');
+    expect(narrowed.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: denied.headers.get('x-request-id'),
+      actor_id: FOUNDER,
+      action: 'read_evidence',
+      resource_id: DECISION_COLLECTION_ID,
+      decision: 'deny',
+      reason: 'no_matching_allow',
+      matched_rule_index: null,
+      matched_rule_effect: null,
+    }));
   });
 
   it('enforces media types, JSON validity, and the configured body limit', async () => {
@@ -741,10 +790,68 @@ describe('trusted host HTTP surface', () => {
     const registry = new FilePolicyRegistry({ filePath: harness.policyPath });
     try {
       expect(await registry.resolve(task.entity_id)).toBeTruthy();
-      expect(registry.listAuthorizationAudit().length).toBeGreaterThan(0);
+      expect(registry.listPolicyAudit().length).toBeGreaterThan(0);
     } finally {
       registry.close();
     }
+
+    const audit = new DurableAuthorizationAuditStore({
+      directory: harness.runtime.config.operational_store.directory,
+    });
+    try {
+      expect(audit.list().length).toBeGreaterThan(0);
+      expect(audit.list().map((record) => record.decision)).toContain('allow');
+    } finally {
+      audit.close();
+    }
+  });
+
+  it('keeps authorization decisions readable, ordered, and correlated across a host restart', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withAdapters: true,
+    });
+    const intakeResponse = await intake(harness, 'task', task);
+    expect(intakeResponse.status).toBe(201);
+    const requestId = intakeResponse.headers.get('x-request-id');
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    expect((await dispatch(harness, workflow.entity_id)).status).toBe(200);
+
+    const before = harness.runtime.authorizationAudit.list();
+    expect(before.length).toBeGreaterThan(0);
+    expect(before).toContainEqual(expect.objectContaining({
+      request_id: requestId,
+      actor_id: FOUNDER,
+      action: 'intake',
+      decision: 'allow',
+      reason: 'matching_allow',
+      matched_rule_effect: 'allow',
+    }));
+    expect(JSON.stringify(before)).not.toContain(FOUNDER_TOKEN);
+
+    await harness.server.close();
+    harness.runtime.close();
+
+    const restarted = createHostRuntime({ config: loadHostConfig(harness.configPath) });
+    const server = createHostServer(restarted);
+    const address = await server.listen();
+    cleanups.push(async () => {
+      await server.close();
+      restarted.close();
+    });
+    const audit = await call(
+      { ...harness, baseUrl: `http://${address.host}:${address.port}` },
+      'GET',
+      '/v1/audit/authorization?limit=500',
+      { token: FOUNDER_TOKEN },
+    );
+    expect(audit.status).toBe(200);
+    const records = audit.body?.records as Array<Record<string, unknown>>;
+    expect(records.slice(0, before.length)).toEqual(before);
+    expect(records.length).toBeGreaterThan(before.length);
   });
 
   it('cancels an executing Task, kills its sandbox invocation, and skips the verifier', async () => {

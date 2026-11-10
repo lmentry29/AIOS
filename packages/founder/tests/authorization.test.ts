@@ -273,3 +273,136 @@ describe('AuthorizationService', () => {
     }]), async () => policyId)).toThrow(/at least one rule/);
   });
 });
+
+describe('Authorization audit correlation and grant binding', () => {
+  const policyId = randomUUID();
+  const resourceId = randomUUID();
+  const actorId = 'human:founder';
+  const policy: AccessPolicy = {
+    policy_id: policyId,
+    version: 1,
+    rules: [{
+      effect: 'allow',
+      subject_ids: [actorId],
+      actions: ['execute'],
+      resource_ids: [resourceId],
+    }],
+  };
+
+  function service(): { auth: AuthorizationService; audit: InMemoryAuthorizationAuditStore } {
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([policy]),
+      async () => policyId,
+      audit,
+    );
+    return { auth, audit };
+  }
+
+  it('uses the caller request id and records the exact matching grant', async () => {
+    const { auth, audit } = service();
+    const requestId = randomUUID();
+    expect(await auth.authorize({
+      actor_id: actorId,
+      action: 'execute',
+      resource_id: resourceId,
+      request_id: requestId,
+    })).toBe(true);
+
+    expect(audit.list()).toMatchObject([{
+      request_id: requestId,
+      actor_id: actorId,
+      action: 'execute',
+      resource_id: resourceId,
+      policy_id: policyId,
+      policy_version: 1,
+      decision: 'allow',
+      reason: 'matching_allow',
+      matched_rule_index: 0,
+      matched_rule_effect: 'allow',
+    }]);
+  });
+
+  it('records explicit deny with its deny rule, and default deny without a grant', async () => {
+    const denyPolicy: AccessPolicy = {
+      ...policy,
+      rules: [
+        ...policy.rules,
+        {
+          effect: 'deny',
+          subject_ids: [actorId],
+          actions: ['execute'],
+          resource_ids: [resourceId],
+        },
+      ],
+    };
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([denyPolicy]),
+      async () => policyId,
+      audit,
+    );
+
+    expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId }))
+      .toBe(false);
+    expect(await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId }))
+      .toBe(false);
+
+    expect(audit.list()).toMatchObject([
+      {
+        decision: 'deny',
+        reason: 'explicit_deny',
+        matched_rule_index: 1,
+        matched_rule_effect: 'deny',
+      },
+      {
+        decision: 'deny',
+        reason: 'no_matching_allow',
+        matched_rule_index: null,
+        matched_rule_effect: null,
+      },
+    ]);
+  });
+
+  it('generates a UUID correlation id when the guarded operation has none', async () => {
+    const { auth, audit } = service();
+    await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId });
+    expect(audit.list()[0]?.request_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it('keeps the audit record to the fixed, non-secret field set', async () => {
+    const { auth, audit } = service();
+    await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId });
+    const record = audit.list()[0];
+    expect(record).toBeDefined();
+    expect(Object.keys(record as object).sort()).toEqual([
+      'action',
+      'actor_id',
+      'decision',
+      'matched_rule_effect',
+      'matched_rule_index',
+      'policy_id',
+      'policy_version',
+      'reason',
+      'request_id',
+      'resource_id',
+      'timestamp',
+    ]);
+    expect(JSON.stringify(record)).not.toContain('token');
+    expect(JSON.stringify(record)).not.toContain('authorization');
+  });
+
+  it('fails closed for both allow and deny when the audit sink rejects the record', async () => {
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([policy]),
+      async () => policyId,
+      { append: async () => { throw new Error('audit unavailable'); } },
+    );
+    expect(await auth.authorize({ actor_id: actorId, action: 'execute', resource_id: resourceId }))
+      .toBe(false);
+    expect(await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId }))
+      .toBe(false);
+  });
+});
