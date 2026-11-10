@@ -5,6 +5,7 @@ import type { KnowledgeRecord, KnowledgeStage } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
 import type { AccessAction } from './authorization.js';
 import type { FounderEvidenceReadPort, VaultEvidenceRecord, VaultEvidenceWarning } from './obsidian-evidence.js';
+import type { FounderConnectorEvidenceReadPort, GmailEvidenceRecord, NotionApplicationEvidenceRecord } from './local-connectors.js';
 
 export interface CanonicalEntityReadPort {
   list(): CanonicalEntity[];
@@ -116,6 +117,7 @@ export class FounderInterface {
     private readonly options: FounderInterfaceOptions,
     artifactStore?: FounderArtifactRepositoryPort,
     private readonly evidence?: FounderEvidenceReadPort,
+    private readonly connectors?: FounderConnectorEvidenceReadPort,
   ) {
     if (!options || typeof options.decisionCollectionId !== 'string' || !isUuid(options.decisionCollectionId)) {
       throw new FounderInputError('Founder decision collection requires a valid protected resource UUID.');
@@ -194,6 +196,20 @@ export class FounderInterface {
       last_updated: inventory.last_updated,
       vault_resource_id: inventory.vault_resource_id,
     };
+  }
+
+  /** Read Gmail message metadata/snippets through the separately authorized local connector. */
+  async searchGmail(query: string, actorId: string): Promise<GmailEvidenceRecord[]> {
+    if (!isActorReference(actorId)) throw new FounderInputError('Gmail search requires a valid authenticated actor identifier.');
+    if (!this.connectors) throw new FounderInputError('Local Gmail connector is not configured.');
+    return this.connectors.searchGmail(query, actorId);
+  }
+
+  /** Read the configured Notion job-application database through its separate resource grant. */
+  async listNotionApplications(actorId: string): Promise<NotionApplicationEvidenceRecord[]> {
+    if (!isActorReference(actorId)) throw new FounderInputError('Notion reads require a valid authenticated actor identifier.');
+    if (!this.connectors) throw new FounderInputError('Local Notion connector is not configured.');
+    return this.connectors.listNotionApplications(actorId);
   }
 
   async recordDecision(decision: FounderDecisionRecord, actorId: string): Promise<string> {
@@ -295,3 +311,4 @@ export class FounderInterface {
 }
 export * from './authorization.js';
 export * from './obsidian-evidence.js';
+export * from './local-connectors.js';
