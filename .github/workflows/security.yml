@@ -31,7 +31,7 @@ jobs:
             || sudo sysctl -w kernel.unprivileged_userns_clone=1
       # Package entrypoints resolve to dist/, so build the workspace before the host.
       - run: pnpm turbo build
-      - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts
+      - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
 
   supply-chain:
     name: Dependency and secret scan

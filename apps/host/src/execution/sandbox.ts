@@ -1,15 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { SandboxProviderKind } from '../config.js';
-import { HostUnavailableError } from '../errors.js';
+import { HostUnavailableError, SandboxFilterUnavailableError } from '../errors.js';
 import { runCapturedProcess } from './process.js';
+import { buildSeccompProfile, type SeccompProfile } from './seccomp.js';
 
 export type SandboxAssurance = 'container' | 'kernel-namespace' | 'seatbelt' | 'test-only-process';
 
 export interface SandboxCheck {
   available: boolean;
   reason: string;
+  /** True when the failure is specifically the system-call filter, not the namespace. */
+  filterFailure?: boolean;
 }
 
 export interface SandboxRunSpec {
@@ -25,6 +29,13 @@ export interface SandboxRunSpec {
   signal?: AbortSignal;
 }
 
+export interface SandboxFilterEvidence {
+  profile: string;
+  sha256: string;
+  applied: boolean;
+  reason?: string;
+}
+
 export interface SandboxResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -37,6 +48,8 @@ export interface SandboxResult {
   spawnError?: string;
   provider: string;
   assurance: SandboxAssurance;
+  /** Proof produced by the provider that its system-call filter was active before exec. */
+  filter?: SandboxFilterEvidence;
 }
 
 /**
@@ -61,6 +74,7 @@ interface ProviderRunOptions {
   env: Record<string, string>;
   cwd?: string;
   signal?: AbortSignal;
+  extraFds?: number[];
 }
 
 async function spawnProvider(
@@ -74,6 +88,7 @@ async function spawnProvider(
     timeoutMs: options.timeoutMs,
     maxOutputBytes: options.maxOutputBytes,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.extraFds === undefined ? {} : { extraFds: options.extraFds }),
   });
   return { ...result, provider: options.id, assurance: options.assurance };
 }
@@ -177,8 +192,8 @@ class DockerSandbox implements SandboxProvider {
  * Bubblewrap user namespaces, no network, read-only host system, writable workspace.
  *
  * This is a kernel-namespace boundary, not a container: there is no cgroup memory/CPU
- * accounting and no seccomp profile. It is therefore labelled honestly and is suitable
- * only for trusted local commands until Landlock/seccomp hardening lands.
+ * accounting. Every invocation also installs a generated seccomp deny-list before exec;
+ * if that filter cannot be installed the run is denied rather than executed unfiltered.
  */
 class BubblewrapSandbox implements SandboxProvider {
   readonly id = 'bubblewrap';
@@ -196,11 +211,37 @@ class BubblewrapSandbox implements SandboxProvider {
     if (version.spawnError || version.exitCode !== 0) {
       return { available: false, reason: 'bubblewrap is not installed or cannot run on this host.' };
     }
-    const probe = await this.invoke(['/bin/true'], undefined, process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin');
+    let probe: SandboxResult;
+    try {
+      probe = await this.invoke(['/bin/true'], undefined, process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin');
+    } catch (error) {
+      return {
+        available: false,
+        filterFailure: true,
+        reason: `The system-call filter cannot be installed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      };
+    }
+    if (probe.filter?.applied !== true) {
+      return {
+        available: false,
+        filterFailure: true,
+        reason: `The system-call filter was not active for the probe: ${probe.filter?.reason ?? 'no filter evidence'}`,
+      };
+    }
     if (probe.exitCode !== 0) {
       return { available: false, reason: 'bubblewrap cannot create the required user namespace on this host.' };
     }
-    return { available: true, reason: 'bubblewrap passed its namespace probe.' };
+    return { available: true, reason: 'bubblewrap passed its namespace and seccomp-filter probes.' };
+  }
+
+  private seccompProfile(): SeccompProfile {
+    try {
+      return buildSeccompProfile();
+    } catch (error) {
+      throw new SandboxFilterUnavailableError(
+        `The system-call filter could not be generated: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
   }
 
   private async invoke(
@@ -213,14 +254,37 @@ class BubblewrapSandbox implements SandboxProvider {
     env: Record<string, string> = {},
     signal?: AbortSignal,
   ): Promise<SandboxResult> {
+    const profile = this.seccompProfile();
+    const filterDirectory = mkdtempSync(join(tmpdir(), 'aios-seccomp-'));
+    const filterPath = join(filterDirectory, 'filter.bpf');
+    const markerPath = join(filterDirectory, 'applied');
+    writeFileSync(filterPath, profile.filter, { mode: 0o600 });
+    writeFileSync(markerPath, '', { mode: 0o600 });
+    const filterFd = openSync(filterPath, 'r');
+    const markerFd = openSync(markerPath, 'r+');
     const binds = ['/usr', '/bin', '/lib', '/lib64', '/etc']
       .filter((path) => existsSync(path))
       .flatMap((path) => ['--ro-bind', path, path]);
+    // The fixed wrapper runs after bwrap has installed the filter. It records the
+    // kernel's Seccomp mode on fd 4, closes the inherited descriptors, then execs the
+    // requested argv without a shell string. A missing marker means bwrap never reached
+    // the wrapped command, so the host refuses to treat the invocation as filtered.
+    const wrapper = [
+      'seccomp=missing',
+      'while read -r key value; do',
+      '  if [ "$key" = "Seccomp:" ] && [ "$value" = "2" ]; then seccomp=applied; break; fi',
+      'done < /proc/self/status',
+      'printf "%s" "$seccomp" >&4',
+      'exec 3>&- 4>&-',
+      '[ "$seccomp" = applied ] || exit 126',
+      'exec "$@"',
+    ].join('\n');
     const args = [
       '--die-with-parent',
       '--new-session',
       '--unshare-all',
       '--cap-drop', 'ALL',
+      '--seccomp', '3',
       ...binds,
       '--proc', '/proc',
       '--dev', '/dev',
@@ -234,16 +298,40 @@ class BubblewrapSandbox implements SandboxProvider {
       '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin',
       ...Object.entries(env).flatMap(([key, value]) => ['--setenv', key, value]),
       '--',
+      '/bin/sh', '-c', wrapper, 'aios-filter',
       ...argv,
     ];
-    return spawnProvider('bwrap', args, {
-      id: this.id,
-      assurance: this.assurance,
-      timeoutMs,
-      maxOutputBytes,
-      env: {},
-      ...(signal === undefined ? {} : { signal }),
-    });
+    try {
+      const result = await spawnProvider('bwrap', args, {
+        id: this.id,
+        assurance: this.assurance,
+        timeoutMs,
+        maxOutputBytes,
+        env: {},
+        ...(signal === undefined ? {} : { signal }),
+        extraFds: [filterFd, markerFd],
+      });
+      let marker = '';
+      try {
+        marker = readFileSync(markerPath, 'utf8').trim();
+      } catch {
+        // A missing marker is treated as a failed filter installation below.
+      }
+      const applied = marker === 'applied';
+      return {
+        ...result,
+        filter: {
+          profile: profile.profile,
+          sha256: profile.sha256,
+          applied,
+          ...(applied ? {} : { reason: marker.length > 0 ? `filter marker was "${marker}"` : 'filter marker was not written' }),
+        },
+      };
+    } finally {
+      closeSync(filterFd);
+      closeSync(markerFd);
+      rmSync(filterDirectory, { recursive: true, force: true });
+    }
   }
 
   async run(spec: SandboxRunSpec): Promise<SandboxResult> {

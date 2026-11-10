@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto';
 import type { TaskEntity } from '@aios/core';
 import { TaskCancelledError, type AgentExecutionPort, type TaskExecutionResult } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
-import { HostExecutionError, HostUnavailableError, WorkspaceQuotaExceededError } from '../errors.js';
+import {
+  HostExecutionError,
+  HostUnavailableError,
+  SandboxFilterUnavailableError,
+  SandboxSyscallDeniedError,
+  WorkspaceQuotaExceededError,
+} from '../errors.js';
+import { SECCOMP_DENIED_EXIT_CODE } from './seccomp.js';
 import type { SandboxProvider, SandboxResult } from './sandbox.js';
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
@@ -34,7 +41,7 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
  * so a command cannot inject credentials or untrusted text into the durable journal.
  */
 export class LocalCommandExecutor implements AgentExecutionPort {
-  private availability: { checkedAt: number; available: boolean; reason: string } | undefined;
+  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean } | undefined;
   private readonly active = new Map<string, AbortController>();
 
   constructor(
@@ -124,6 +131,21 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (result.cancelled) {
       throw new TaskCancelledError(task.entity_id);
     }
+    // The bubblewrap adapter must provide proof that the system-call filter was active
+    // before exec. Missing or failed evidence is a denial, never an unfiltered success.
+    if (this.provider.id === 'bubblewrap' && result.filter?.applied !== true) {
+      this.workspaces.discard(task.entity_id);
+      throw new SandboxFilterUnavailableError(
+        `The system-call filter was not active for this run: ${result.filter?.reason ?? 'no filter evidence'}.`,
+      );
+    }
+    if (result.signal === 'SIGSYS' || result.exitCode === SECCOMP_DENIED_EXIT_CODE) {
+      this.workspaces.discard(task.entity_id);
+      throw new SandboxSyscallDeniedError(
+        'The sandboxed command was killed by the system-call filter for using a denied syscall.',
+        result.filter?.sha256,
+      );
+    }
     if (result.spawnError) {
       throw new HostExecutionError('The sandbox could not start the requested command.');
     }
@@ -146,6 +168,13 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       `exit_code:${result.exitCode}`,
       `duration_ms:${result.durationMs}`,
       `output_truncated:${result.truncated}`,
+      ...(result.filter === undefined
+        ? []
+        : [
+            `syscall_filter:${result.filter.profile}`,
+            `syscall_filter_sha256:${result.filter.sha256}`,
+            `syscall_filter_applied:${result.filter.applied}`,
+          ]),
     ];
 
     return {
@@ -180,11 +209,16 @@ export class LocalCommandExecutor implements AgentExecutionPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
+        if (this.provider.id === 'bubblewrap' && this.availability.filterFailure === true) {
+          throw new SandboxFilterUnavailableError(
+            `Local execution is unavailable because the system-call filter failed: ${this.availability.reason}`,
+          );
+        }
         throw new HostUnavailableError(`Local execution is unavailable: ${this.availability.reason}`);
       }
       return;
     }
-    let check: { available: boolean; reason: string };
+    let check: { available: boolean; reason: string; filterFailure?: boolean };
     try {
       check = await this.provider.check();
     } catch {
@@ -192,6 +226,11 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {
+      if (this.provider.id === 'bubblewrap' && check.filterFailure === true) {
+        throw new SandboxFilterUnavailableError(
+          `Local execution is unavailable because the system-call filter failed: ${check.reason}`,
+        );
+      }
       throw new HostUnavailableError(`Local execution is unavailable: ${check.reason}`);
     }
   }

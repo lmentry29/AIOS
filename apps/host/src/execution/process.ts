@@ -7,6 +7,8 @@ export interface CapturedProcessOptions {
   maxOutputBytes: number;
   /** Aborts the child process with SIGKILL. The result is marked `cancelled`. */
   signal?: AbortSignal;
+  /** Additional inheritable file descriptors, starting at fd 3 in the child. */
+  extraFds?: number[];
 }
 
 export interface CapturedProcessResult {
@@ -53,7 +55,7 @@ export function runCapturedProcess(
       cwd: options.cwd,
       env: options.env,
       shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', ...(options.extraFds ?? [])],
       windowsHide: true,
       detached: process.platform !== 'win32',
     });

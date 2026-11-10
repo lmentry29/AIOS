@@ -5,9 +5,14 @@ import type {
   TaskVerificationRequest,
 } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
-import { HostExecutionError, HostUnavailableError } from '../errors.js';
+import {
+  HostExecutionError,
+  HostUnavailableError,
+  SandboxFilterUnavailableError,
+} from '../errors.js';
 import { evidenceDigest, type ExecutionLedger } from '../persistence/execution-ledger.js';
 import type { SandboxProvider } from './sandbox.js';
+import { SECCOMP_DENIED_EXIT_CODE } from './seccomp.js';
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
 /** Late-bound reference to the host's durable execution ledger. */
@@ -30,7 +35,7 @@ function digest(value: string | Buffer): string {
  */
 export class LocalCommandVerifier implements TaskVerificationPort {
   readonly verifier_id: string;
-  private availability: { checkedAt: number; available: boolean; reason: string } | undefined;
+  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean } | undefined;
 
   constructor(
     private readonly config: HostExecutionConfig,
@@ -64,21 +69,32 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       if (attempt === undefined) {
         return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
       }
-      // A quota-stopped run is a terminal durable failure, never a success. Bind the
-      // rejection to that exact attempt and its evidence, so a caller cannot present the
-      // failed run as an accepted result or detach the failure from its journal record.
-      if (attempt.state === 'failed' && attempt.reason_code === 'disk_quota_exceeded') {
+      // A quota- or filter-stopped run is a terminal durable failure, never a success.
+      // Bind the rejection to that exact attempt and its evidence, so a caller cannot
+      // present the failed run as an accepted result or detach the failure from its
+      // journal record.
+      const terminalFailure = attempt.state === 'failed' ? attempt.reason_code : undefined;
+      if (terminalFailure === 'disk_quota_exceeded'
+        || terminalFailure === 'sandbox_filter_unavailable'
+        || terminalFailure === 'sandbox_syscall_denied') {
+        const failedFilter = attempt.evidence.find((entry) => entry.startsWith('sandbox_filter_sha256:'))?.slice('sandbox_filter_sha256:'.length);
+        const reason = terminalFailure === 'disk_quota_exceeded'
+          ? 'The durable execution attempt was stopped by the per-workspace disk quota.'
+          : terminalFailure === 'sandbox_syscall_denied'
+            ? 'The durable execution attempt was killed by the sandbox system-call filter.'
+            : 'The durable execution attempt could not be launched under the system-call filter.';
         return {
           accepted: false,
-          reason: 'The durable execution attempt was stopped by the per-workspace disk quota.',
+          reason,
           verifier_id: this.verifier_id,
           evidence: [
             `verifier:${this.verifier_id}`,
             `task:${request.task.entity_id}`,
             `execution_id:${attempt.execution_id}`,
             `execution_attempt:${attempt.attempt}`,
-            'failure_reason_code:disk_quota_exceeded',
+            `failure_reason_code:${terminalFailure}`,
             `failure_evidence_sha256:${evidenceDigest(attempt.evidence)}`,
+            ...(failedFilter === undefined ? [] : [`failed_sandbox_filter_sha256:${failedFilter}`]),
           ],
         };
       }
@@ -117,6 +133,29 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         env: { AIOS_TASK_ID: request.task.entity_id, AIOS_VERIFIER_ID: this.verifier_id },
         signal: controller.signal,
       });
+    } catch (error) {
+      if (error instanceof SandboxFilterUnavailableError) {
+        this.workspaces.discard(request.task.entity_id);
+        return {
+          accepted: false,
+          reason: 'The verification command could not be launched under the system-call filter.',
+          verifier_id: this.verifier_id,
+          evidence: [
+            `verifier:${this.verifier_id}`,
+            `task:${request.task.entity_id}`,
+            'verification_failure:sandbox_filter_unavailable',
+            `filter_error_sha256:${digest(error.message)}`,
+            ...(boundAttempt === undefined
+              ? []
+              : [
+                  `execution_id:${boundAttempt.execution_id}`,
+                  `execution_attempt:${boundAttempt.attempt}`,
+                  `bound_result_sha256:${evidenceDigest(request.execution_result)}`,
+                ]),
+          ],
+        };
+      }
+      throw error;
     } finally {
       quota.stop();
     }
@@ -135,6 +174,50 @@ export class LocalCommandVerifier implements TaskVerificationPort {
           `quota_limit_bytes:${this.config.workspace_max_bytes}`,
           `quota_exceeded:${quota.state.exceeded}`,
           `quota_measurement_failure:${quota.state.measurementFailure !== undefined}`,
+          ...(boundAttempt === undefined
+            ? []
+            : [
+                `execution_id:${boundAttempt.execution_id}`,
+                `execution_attempt:${boundAttempt.attempt}`,
+                `bound_result_sha256:${evidenceDigest(request.execution_result)}`,
+              ]),
+        ],
+      };
+    }
+
+    if (this.provider.id === 'bubblewrap' && result.filter?.applied !== true) {
+      this.workspaces.discard(request.task.entity_id);
+      return {
+        accepted: false,
+        reason: 'The verification command was not proven to run under the system-call filter.',
+        verifier_id: this.verifier_id,
+        evidence: [
+          `verifier:${this.verifier_id}`,
+          `task:${request.task.entity_id}`,
+          'verification_failure:sandbox_filter_unavailable',
+          `filter_evidence_sha256:${digest(result.filter?.reason ?? 'missing')}`,
+          ...(boundAttempt === undefined
+            ? []
+            : [
+                `execution_id:${boundAttempt.execution_id}`,
+                `execution_attempt:${boundAttempt.attempt}`,
+                `bound_result_sha256:${evidenceDigest(request.execution_result)}`,
+              ]),
+        ],
+      };
+    }
+    if (result.signal === 'SIGSYS' || result.exitCode === SECCOMP_DENIED_EXIT_CODE) {
+      this.workspaces.discard(request.task.entity_id);
+      return {
+        accepted: false,
+        reason: 'The verification command was killed by the sandbox system-call filter.',
+        verifier_id: this.verifier_id,
+        evidence: [
+          `verifier:${this.verifier_id}`,
+          `task:${request.task.entity_id}`,
+          'verification_failure:sandbox_syscall_denied',
+          `exit_code:${result.exitCode}`,
+          `syscall_filter_sha256:${result.filter?.sha256 ?? 'unknown'}`,
           ...(boundAttempt === undefined
             ? []
             : [
@@ -173,6 +256,13 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         `expected_exit_code:${expectedExitCode}`,
         `timed_out:${result.timedOut}`,
         `executor_result_sha256:${digest(JSON.stringify(request.execution_result))}`,
+        ...(result.filter === undefined
+          ? []
+          : [
+              `syscall_filter:${result.filter.profile}`,
+              `syscall_filter_sha256:${result.filter.sha256}`,
+              `syscall_filter_applied:${result.filter.applied}`,
+            ]),
         ...(boundAttempt === undefined
           ? []
           : [
@@ -196,11 +286,16 @@ export class LocalCommandVerifier implements TaskVerificationPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
+        if (this.provider.id === 'bubblewrap' && this.availability.filterFailure === true) {
+          throw new SandboxFilterUnavailableError(
+            `Independent verification is unavailable because the system-call filter failed: ${this.availability.reason}`,
+          );
+        }
         throw new HostUnavailableError(`Independent verification is unavailable: ${this.availability.reason}`);
       }
       return;
     }
-    let check: { available: boolean; reason: string };
+    let check: { available: boolean; reason: string; filterFailure?: boolean };
     try {
       check = await this.provider.check();
     } catch {
@@ -208,6 +303,11 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {
+      if (this.provider.id === 'bubblewrap' && check.filterFailure === true) {
+        throw new SandboxFilterUnavailableError(
+          `Independent verification is unavailable because the system-call filter failed: ${check.reason}`,
+        );
+      }
       throw new HostUnavailableError(`Independent verification is unavailable: ${check.reason}`);
     }
   }

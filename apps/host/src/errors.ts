@@ -63,3 +63,22 @@ export class WorkspaceQuotaExceededError extends HostExecutionError {
     this.name = 'WorkspaceQuotaExceededError';
   }
 }
+
+/** The generated system-call profile could not be installed for a run. */
+export class SandboxFilterUnavailableError extends HostExecutionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SandboxFilterUnavailableError';
+  }
+}
+
+/** The kernel killed a sandboxed process because it used a denied system call. */
+export class SandboxSyscallDeniedError extends HostExecutionError {
+  constructor(
+    message: string,
+    readonly filterSha256?: string,
+  ) {
+    super(message);
+    this.name = 'SandboxSyscallDeniedError';
+  }
+}

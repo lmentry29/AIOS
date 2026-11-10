@@ -6,7 +6,11 @@ import {
   type ExecutionAttemptRequest,
   type TaskExecutionResult,
 } from '@aios/orchestration';
-import { WorkspaceQuotaExceededError } from '../errors.js';
+import {
+  SandboxFilterUnavailableError,
+  SandboxSyscallDeniedError,
+  WorkspaceQuotaExceededError,
+} from '../errors.js';
 import { type ExecutionLedger, type ExecutionRecord, evidenceDigest } from '../persistence/execution-ledger.js';
 
 export interface CancellableExecutionPort {
@@ -19,6 +23,8 @@ function isCancellable(value: AgentExecutionPort): value is AgentExecutionPort &
 
 function failureCode(error: unknown): string {
   if (error instanceof WorkspaceQuotaExceededError) return 'disk_quota_exceeded';
+  if (error instanceof SandboxFilterUnavailableError) return 'sandbox_filter_unavailable';
+  if (error instanceof SandboxSyscallDeniedError) return 'sandbox_syscall_denied';
   if (error instanceof TaskCancelledError) return 'task_cancelled';
   if (error instanceof Error && error.name.length > 0) {
     return error.name.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 120);
@@ -114,8 +120,12 @@ export class ManagedExecutionPort implements AgentExecutionPort {
             reason_code: 'execution_cancelled',
           });
         } else {
-          this.ledger.fail(execution.execution_id, failureCode(error), [
-            `error_type:${evidenceDigest(failureCode(error))}`,
+          const code = failureCode(error);
+          this.ledger.fail(execution.execution_id, code, [
+            `error_type:${evidenceDigest(code)}`,
+            ...(error instanceof SandboxSyscallDeniedError && error.filterSha256 !== undefined
+              ? [`sandbox_filter_sha256:${error.filterSha256}`]
+              : []),
           ]);
         }
       }
