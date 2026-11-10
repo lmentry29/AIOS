@@ -44,13 +44,32 @@ export function runCapturedProcess(
     let spawnError: string | undefined;
     let settled = false;
 
+    // A sandbox provider may itself spawn a supervisor and workload processes. Killing
+    // only the direct child on timeout or cancellation can leave descendants running and
+    // holding the workspace open. Give the child its own process group on POSIX so the
+    // whole group can be signalled, then fall back to the direct child if the group is
+    // already gone.
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      detached: process.platform !== 'win32',
     });
+
+    const killProcessTree = () => {
+      if (child.pid === undefined) return;
+      if (process.platform !== 'win32') {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+          return;
+        } catch {
+          // The group may already be gone; fall through to the direct child.
+        }
+      }
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+    };
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
@@ -73,7 +92,7 @@ export function runCapturedProcess(
     const abort = () => {
       if (settled || cancelled) return;
       cancelled = true;
-      child.kill('SIGKILL');
+      killProcessTree();
     };
 
     const append = (current: Buffer<ArrayBufferLike>, chunk: Buffer): Buffer<ArrayBufferLike> => {
@@ -105,7 +124,7 @@ export function runCapturedProcess(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killProcessTree();
     }, options.timeoutMs);
     timer.unref();
 
