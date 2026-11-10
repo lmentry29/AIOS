@@ -17,7 +17,7 @@ nothing in the repository turned an HTTP request into a trusted principal.
 - Composes **one** durable `FilePolicyRegistry` and **one** `AuthorizationService`.
 - Injects the same boundary adapter into Founder and Orchestration.
 - Exposes a small, reviewed read/execute surface over loopback HTTP.
-- Keeps policy administration off the network entirely.
+- Keeps policy administration behind an authenticated, exact-granted human-only path; the offline bootstrap CLI remains available.
 
 Operational state (Tasks, Workflows, Artifacts, dispatch runs) is durable through a
 hash-chained journal per ADR-0015. The host can compose the fixed `local.exec` executor and
@@ -85,6 +85,10 @@ Rejected configurations include: non-loopback bind addresses, relative policy pa
 duplicate resource UUIDs, duplicate session identifiers or token digests, a non-human
 bootstrap principal, a bootstrap principal with no session, nonsensical or out-of-range
 execution limits, and a group/world-readable config file.
+
+`bootstrap_principal_id` is the principal allowed to read the authorization audit; it is not
+a policy-administration bypass. Runtime publication requires an exact `administer_policy`
+grant on every target, and the offline CLI remains the bootstrap path.
 
 ## Identity
 
@@ -209,6 +213,7 @@ Loopback only, no CORS headers, `no-store` responses.
 |---|---|---|
 | GET | `/health` | Unauthenticated readiness; no configuration or secrets |
 | GET | `/v1/session` | Verified principal, session id, human flag |
+| POST | `/v1/policies` | Human-only; exact `administer_policy` on every target; atomic publish and attach; 201 |
 | GET | `/v1/tasks?limit=` | Lists only Tasks on which the session has `read_status` |
 | GET | `/v1/workflows?limit=` | Lists only Workflows on which the session has `read_status` |
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
@@ -238,10 +243,9 @@ surface to get wrong). JSON bodies require `application/json`, are bounded by
 without limit. The cancel route accepts an empty body; when a reason is supplied it is
 bounded and represented in the journal by a SHA-256 digest, not the caller's text.
 
-## Policy provisioning
+## Policy provisioning and runtime administration
 
-There is deliberately no policy-mutation route. `aios-host publish-policy` is the human-only
-offline path:
+`aios-host publish-policy` remains the human-only offline bootstrap path:
 
 ```sh
 aios-host publish-policy --config /abs/host.json --policy /abs/policy.json
@@ -253,12 +257,36 @@ registry the host later evaluates. Publication and attachment each append a hash
 audit event. The host must be stopped while this runs because the registry holds a
 single-process lock.
 
+While the host is running, `POST /v1/policies` accepts the same envelope under a verified
+bearer session. It requires an authenticated `human:*` principal and an exact
+`administer_policy` allow on **every** target before any mutation. The new policy must have a
+new UUID and a positive version, may reference only the resources in `attach_to`, and every
+target must be referenced by at least one of its rules. Its version must exceed the effective
+version of every already-attached target. `FilePolicyRegistry.publishAndAttach()` validates
+the whole operation and writes the policy, all attachments, and lifecycle events as one
+fsync'd snapshot; a rejected artifact leaves both the disk state and the effective policy
+unchanged.
+
+Successful publication returns `201` with the policy id, version, and attached resources.
+Typed failures are `400 invalid_policy`/`invalid_targets`, `409 policy_exists`/
+`version_conflict`, `403 policy_admin_denied`/`human_principal_required`, and
+`401 unauthenticated`. Every target decision is written to `authorization-audit.jsonl`; if that
+append fails, the request is denied before the registry is called. The route is not a
+bootstrap bypass: a non-bootstrap human with the exact grants may use it, and the bootstrap
+principal receives no implicit grant.
+
+There is no detached policy signature in this trust model: authority is the verified session
+plus the exact grant, and a caller-supplied signature field is rejected. There is also no
+HTTP revocation route yet. A policy version cannot be rolled back by reattaching an older
+policy; publish a new, higher version containing the desired rules.
+
 ## Bootstrap sequence
 
 1. Start Obsidian++ locally and confirm it passes its own authentication and loopback checks.
 2. Generate a bearer token, store only its SHA-256 digest in the host config (mode `0600`).
 3. Write a policy document granting exact subject/action/resource tuples, then run
-   `publish-policy`.
+   `publish-policy` for the initial bootstrap. Later replacements may use `POST /v1/policies`
+   once a human holds the exact `administer_policy` grants.
 4. `export AIOS_OBSIDIAN_PASSWORD=...` if evidence readers are configured.
 5. `aios-host serve --config /abs/host.json`.
 6. `GET /health` reports `dispatch: false` until a configured isolation provider passes its
@@ -286,7 +314,12 @@ single-process lock.
 - identical 401 behavior across missing/malformed/wrong credentials;
 - DNS-rebinding and cross-origin rejection;
 - 404 for unknown routes and 405 with `Allow` for wrong methods;
-- absence of any policy-administration route;
+- runtime policy publication succeeding only with an exact `administer_policy` grant on every
+  target, with a non-bootstrap human exercising the path, the replacement deciding later
+  reads, and the allow decision recorded in the durable journal;
+- agent, action/resource/scope mismatch, unauthenticated, malformed, schema-invalid, stale,
+  audit-failure, and restart cases for runtime publication, with the prior policy unchanged
+  on every rejection;
 - default-deny intake and dispatch with no attached policy;
 - agent impersonation and body-supplied actor rejection;
 - intake-only policy denying dispatch with no lifecycle writes;
@@ -352,6 +385,11 @@ single-process lock.
 
 ## What remains open
 
+- **Policy administration assurance.** Runtime publication is exact-granted and human-only,
+  with atomic replacement and durable decision audit. There is no detached policy signature,
+  HTTP revocation route, key rotation, external audit custody, or reattachment of an older
+  version for rollback; recovery from a bad policy is a new higher-version publication. The
+  registry is single-process and local-disk only.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
   host process. Learning state is durable in a separate journal and approval-gated for

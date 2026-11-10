@@ -40,10 +40,16 @@ passing build.
    there are no wildcard grants, role expansion, or owner-implied permissions. Identity
    must come from a trusted host identity subsystem — a caller-supplied actor string is
    not authentication. Policy publication/attachment/revocation and authorization
-   decisions require durable, append-only audit. The current evaluator and in-memory
-   registry are test/development components, not a production security boundary. Do not
-   change authorization semantics without an amending ADR, and do not claim production
-   security until the host identity and durable policy/audit implementations exist.
+   decisions require durable, append-only audit. The host composes a durable
+   `FilePolicyRegistry` and `authorization-audit.jsonl`; runtime publication is a
+   human-only `POST /v1/policies` path requiring an exact `administer_policy` grant on
+   every target, with an audit append failure blocking the mutation. The offline
+   `publish-policy` CLI remains the out-of-band bootstrap path. `administer_policy` may be
+   granted only to human subjects; it is never implied by another action, ownership, or
+   the bootstrap identity. This is still not a production security boundary: there is no
+   detached policy signature, HTTP revocation route, external audit custody, or policy
+   recovery/rotation procedure. Do not change authorization semantics without an amending
+   ADR.
 7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
    ADR-0012 is Proposed and establishes capability mediation as the intended
    requester-facing principle, but its replacement runtime contract and Capability

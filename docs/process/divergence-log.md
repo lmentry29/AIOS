@@ -1,6 +1,21 @@
 # Vertical Slice Divergence Log
 
-> **Historical record, refreshed 2026-11-09.** This file records the original vertical-slice comparison and the blockers identified at that time. It is not the live production-status register. For current package maturity and blockers, read `docs/process/project-state.md`. Since this log was first written, ADR-0013 (default-deny resource authorization) and ADR-0014 (Obsidian persistence for Founder Intelligence) have been accepted. Founder reads/writes are now authorization-gated, policy administration is human-only, and orchestration requires a distinct authorized verifier identity. Founder Intelligence persistence is the Obsidian vault; do not infer that a separate database is planned. The original blocker list below is retained as historical evidence and may be superseded by the live project-state snapshot.
+> **Historical record, refreshed 2026-11-10.** This file records the original vertical-slice comparison and the blockers identified at that time. It is not the live production-status register. For current package maturity and blockers, read `docs/process/project-state.md`. Since this log was first written, ADR-0013 (default-deny resource authorization) and ADR-0014 (Obsidian persistence for Founder Intelligence) have been accepted. Founder reads/writes are now authorization-gated, policy administration is human-only and has an exact-granted runtime route under ADR-0023, and orchestration requires a distinct authorized verifier identity. Founder Intelligence persistence is the Obsidian vault; do not infer that a separate database is planned. The original blocker list below is retained as historical evidence and may be superseded by the live project-state snapshot.
+
+## Post-log resolution — authorized runtime policy administration (2026-11-10)
+
+ADR-0013 §5 does **not** forbid online policy administration. It requires the initial
+bootstrap to be configured out-of-band, restricts policy lifecycle operations to human
+principals, forbids Agent administration, and requires durable audit. ADR-0023 implements
+the delegation path those rules permit: a human with an exact `administer_policy` grant on
+every target may publish an immutable replacement while the host is running, while the
+offline CLI remains the initial bootstrap path.
+
+This log therefore records **no divergence** for policy administration. The implementation
+does not relax default deny, add wildcards or an implicit administrator, or permit an
+unauthenticated mutation. Known limits are recorded rather than hidden: there is no detached
+policy signature, HTTP revocation route, external audit custody, or reattachment of an older
+version for rollback.
 
 Per docs/engineering/implementation-playbook.md §5: this log compares
 what was actually built during the mandated vertical slice
@@ -524,6 +539,13 @@ decision turns out to be.
 
 ## Phase 2 — Orchestration and Founder implementation (2026-11-08)
 
+> **Historical snapshot, not current maturity.** This section records the 2026-11-08
+> implementation state. Later host work added durable operational/policy/audit journals,
+> trusted bearer sessions, fixed local execution with independent verification, append-only
+> resume/retry, and authorized runtime policy publication. Read `docs/process/project-state.md`
+> for current package maturity and production blockers; the items below are retained as the
+> phase's record.
+
 The initial vertical-slice stop was intentionally passed after the user directed implementation of the remaining packages and explicit closure of orchestration, Founder, and authorization gaps.
 
 ### Implemented in this phase
@@ -540,7 +562,7 @@ The initial vertical-slice stop was intentionally passed after the user directed
 These implementations are **not a production-ready platform**. In particular:
 
 1. **Durability:** Standalone package defaults (ObjectStore, TaskStore, workflow, Founder decision, and knowledge-stage repositories) remain in-memory. `apps/host` supplies a durable hash-chained journal for Task/Workflow/Artifact/run state, but it has no compaction/snapshot or schema-migration framework, backup/restore is file-level, and multi-process concurrency is unsupported. The host also supplies a separate durable `learning.jsonl` for knowledge records, Memory Objects, approvals, and approval-bound promotions; permanent stages require a recorded human approval. This is organizational Learning Memory, not Founder Intelligence, which remains in Obsidian (ADR-0014). `authorization-audit.jsonl` is a second dedicated hash-chained journal containing every authorization allow and deny with request correlation and exact rule binding; policy lifecycle events remain in the policy state file. These journals share the documented no-compaction/migration and single-process limits.
-2. **Authorization lifecycle:** the evaluator is an in-process policy evaluator. Versioned immutable policies are evaluated in-process; the host persists and administers them only through an offline bootstrap CLI, not a secured control plane. Ordinary ObjectStore creation now rejects caller-supplied `access_policy`; only an explicit privileged bootstrap option can seed policy-bearing records. A `PolicyAdministrationService` facade now restricts publish/attach/revoke operations to an out-of-band bootstrap principal and requires a transactional administration port. `InMemoryPolicyRegistry` remains a development/test implementation with immutable policy snapshots and lifecycle audit events; `FilePolicyRegistry` supplies the durable policy/attachment store and atomically committed lifecycle audit. Every decision requires an injected append-only audit sink; the host supplies durable `authorization-audit.jsonl`, while standalone package defaults remain in-memory. External independent audit custody and policy recovery/rotation remain open. The authorization semantics are ratified by ADR-0013.
+2. **Authorization lifecycle:** the evaluator is an in-process policy evaluator. Versioned immutable policies are evaluated in-process; the host persists them durably and now exposes an authenticated, exact-granted `POST /v1/policies` route for runtime replacement, while the offline bootstrap CLI remains the initial provisioning path. Ordinary ObjectStore creation now rejects caller-supplied `access_policy`; only an explicit privileged bootstrap option can seed policy-bearing records. A `PolicyAdministrationService` facade restricts the offline publish/attach/revoke operations to an out-of-band bootstrap principal and requires a transactional administration port; the runtime route passes the shared default-deny boundary before calling the registry's atomic publication primitive. `InMemoryPolicyRegistry` remains a development/test implementation with immutable policy snapshots and lifecycle audit events; `FilePolicyRegistry` supplies the durable policy/attachment store and atomically committed lifecycle audit. Every decision requires an injected append-only audit sink; the host supplies durable `authorization-audit.jsonl`, while standalone package defaults remain in-memory. External independent audit custody, detached policy signatures, HTTP revocation, and policy recovery/rotation remain open. The authorization semantics are ratified by ADR-0013, and the runtime publication path by ADR-0023.
 3. **Identity:** there is no authenticated principal/session/token subsystem. The kernel now requires caller-supplied actor IDs, but a production host must bind those IDs to cryptographically authenticated identities; accepting arbitrary strings from an HTTP caller would be insecure.
 4. **Execution:** orchestration requires injected AgentExecutionPort, TaskVerificationPort, and agent resolver adapters. No concrete production executor, independent verifier implementation, sandbox, tool invocation pipeline, model-provider adapter, timeout/cancellation contract, or resource isolation is supplied. The interface now separates execution from verification, but a host must supply and independently validate both implementations.
 5. **Evidence durability:** executor and verifier evidence are copied into a `test_report` Artifact and linked from the Task, but both stores are in-memory and the Artifact is not backed by immutable/tamper-evident durable storage. Evidence strings remain adapter-supplied references; production must verify their provenance and preserve the underlying evidence.

@@ -14,11 +14,17 @@ node apps/host/dist/cli.js serve --config /abs/path/host.json
 `dispatch: false` in the startup log and `GET /health` means no execution adapter or
 independent verifier was configured. Dispatch then returns 503 instead of simulating work.
 
-Policy administration is offline and human-only:
+The offline bootstrap path remains human-only:
 
 ```sh
 node apps/host/dist/cli.js publish-policy --config /abs/host.json --policy /abs/policy.json
 ```
+
+While the host is running, a human principal with an exact `administer_policy` grant on
+every target may publish and attach a replacement through `POST /v1/policies`; the policy
+and all attachments commit atomically and the next authorization decision uses the new
+policy. A missing grant, invalid artifact, stale version, or failed audit append leaves the
+prior policy effective. There is no detached policy signature yet.
 
 The contract, configuration schema, route table, security properties, and open blockers are
 documented in
@@ -26,6 +32,9 @@ documented in
 
 Task, Workflow, Artifact, and dispatch-run state is durable through a hash-chained journal
 (ADR-0015). Dispatch requires an `Idempotency-Key`, holds a renewable lease, and is recovered
-as interrupted rather than completed after a crash. Learning records are still in-memory,
-live evidence integrations are unverified, and no real executor or verifier ships with the
-repository, so this host is not yet production-ready.
+as interrupted rather than completed after a crash. Learning records, including
+approval-gated permanent Memory stages, are durable in a separate journal. The fixed local
+executor and independent verifier are implemented, but no Docker/bubblewrap/Seatbelt provider
+could be exercised in this environment; dispatch fails closed when no provider passes its
+probe. Live evidence integrations remain unverified, and this host is not yet
+production-ready.

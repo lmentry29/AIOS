@@ -2,9 +2,9 @@
 
 Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
 local evidence only. The attempt-inspection head `8cd427a` and docs tip `c64ba42` passed the
-`ci`, `conformance`, and `schema-check` workflows. The verifier-binding head `05769e1`, the
-permanent-Memory approval head `503cefb`, and the authorization-audit head `15ff877` are
-pushed after this snapshot; read their checks from GitHub.
+`ci`, `conformance`, and `schema-check` workflows. The durable-audit docs tip `e65688e`
+passed those workflows; the runtime-policy head `7103957` is pushed after this snapshot, so
+read its checks from GitHub rather than inferring them from local results.
 
 ## Repository and active change
 
@@ -13,7 +13,7 @@ pushed after this snapshot; read their checks from GitHub.
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `15ff877` (`feat(host): journal every authorization decision with request correlation`)
+- Verified code head: `7103957` (`feat(host): authorize runtime policy publication`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -33,13 +33,14 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/agents` | Agent lifecycle/conformance runner; not a general tool-executing agent runtime |
 | `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
 | `@aios/learning` | Knowledge records and evolution stages; permanent stages require a recorded human approval; in-memory default with a durable host journal |
-| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with exact grant binding, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
+| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with exact grant binding including human-only `administer_policy`, atomic runtime replacement, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
 | `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks with verifier-attributed evidence binding, evidence artifacts, status/evidence reads, cancellation preflight/checks, authorized resume/retry orchestration, and read-only Task/Workflow attempt-chain inspection with all-or-nothing step authorization; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable policy registry/audit, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable policy registry/audit, exact-granted human-only runtime policy publication, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
-broker, no signed verifier provenance, no automatic retry/backoff loop, and no live
-external-provider verification.
+broker, no signed verifier provenance, no detached policy signature, no HTTP policy
+revocation route, no automatic retry/backoff loop, and no live external-provider
+verification.
 
 ## Architecture decisions
 
@@ -82,18 +83,26 @@ external-provider verification.
   or executes. Workflow inspection is all-or-nothing: every declared step Task is authorized
   before any history is read, so one missing grant denies the whole request with no partial
   chain.
+- ADR-0023 — **Accepted (2026-11-10)**: runtime policy administration. A human principal
+  with an exact `administer_policy` grant on every target may publish and attach a new
+  immutable policy through `POST /v1/policies`. The registry validates the artifact, version,
+  and rule scope and commits the policy plus all attachments atomically. Every attempt is in
+  the durable authorization decision journal; audit failure blocks mutation. A malformed,
+  stale, or out-of-scope artifact leaves the prior policy effective. The offline
+  `publish-policy` CLI remains the bootstrap path. There is no detached policy signature or
+  HTTP revocation route yet.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-Local checks at code head `15ff877` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `7103957` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
 - `pnpm -r run lint` — pass.
-- `pnpm -r run test` — pass, **495 tests total**.
-- Host: **94 tests** in 9 files, including 41 loopback HTTP tests, cancellation with a
+- `pnpm -r run test` — pass, **503 tests total**.
+- Host: **99 tests** in 9 files, including 46 loopback HTTP tests, cancellation with a
   test-only sandbox stub, a real child-process SIGKILL test with a labelled
   `test-only-process` provider, cap enforcement/retry, late-result rejection, journal-level
   crash/restart reconciliation, authorized resume/retry over append-only attempts, a
@@ -108,16 +117,17 @@ Local checks at code head `15ff877` (Node 26.13.0, pnpm 11.11.0):
   approval survive close-and-reopen while unapproved and rejected approvals write no
   permanent entry, and a durable authorization-audit journal whose allow/deny records survive
   restart in order with request correlation.
-- Authorization audit: **6 store tests** plus host restart/grant cases. Allow and deny
-  records include request id, principal, action, resource, policy/version, fixed reason, and
-  the decisive rule; reopen preserves order and integrity, tamper and torn-tail handling are
-  covered, and a failed append denies without recording a phantom decision.
+- Authorization audit: **6 store tests** plus host restart/grant cases, including five
+  runtime policy-publication cases. Allow and deny records include request id, principal,
+  action, resource, policy/version, fixed reason, and the decisive rule; reopen preserves
+  order and integrity, tamper and torn-tail handling are covered, and a failed append denies
+  without recording a phantom decision.
 - Learning: **28 tests**, including 13 approval tests. `memory-approval.test.ts` proves
   default denial, rejected/expired/pending approvals write nothing, human-only decisions,
   exact content/transition binding, one-time consumption, and unchanged draft promotions.
   `apps/host/tests/learning-store.test.ts` proves an approved promotion and its consumed
   approval survive close-and-reopen, and a rejected approval leaves no permanent entry.
-- Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 55;
+- Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 58;
   orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 28; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
@@ -144,10 +154,11 @@ provider is unavailable; they do not claim container isolation.
    `stub-container` double, not a real Docker/bubblewrap/Seatbelt provider.
 4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
    infrastructure inventory, or secret broker exists.
-5. **Identity/policy lifecycle.** Bearer sessions, a durable policy registry, and a durable
-   hash-chained decision audit exist, but there is no user-facing login, policy
-   recovery/rotation procedure, or independent external audit custody. Policy administration
-   is an offline human CLI.
+5. **Identity/policy lifecycle.** Bearer sessions, a durable policy registry, exact-granted
+   runtime publication, and a durable hash-chained decision audit exist, but there is no
+   user-facing login, detached policy signature, HTTP revocation route, policy
+   recovery/rotation procedure, or independent external audit custody. The offline
+   `publish-policy` CLI remains the bootstrap path.
 6. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
    per-note authorization, retrieval/context assembly, contradiction detection, and reviewed
    Founder vault memory writes remain open. Organizational Learning Memory now has
@@ -164,7 +175,7 @@ provider is unavailable; they do not claim container isolation.
 
 ## Next work order
 
-1. Observe CI on the authorization-audit head `15ff877` and its docs tip; do not treat local
+1. Observe CI on the runtime-policy head `7103957` and its docs tip; do not treat local
    results as CI.
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
@@ -174,6 +185,8 @@ provider is unavailable; they do not claim container isolation.
 5. Source/review the Mission field model before adding any Mission API/schema.
 6. Build a secret broker before any provider credential is introduced.
 7. Keep PR #1 draft; do not merge or push `main`.
+8. Define detached policy signatures and a revocation/rotation procedure before treating
+   runtime policy administration as production security.
 
 ## Source-of-truth rules
 

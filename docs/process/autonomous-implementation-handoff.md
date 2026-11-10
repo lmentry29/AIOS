@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, durable authorization decision audit).
+Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publication).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `15ff877` (`feat(host): journal every authorization decision with request correlation`)
+- Verified code head: `7103957` (`feat(host): authorize runtime policy publication`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `7103957` — authorized runtime policy publication with atomic replacement
   - `15ff877` — durable authorization decision audit with request correlation
   - `503cefb` — human-approved, durable permanent Memory binding
   - `05769e1` — verifier-attributed, persisted evidence binding
@@ -42,9 +43,9 @@ Last updated: 2026-11-10 (Freebuff Cloud session, durable authorization decision
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
 - GitHub Actions passed `ci`, `conformance`, and `schema-check` at `8cd427a` and its docs tip
-  `c64ba42`. Checks for the verifier-binding head `05769e1`, the permanent-Memory approval
-  head `503cefb`, and the authorization-audit head `15ff877` are observed after the push;
-  this handoff does not assert them.
+  `c64ba42`; the durable-audit docs tip `e65688e` was reported green. The runtime-policy
+  head `7103957` is pushed after this snapshot; observe its checks on GitHub rather than
+  treating local results as CI.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -314,7 +315,7 @@ Operators can audit the full chain without redriving it.
 - 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
   Workflow.
 
-## Verification actually executed at `05769e1`
+## Verification actually executed at `7103957`
 
 Local at commit time; CI is observed after the push, not asserted here.
 
@@ -331,19 +332,19 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **94 passed** (9 files) |
+| `@aios/host` | **99 passed** (9 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
 | `@aios/objects` | 32 passed |
-| `@aios/founder` | 55 passed |
+| `@aios/founder` | 58 passed |
 | `@aios/orchestration` | 30 passed |
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 28 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **495 passed** |
+| **Total** | **503 passed** |
 
 Schema regeneration produced no diff.
 
@@ -470,6 +471,10 @@ Schema regeneration produced no diff.
    rejects every `Origin`.
 10. **Operations.** Metrics/tracing/alerting, journal compaction and migrations, automated
     backup/restore drill, threat model, incident response, deployment docs, SLOs.
+11. **Policy administration assurance.** Runtime publication has no detached policy
+    signature, HTTP revocation route, key rotation, external audit custody, or production
+    recovery/rotation procedure. Current authority is the authenticated session plus the
+    exact grant; do not describe it as cryptographic policy provenance.
 
 ## Architectural decisions made this session
 
@@ -504,6 +509,10 @@ Schema regeneration produced no diff.
 - Every authorization allow and deny is committed to `authorization-audit.jsonl` with the
   host request id, principal, action/resource, policy/version, decision, fixed reason, and
   decisive rule. An audit append failure denies, including an otherwise matching allow.
+- Runtime policy administration is an exact `administer_policy` grant on every target, not
+  a bootstrap or owner shortcut. It is human-only, atomically publishes policy plus
+  attachments, and leaves the prior policy effective on any rejected artifact or audit
+  failure (ADR-0023).
 
 ## Completed — permanent Memory approval binding (`503cefb`)
 
@@ -537,11 +546,37 @@ Schema regeneration produced no diff.
   matching allow; no phantom decision is recorded. Tests:
   `apps/host/tests/authorization-audit-store.test.ts` (6),
   `packages/founder/tests/authorization.test.ts` (22 total), and the restart/grant cases in
-  `apps/host/tests/http-host.test.ts` (41 HTTP total). Full workspace: **495 passed**.
+  `apps/host/tests/http-host.test.ts` (41 HTTP total). Full workspace at that commit:
+  **495 passed**.
+
+## Completed — authorized runtime policy publication (`7103957`)
+
+- `administer_policy` is a new exact `AccessAction`, and only human subjects may hold it.
+  A policy rule that grants it to an Agent UUID is rejected at load and publication time.
+- `POST /v1/policies` accepts `{ policy, attach_to }` under a verified bearer session. It
+  requires an exact `administer_policy` allow on every target before any mutation; there is
+  no wildcard, implicit admin, or bootstrap bypass. The test uses a non-bootstrap human to
+  prove the route is not bootstrap-only.
+- `FilePolicyRegistry.publishAndAttach()` validates the immutable policy, target list, rule
+  scope, and monotonic version, then commits the new policy, all attachments, and lifecycle
+  events as one fsync'd snapshot. Policy rules may reference only the published targets, and
+  every target must be referenced.
+- Invalid, stale, out-of-scope, or schema-invalid publications return typed 400/409 errors
+  and leave the prior policy bytes and effective attachment unchanged. The offline
+  `publish-policy` CLI still works and remains the bootstrap path.
+- Every target authorization uses the durable decision journal. A failed audit append
+  denies the request before `publishAndAttach`, so no mutation occurs. Every denial is
+  recorded with the target, fixed reason, and decisive rule state.
+- A replacement and its publish decision survive host close/reopen; the replacement decides
+  later protected reads and the audit prefix reads back in order. Serialized policy and
+  audit files contain no bearer token or `Bearer` text.
+- Limits: no detached policy signature, HTTP revocation route, key rotation, external audit
+  custody, or policy rollback by reattaching an older version. Rollback is a new higher
+  version with the restored rules. The registry remains single-process.
 
 ## Next concrete work
 
-1. Observe CI on `15ff877` and the docs tip; push only
+1. Observe CI on `7103957` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.
