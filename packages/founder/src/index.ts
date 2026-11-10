@@ -312,3 +312,4 @@ export class FounderInterface {
 export * from './authorization.js';
 export * from './obsidian-evidence.js';
 export * from './local-connectors.js';
+export * from './file-policy-registry.js';
