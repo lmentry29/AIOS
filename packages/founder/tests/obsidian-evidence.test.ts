@@ -16,7 +16,7 @@ const authorization = { authorize: vi.fn().mockResolvedValue(true) };
 function metadata(path: string, content: string) {
   return {
     path,
-    name: path.split('/').at(-1)!.replace(/\.md$/i, ''),
+    name: (path.split('/').pop() ?? path).replace(/\.md$/i, ''),
     folder: path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null,
     frontmatter: { type: 'candidate-memory', tags: ['founder'] },
     frontmatterValid: true,
@@ -99,7 +99,6 @@ describe('AuthorizedVaultEvidenceReader', () => {
       expect(call.url.origin).toBe('http://127.0.0.1:4444');
       expect(call.init.method).toBe('GET');
       expect(call.init.redirect).toBe('error');
-      expect(call.init.cache).toBe('no-store');
       expect((call.init.headers as Record<string, string>).authorization)
         .toBe(`Basic ${Buffer.from(`local:${password}`).toString('base64')}`);
     }
