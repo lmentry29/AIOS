@@ -41,7 +41,7 @@ Full host suite: `pnpm --filter @aios/host test` → **109 passed, 9 skipped** (
 - No container escape, kernel exploit, or privilege-escalation research was attempted.
 - bubblewrap is a shared-kernel boundary; the results do not transfer to Docker, gVisor, Seatbelt, or Apple Containerization.
 - The Docker adapter's isolation flags were inspected and unit-tested for argv shape, not executed against a daemon.
-- No resource-exhaustion benchmark (CPU/memory/disk) was run; the cgroup gap remains open.
+- The original boundary pass did not run a resource-exhaustion benchmark; the later F-003 section records the real memory/CPU/process-limit drill. Aggregate cgroup accounting remains open.
 
 ## 2026-11-10 — CI live boundary
 
@@ -190,5 +190,63 @@ Observed properties:
 Limits of this evidence: the filter is a **deny-list**, so unlisted syscalls remain available;
 Landlock is not active on this kernel; the arm64 profile table was generated but not live-run
 on this x86_64 host; Docker, Seatbelt, gVisor, and Apple Containerization remain unverified;
-the shared host kernel remains in scope; there is no cgroup CPU/memory accounting or hard disk
-quota. See ADR-0027 and F-007.
+the shared host kernel remains in scope; there is no aggregate cgroup CPU/memory accounting or
+hard disk quota. See ADR-0027 and F-007.
+
+## 2026-11-10 — bubblewrap per-run resource limits (F-003)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`, util-linux `prlimit` 2.39.3 at `/usr/bin/prlimit`. A manual probe
+confirmed `bwrap --help` has no `--rlimit` option and that `prlimit --as/--cpu/--nproc` applies
+the limits inside the user namespace while `Seccomp: 2` remains active. Commands actually run:
+
+```sh
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+node tools/security/scan-secrets.mjs
+node tools/security/audit-policy.mjs
+```
+
+Full workspace gate: **46/46 tasks successful**; host **131 passed, 17 skipped** (the 17 skips
+are the live suites without `AIOS_BWRAP_DIR`). Live suites with the real binary: **17 passed**
+(12 boundary/limit cases, 3 seccomp cases, 2 quota cases). The 12 boundary/limit cases include
+the exact-limit report, the ordinary Perl run, and the memory bomb below. Secret scan: **no
+findings across 270 tracked files**; audit policy: **no untriaged high or critical advisories
+(1 triaged)** (zod GHSA-mrhx-c7xc-m3w5).
+
+Drill output (verbatim, exit 0):
+
+```json
+{"drill":"bubblewrap-resource-limits","kernel":"6.1.102","provider":"bubblewrap","limits":{"memory_bytes":1342177280,"cpu_seconds":5,"processes":128,"applied":true},"limits_report":["v=1310720 t=5","Max processes             128                  128                  processes ","Seccomp:\t2","Seccomp_filters:\t1"],"filter":{"profile":"aios-seccomp-deny-v1-x64","sha256":"12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac","applied":true,"seccomp_mode":"2"},"legitimate":{"exit_code":"0","resource_limits_applied":"true"},"memory_bomb":{"exit_code":1,"timed_out":false,"stderr":"Out of memory!"},"host_mem_available_kb":{"before":15878684,"after":15875512}}
+```
+
+Observed properties:
+
+- The production invocation is `/usr/bin/prlimit --as=1342177280 --cpu=<ceil(deadline/1000)>
+  --nproc=128 -- /bin/sh -c <fixed wrapper> ...argv` inside the existing
+  `--unshare-all`/`--seccomp 3`/capability-drop/read-only-bound boundary. No test-only
+  helper installs the limits.
+- The wrapper observed `v=1310720` KiB, `t=5`, `Max processes 128 128 processes`, and
+  `Seccomp: 2` / `Seccomp_filters: 1`, then reported `limits.applied:true` and
+  `filter.applied:true`. Both proofs are written on the inherited fd before exec; missing or
+  mismatched values deny the run.
+- The ordinary Perl run completed with exit 0 and executor evidence
+  `resource_limits_applied:true`, `resource_limit_memory_bytes:1342177280`,
+  `resource_limit_cpu_seconds:15`, and `resource_limit_processes:128` while retaining
+  `syscall_filter_applied:true`.
+- The Perl memory bomb exited 1 with `Out of memory!` and `timed_out:false` — it was stopped
+  by `RLIMIT_AS`, not the deadline. `MemAvailable` remained in the same range (15,878,684 to
+  15,875,512 KiB); that observation is illustrative, not a memory-pressure proof.
+- Regression tests: `tests/seccomp.test.ts` adds two cases for missing limit proof (executor
+  journals `sandbox_resource_limit_unavailable` and verifier rejects the failed attempt;
+  verifier rejects its own missing proof). `tests/sandbox-live.test.ts` adds three real
+  bwrap cases. `tools/security/resource-limit-drill.mjs` records the same provider path.
+
+Limits of this evidence: these are **per-process** kernel limits, not cgroup aggregate
+accounting. Up to 128 descendants can each reserve the 1.25 GiB address-space cap, RLIMIT_AS
+is not RSS, and CPU limits are per-process. The existing F-007 deny-list still kills Node/libuv
+at startup because libuv probes `io_uring_setup`; the drill uses Perl, which does not probe
+io_uring. Docker, gVisor, Seatbelt, and Apple Containerization remain unverified or
+unavailable; the shared kernel remains in scope. See ADR-0028 and F-003.

@@ -1,7 +1,10 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Code head `4422229` (authorized runtime policy retirement) sits on
+evidence from observed CI. Latest security code head: `f012df3` (per-run bubblewrap resource
+limits, F-003); its documentation/validation commit follows. The historical heads below remain
+the last CI verification recorded in this file; re-check the new head instead of reusing them.
+Code head `4422229` (authorized runtime policy retirement) sits on
 the branch above the previously verified merge head `8c950e6`, which merged `upstream/main`
 at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
 `schema-check` (run `42887224921`) workflows with PR #1 mergeable/clean. Docs commit
@@ -32,10 +35,16 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
   integrity-checked, idempotent restore (`restore-journal`) are implemented under ADR-0025.
   Execution attempts and verifier result digests survive compaction. Archives are
   digest-verified but unsigned and unencrypted; retention is an operator duty.
+- Per-run bubblewrap resource limits: every run installs `RLIMIT_AS` 1.25 GiB,
+  deadline-aligned `RLIMIT_CPU`, and `RLIMIT_NPROC` 128 with trusted `prlimit` inside the
+  namespace (ADR-0028). The wrapper proves exact `/proc/self/limits` and `Seccomp: 2`; missing
+  proof is `sandbox_resource_limit_unavailable` and verifier-bound. Live memory bomb: exit 1,
+  `Out of memory!`, `timed_out:false`. This is per-process, not aggregate cgroup, enforcement.
 - The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
-  passed 9/9 adversarial cases covering host-file reads, workspace symlink escape, network
-  interfaces, environment clearing, PID-namespace privacy, writes outside the workspace,
-  effective capabilities, and background-workload cleanup. Docker, Seatbelt, gVisor, and
+  passed the original 9/9 adversarial boundary cases, then 12/12 boundary/limit cases after
+  the resource work, covering host-file reads, workspace symlink escape, network interfaces,
+  environment clearing, PID-namespace privacy, writes outside the workspace, effective
+  capabilities, background-workload cleanup, and memory/limits. Docker, Seatbelt, gVisor, and
   Apple Containerization remain unverified or unavailable and are labelled as such in
   `docs/security/sandbox-matrix.md`.
 - Timeout and cancellation now kill the provider's whole process group (with a direct-child
@@ -188,8 +197,10 @@ provider is unavailable; they do not claim container isolation.
 1. **Execution isolation proof.** Docker/bubblewrap/Seatbelt implementations need testing on
    hosts where they actually run, including cancellation/container-kill behavior, mount
    permissions, network denial, PID/memory limits, and hostile commands. Bubblewrap has a
-   generated seccomp deny-list and live denial drill (ADR-0027), but no cgroup accounting, no
-   active Landlock, and remains trusted-local only; Docker/Seatbelt/gVisor are unverified.
+   generated seccomp deny-list and live denial drill (ADR-0027) plus per-process RLIMIT
+   enforcement (ADR-0028), but no aggregate cgroup accounting, no active Landlock, and remains
+   trusted-local only; Docker/Seatbelt/gVisor are unverified. Node/libuv is currently killed by
+   the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
    a compromised host process.

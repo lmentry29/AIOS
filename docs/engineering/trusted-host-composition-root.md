@@ -440,8 +440,9 @@ version containing the desired rules.
   intentionally unsupported. Verifier independence is enforced as a distinct configured
   principal plus a separately executed command, but there is no signed verifier decision,
   key rotation, or protection against a compromised host process. Bubblewrap installs a
-  generated seccomp deny-list before exec (ADR-0027), but still lacks cgroup accounting, has
-  no active Landlock profile, and is suitable only for trusted local commands; Docker,
+  generated seccomp deny-list before exec (ADR-0027) and per-process RLIMIT limits (ADR-0028),
+  but still lacks aggregate cgroup accounting, has no active Landlock profile, and is suitable
+  only for trusted local commands; Docker,
   Seatbelt, and gVisor remain unverified.
 - **Live integrations.** Vault, Gmail, and Notion readers are composed but untested against
   real services; per-note vault authorization remains collection-level.

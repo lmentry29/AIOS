@@ -3,8 +3,9 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publication and
-CI verification).
+Last updated: 2026-11-10 (Freebuff Cloud session, bubblewrap per-run resource limits and CI
+verification). Latest security code head: `f012df3` (F-003); its documentation/validation
+commit follows. Re-check this head rather than older CI lines below.
 
 ## Repository state
 
@@ -449,8 +450,9 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 - **Not live-provider verified:** Obsidian++, Gmail, Notion, GitHub, or any model provider.
 - **Not security tested:** independent penetration test, hostile-kernel escape, container
   escape, or verifier-key compromise. Bubblewrap now installs a generated seccomp deny-list
-  with live denial drills (ADR-0027), but has no cgroup accounting, no active Landlock, and is
-  labelled kernel-namespace/trusted-local only; Docker/Seatbelt/gVisor remain unverified.
+  with live denial drills (ADR-0027) and per-process RLIMIT enforcement (ADR-0028), but has no
+  aggregate cgroup accounting, no active Landlock, and is labelled kernel-namespace/trusted-local
+  only; Docker/Seatbelt/gVisor remain unverified.
 - **Not signed:** verifier decisions have no Ed25519/TUF provenance. The trust anchor is a
   host-configured distinct principal plus a separately executed command.
 
@@ -613,6 +615,27 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   unchanged-state cases, `apps/host/tests/policy-admin.test.ts` adds the offline path, and
   `apps/host/tests/http-host.test.ts` adds four retirement tests (51 HTTP total). Full
   workspace: **513 passed**.
+
+## Completed — bubblewrap per-run resource limits (`f012df3`)
+
+F-003 was selected as the highest-severity actionable open finding: F-005 requires unavailable
+macOS/Apple silicon, F-009 requires external key custody, and F-013 is Low. The production
+bubblewrap path now installs inherited `RLIMIT_AS` 1.25 GiB, deadline-aligned `RLIMIT_CPU`, and
+`RLIMIT_NPROC` 128 with the trusted host `/usr/bin/prlimit` inside the existing namespace. A
+fixed wrapper requires the exact `/proc/self/limits` values and `Seccomp: 2` before exec.
+Missing proof raises `SandboxResourceLimitUnavailableError`, journals
+`sandbox_resource_limit_unavailable`, and is rejected by the verifier; success evidence records
+the limits. The seccomp filter, namespace boundary, disk quota, and verifier binding were not
+weakened.
+
+Evidence: full workspace gate **46/46 tasks**, host **131 passed/17 skipped**, live bwrap
+**17/17** (12 boundary/limit, 3 seccomp, 2 quota). `tools/security/resource-limit-drill.mjs`
+recorded a legitimate Perl run at exit 0 with `resource_limits_applied:true`, and a Perl memory
+bomb at exit 1 with `Out of memory!`, `timed_out:false`, while the filter still reported
+`Seccomp: 2`. Residual: per-process, not cgroup aggregate; up to 128 descendants can each
+reserve 1.25 GiB; RLIMIT_AS is not RSS. Node/libuv probes `io_uring_setup` and is killed by the
+F-007 filter at startup, so the drill uses Perl. Docker/gVisor/Seatbelt/Apple Containerization
+remain unverified. See ADR-0028, F-003, and the validation ledger.
 
 ## Next concrete work
 

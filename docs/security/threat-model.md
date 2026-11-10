@@ -56,15 +56,22 @@ Founder Intelligence vault's own access controls.
   Landlock is not active on the validation host, and Docker/Seatbelt/gVisor/Apple
   Containerization remain unverified. A denied syscall is journaled as
   `sandbox_syscall_denied`; missing filter proof is `sandbox_filter_unavailable`.
-- **Resource exhaustion.** bubblewrap has no cgroup CPU/memory controls. Deadlines, bounded
-  output, a size-bounded `/tmp` (64 MiB), process-group kill, and one-command-per-task are the
-  current controls; a memory bomb can still stress the host. The per-run workspace ceiling is
-  sampled every 25 ms while the run is live, aborts and discards an over-cap workspace, and is
-  journaled as `disk_quota_exceeded` (ADR-0026). It is **not a hard filesystem quota**: a fast
-  writer can overshoot between samples, symlinks are skipped, hardlinks are counted per name,
-  and writes outside `/workspace` (for example other tmpfs paths) are not attributed to the
-  run. There is no unprivileged block/loop quota on this host. Docker provider has cgroup flags
-  but was not executable on the validation host.
+- **Resource exhaustion.** bubblewrap now installs per-process `RLIMIT_AS` (1.25 GiB),
+  `RLIMIT_CPU` (the run deadline rounded up to whole seconds), and `RLIMIT_NPROC` (128) with
+  the trusted host `/usr/bin/prlimit` before exec. The fixed wrapper proves the exact
+  `/proc/self/limits` values and `Seccomp: 2`; missing proof is journaled as
+  `sandbox_resource_limit_unavailable` and the verifier rejects it (ADR-0028). This bounds a
+  single memory bomb, but it is **per-process**, not cgroup aggregate: up to 128 descendants can
+  each reserve the address-space cap, RLIMIT_AS is not RSS, and CPU limits are per-process.
+  Deadlines, bounded output, a size-bounded `/tmp` (64 MiB), process-group kill, and
+  one-command-per-task remain. The per-run workspace ceiling is sampled every 25 ms while the
+  run is live, aborts and discards an over-cap workspace, and is journaled as
+  `disk_quota_exceeded` (ADR-0026). It is **not a hard filesystem quota**: a fast writer can
+  overshoot between samples, symlinks are skipped, hardlinks are counted per name, and writes
+  outside `/workspace` (for example other tmpfs paths) are not attributed to the run. There is
+  no unprivileged block/loop quota on this host. Docker provider has cgroup flags but was not
+  executable on the validation host. Node/libuv probes `io_uring_setup` and is killed by the
+  F-007 deny-list at startup; that compatibility residual is recorded in the findings ledger.
 - **macOS.** `sandbox-exec` is deprecated; a supported macOS path requires Apple
   Containerization on macOS 26 / Apple silicon, which is not implemented or validated here.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor
