@@ -161,7 +161,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
     if (!isRecord(payload) || !Array.isArray(payload.results) || payload.results.length > 500) {
       throw new LocalConnectorEvidenceError('Notion connector returned an invalid result collection.');
     }
-    return payload.results.map((item, index): NotionApplicationEvidenceRecord => {
+    return payload.results.map((item): NotionApplicationEvidenceRecord => {
       if (!isRecord(item)) throw new LocalConnectorEvidenceError('Notion connector returned an invalid application record.');
       return Object.freeze({
         source_id: stableSourceId(this.notionResourceId, `notion/application/${requiredText(item.id, 'page ID', 64)}`),
