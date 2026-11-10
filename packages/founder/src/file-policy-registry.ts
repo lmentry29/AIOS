@@ -348,11 +348,15 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
 
   private commit(next: FilePolicyState): void {
     const validated = validateState(next);
+    const serialized = JSON.stringify(validated);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_STATE_BYTES) {
+      throw new FilePolicyRegistryError('Policy state exceeds the configured file-size limit.');
+    }
     const temporaryPath = join(dirname(this.filePath), `.policy-state.${randomBytes(12).toString('hex')}.tmp`);
     let descriptor: number | undefined;
     try {
       descriptor = openSync(temporaryPath, 'wx', 0o600);
-      writeFileSync(descriptor, JSON.stringify(validated), 'utf8');
+      writeFileSync(descriptor, serialized, 'utf8');
       fsyncSync(descriptor);
       closeSync(descriptor);
       descriptor = undefined;
@@ -364,7 +368,9 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     } catch {
       if (descriptor !== undefined) closeSync(descriptor);
       try { unlinkSync(temporaryPath); } catch { /* Best-effort cleanup. */ }
-      throw new FilePolicyRegistryError('Could not durably commit the policy state and audit event.');
+      this.closed = true;
+      this.releaseLock();
+      throw new FilePolicyRegistryError('Could not durably commit the policy state and audit event; registry closed fail-safe.');
     }
   }
 
