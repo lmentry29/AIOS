@@ -1,0 +1,21 @@
+# Security Findings Ledger
+
+Status vocabulary: `fixed` (with regression test), `open`, `accepted` (documented residual
+risk), `unverified` (control exists but was not executed on its platform).
+
+| ID | Severity | Finding | Status | Evidence / next action |
+|---|---|---|---|---|
+| F-001 | High | Timeout or cancellation killed only the direct child, so a sandbox supervisor's descendants could survive and keep running. | **Fixed** | Process group kill + real-process tests (`process.test.ts`, commit `dec854a`). |
+| F-002 | High | The verifier accepts an `execution_result` without recomputing the executor's evidence digest against the durable execution record, so a forged result could be verified if it reached the port. | **Open** | Bind decision to execution ID, attempt, and recomputed `result_sha256`; reject mismatches. Regression tests required. |
+| F-003 | Medium | bubblewrap has no cgroup CPU/memory controls; a memory bomb can stress the host. | Open (accepted for local single-operator use) | Deadlines, bounded output, size-bounded `/tmp`, one command per task, process-group kill. Docker provider has cgroup flags but was unverified. |
+| F-004 | Medium | No per-workspace disk quota; a workload can fill the filesystem before the timeout. | Open | Post-run workspace size cap plus a configurable maximum; test with a large sparse file. |
+| F-005 | Medium | `sandbox-exec` is deprecated on macOS and has no published CLI replacement; the Seatbelt adapter may stop working on a future macOS. | Accepted, unverified | Prefer Apple Containerization (macOS 26 / Apple silicon) as future work; current macOS path is best-effort. |
+| F-006 | Medium | Docker provider was never executed against a daemon in this environment; only argument construction is tested. | Unverified | Run the adapter on a host with rootless Docker and cgroup v2; record in the validation ledger. |
+| F-007 | Medium | No seccomp filter inside the bubblewrap namespace; the workload can call any syscall the kernel permits. | Open | Landlock/seccomp profile is follow-on work; shared-kernel risk remains. |
+| F-008 | Medium | Journal compaction is absent; the journal fails closed at its size limit and backup/restore is manual. | Open | Implement integrity-checked export/import and a documented recovery drill. |
+| F-009 | Medium | Policy artifacts are unsigned; there is no detached signature, key rotation, or external audit custody. | Accepted (ADR-0023/0024) | Requires key-management design before it can be closed. |
+| F-010 | Low | Dependency and secret scanning were manual. | **Fixed** | `security.yml` runs `pnpm audit --prod --audit-level high` and `tools/security/scan-secrets.mjs`; secret scan also runs locally. |
+| F-011 | Low | CI actions were not pinned, so a compromised action tag could execute with repository read access. | **Fixed / verified** | Existing workflows already pin full commit SHAs; new workflow follows the same rule. |
+| F-012 | Low | Prompt injection through vault, Gmail, or Notion content can influence an agent's reasoning. | Accepted | Content is data, not instructions; Founder integration is read/propose only, permanent Memory writes need human approval, and tools are narrowly scoped. |
+| F-013 | Low | Host session tokens are long-lived bearer digests with no rotation or revocation endpoint. | Open | Short expiry is supported; rotation workflow still required. |
+| F-014 | High (dependency) | `zod` < 4.6.6 can exhaust memory while validating oversized constrained collections (GHSA-mrhx-c7xc-m3w5). | Triaged, mitigating control | Only patched line is a breaking v4 major that also requires replacing `zod-to-json-schema` in the schema generator. Request bodies are capped at 1 MiB, schemas constrain small collections, and `audit-policy.mjs` encodes this rationale so any other high advisory still fails CI. Upgrade tracked as the next dependency task. |

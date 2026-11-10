@@ -86,7 +86,7 @@ describe.skipIf(!enabled || process.platform !== 'linux')('live bubblewrap bound
       expect(output).not.toContain('AIOS_LIVE_LEAK');
       expect(output).not.toContain('must-not-appear');
     } finally {
-      delete process.env.AIOS_LIVE_LEAK;
+      Reflect.deleteProperty(process.env, 'AIOS_LIVE_LEAK');
     }
   });
 
@@ -130,7 +130,7 @@ describe.skipIf(!enabled || process.platform !== 'linux')('live bubblewrap bound
   it('kills a background workload when the boundary is killed', async () => {
     const marker = join(tmpdir(), `aios-orphan-${Date.now()}.pid`);
     const result = await provider.run({
-      argv: ['/bin/sh', '-c', `sleep 120 & echo $! > /workspace/child.pid; sleep 120`],
+      argv: ['/bin/sh', '-c', "sleep 120 & echo $! > /workspace/child.pid; sleep 120"],
       workspaceDirectory: (() => {
         const directory = workspace();
         writeFileSync(join(directory, 'marker'), '');
