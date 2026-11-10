@@ -17,22 +17,17 @@ Last updated: 2026-11-10 (Freebuff Cloud session, after runner restart).
   read it. Working tree is clean after that commit.
 - PR to update: https://github.com/lmentry29/AIOS/pull/1 (not merged, not touched)
 
-## Push status — BLOCKED
+## Push status — PUSHED
 
-The cloud workspace has **no GitHub write credential**. There is no `GITHUB_TOKEN`,
-`GH_TOKEN`, or PAT in the environment, and `gh` is unauthenticated. Public read/clone/fetch
-works; `git push` cannot authenticate. Therefore:
+Pushed on 2026-11-10 with `git push upstream community/open-source-foundation`
+(`c2d369d..dde7a5e`), after authenticating `gh` through GitHub's device flow in the shared
+terminal (account `lmentry29`). The remote branch tip matched the local tip at push time; a
+small follow-up docs commit updates this status section and is pushed alongside it.
 
-- Nothing from this session has been pushed.
-- PR #1 has not been updated.
-- All work is committed locally on the branch above and is preserved in the workspace.
-
-To publish, on a machine with credentials (or after adding a token to the workspace):
-
-```sh
-git remote add upstream https://github.com/lmentry29/AIOS.git   # present in this workspace
-git push upstream community/open-source-foundation
-```
+The sandbox originally had no Git credential (no `GITHUB_TOKEN`/`GH_TOKEN`/PAT, `gh` logged
+out). The connected GitHub *integration* provides API-side repository access but does not
+inject a git credential into the sandbox; the device flow was used instead so the exact
+commits could be pushed rather than squashed through the API.
 
 Commits use the repository-local author `Freebuff Agent <agent@freebuff.ai>` because the
 fresh VM had no Git identity. Amend the author if you want your own name on them.
