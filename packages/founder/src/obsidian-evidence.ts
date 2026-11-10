@@ -280,7 +280,6 @@ class ObsidianVaultEvidenceAdapter {
           accept: 'application/json',
         },
         redirect: 'error',
-        cache: 'no-store',
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
