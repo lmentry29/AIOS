@@ -54,6 +54,13 @@ when the latest attempt is `interrupted`; `retry` is valid only when it is `fail
 resumed or retried. A cancelled record can never be resumed; a retry creates a distinct
 attempt, so the cancellation remains visible forever.
 
+Attempt numbers are not bounded at two. A `resume` attempt can itself be interrupted by a
+later crash and resumed again; every successor links to its immediate predecessor, never
+directly to the initial attempt, and `listForTask()` returns the whole chain oldest-first.
+Journal replay rejects a successor appended while its predecessor is still `running`, rejects
+`resume` after anything but `interrupted`, and rejects `retry` after anything but `failed`,
+`cancelled`, or `completed`; an ambiguous chain fails closed rather than being guessed at.
+
 ### 3. Authorization
 
 Two new exact `AccessAction` values are added: `resume` and `retry`.
@@ -90,6 +97,11 @@ Startup reconciliation remains exactly ADR-0021: it marks records interrupted an
 work. It never calls resume/retry, never starts a sandbox, and remains a no-op once records
 are terminal. A second start cannot re-drive anything without an authorized request.
 
+Reconciliation is also idempotent over a multi-generation chain. If the latest attempt is
+already `interrupted` by an earlier resume, startup transitions nothing and creates no new
+attempt; a second reconciliation pass over the same durable state writes nothing. Only a
+`running` attempt is transitioned, so recovery never manufactures or re-drives an attempt.
+
 ### 5. Failure and idempotency
 
 If a resumed/retried execution fails, the new attempt is recorded `failed`, active work is
@@ -98,7 +110,24 @@ authorized retry creates another distinct attempt.
 
 Repeating a resume/retry after the Task is completed, or after a Workflow is completed,
 returns a 200 idempotent result with `resumed: false` or `retried: false`; it does not create
-another attempt. Repeating while an attempt is active returns a conflict.
+another attempt.
+
+A duplicate resume/retry that arrives while another redrive of the same Workflow or Task is
+still in flight returns a typed **409 `execution_conflict`**
+(`ExecutionAttemptConflictError`) without waiting. It never appends a second attempt and never
+starts a second sandbox. The contract is deliberately non-blocking: waiting would turn a
+duplicate HTTP request into a queue, hide the conflict from the caller, and risk a request
+timeout whose outcome the caller cannot distinguish from a lost write. Once the first redrive
+finishes, a new request is either the 200 idempotent no-op above (completed) or a new
+authorized operation (failed or interrupted again), not a duplicate.
+
+The guarantee has two independent layers. The kernel holds an in-process claim for the
+Workflow and every Task it will touch, checked and acquired atomically before the first
+lifecycle or attempt write; a second request that overlaps any claimed resource is rejected.
+The durable ledger independently refuses `resume`/`retry` unless the latest attempt is
+terminal in the required state, so even a direct concurrent call cannot append a successor
+from a `running` predecessor. The host is single-process by ADR-0015; cross-process redrives
+are not supported.
 
 ## Alternatives considered
 
@@ -115,6 +144,11 @@ another attempt. Repeating while an attempt is active returns a conflict.
 
 - A Task can now have an ordered history of multiple attempts. Readers that need the current
   state use the latest attempt; audit readers can see every terminal predecessor.
+- A chain may contain more than two attempts. Each attempt's predecessor is the immediately
+  preceding attempt, and all earlier records remain immutable as later generations append.
+- Concurrent duplicate redrives fail closed with a typed 409; they do not queue and do not
+  produce a parallel attempt or sandbox. Retrying after the first redrive has failed is a
+  new, separately authorized operation, not a duplicate of the first request.
 - Cancellation is terminal **for that attempt**, not an irreversible erasure of the Task. A
   distinct, `retry`-authorized attempt is the only way to run the same Task again after a
   cancellation; `resume` never reopens it.
@@ -147,9 +181,24 @@ composition where possible:
 - a full concurrency cap rejects resume with 429 before lifecycle writes, with no new
   execution attempt; after capacity is released, the same resume succeeds;
 - repeated resume/retry after completion is idempotent and creates no third attempt;
+- a three-generation `interrupted → resume → interrupted → resume → completed` chain survives
+  real persisted restarts with monotonic attempt numbers, correct `attempt_kind` values,
+  immediate-predecessor links, and byte-for-byte immutable earlier records;
+- restart reconciliation over an already-interrupted resumed attempt marks nothing, creates
+  no attempt, and a second pass over the same durable state writes no journal bytes;
+- concurrent duplicate Workflow resume, Task resume, and Task retry each return one typed
+  409 and produce exactly one appended attempt and one sandbox start;
+- the concurrency cap rejects a later-generation resume with 429 before any lifecycle or
+  attempt write;
 - startup with interrupted work performs reconciliation only and starts no sandbox;
 - cancellation of a resumed attempt still reaches the provider and cannot be overwritten by
-  a late result.
+  a late result; both earlier attempts stay immutable and an explicit retry appends a third
+  attempt.
 
-Where Docker/bubblewrap/Seatbelt are unavailable, the test-only sandbox/process doubles from
-ADR-0021 are used and labelled as non-isolating. Real-provider integration remains unproven.
+In the verification environment, `docker info` cannot reach a daemon, and `bwrap`, `podman`,
+and `sandbox-exec` are absent. Multi-generation resume and retry are therefore proven against
+the labelled `stub-container` double composed with the real
+`LocalCommandExecutor`/`LocalCommandVerifier`, not against container isolation. A real-runtime
+proof still needs to cover container creation and teardown for each generation, cancellation
+killing the second-generation container, workspace reuse across attempts, and the same
+resource limits on every generation. No real provider or container runtime was exercised.

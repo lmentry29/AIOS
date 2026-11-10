@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, resume/retry slice).
+Last updated: 2026-11-10 (Freebuff Cloud session, attempt-chain hardening slice).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `ce876cf` (`feat(host): add authorized resume and retry for interrupted work`)
+- Verified code head: `a816fe3` (`fix(host): harden multi-generation resume and duplicate redrives`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `a816fe3` — multi-generation attempt chains, no-write reconciliation, duplicate redrive suppression
   - `ce876cf` — authorized resume/retry over append-only attempts
   - `eea8b2c` — verified Task execution lifecycle record
   - `21ccdb0` — authorized Task/Workflow list routes
@@ -35,7 +36,8 @@ Last updated: 2026-11-10 (Freebuff Cloud session, resume/retry slice).
 - Docker CLI is present but the daemon is not reachable to this user; `bwrap`, `podman`, and
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
-- No GitHub Actions run has been observed for these local commits.
+- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `c4a26cd`. Checks for
+  `a816fe3` and the docs tip are observed after the push; this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -165,9 +167,48 @@ cancellation or startup recovery.
 - Startup reconciliation is unchanged: it marks running attempts `interrupted` and suspends
   work, and never calls resume/retry. A second start remains a no-op.
 
-## Verification actually executed at `ce876cf`
+## Completed — attempt-chain hardening (`a816fe3`)
 
-Local only; no CI run was observed.
+The ADR-0022 slice handled one resume. This slice makes the chain safe across repeated
+crashes and duplicate requests.
+
+### Multi-generation chains
+
+- Attempt numbers are not capped at two. `listForTask()` returns every generation; a chain
+  can be `1 initial interrupted → 2 resume interrupted → 3 resume completed`.
+- Every successor records its immediate predecessor, not attempt 1. Earlier terminal records
+  are never rewritten when later generations append.
+- Journal replay now refuses a successor whose predecessor is still `running`, refuses
+  `resume` after anything but `interrupted`, and refuses `retry` after anything but `failed`,
+  `cancelled`, or `completed`. Contiguity and predecessor identity were already checked.
+- A test drives a three-generation chain through two real persisted restarts: generation 2 is
+  created through the same durable ledger `resume` operation, interrupted by reconciliation,
+  then generation 3 completes through `POST /v1/workflows/:id/resume`.
+
+### Reconciliation and duplicate suppression
+
+- Reconciliation only transitions `running` records. An already-interrupted latest attempt
+  is left untouched; a second pass over the same journal appends no bytes.
+- The kernel holds an in-process claim for the Workflow and every Task it will touch. Claims
+  are checked and acquired atomically before the first lifecycle or attempt write and released
+  in `finally`. A duplicate concurrent resume/retry that overlaps a claimed resource returns
+  typed 409 `execution_conflict` without waiting and without a second sandbox start.
+- The durable ledger independently refuses a `resume`/`retry` unless the latest attempt is
+  terminal in the required state, so a direct concurrent call cannot fork the chain either.
+- ADR-0022 now states the contract explicitly: non-blocking 409 while a redrive is in flight;
+  200 idempotent no-op after completion.
+
+### Failure and capacity across generations
+
+- Cancelling generation 2 leaves generations 1 and 2 immutable; an explicit retry appends
+  generation 3 and completes the Task. The Workflow stays suspended until explicitly resumed.
+- The concurrency cap is tested on a generation-2 interrupted attempt: with the cap full, the
+  later resume returns 429 before any lifecycle or attempt write; after release, generation 3
+  completes.
+
+## Verification actually executed at `a816fe3`
+
+Local at commit time; CI is observed after the push, not asserted here.
 
 ```sh
 pnpm -r run build
@@ -182,7 +223,7 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **71 passed** (7 files) |
+| `@aios/host` | **75 passed** (7 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
@@ -194,7 +235,7 @@ All six commands exited 0. Exact test results:
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 15 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **450 passed** |
+| **Total** | **454 passed** |
 
 Schema regeneration produced no diff.
 
@@ -223,13 +264,22 @@ Schema regeneration produced no diff.
   retried; the later Workflow resume skips the completed Task and starts no sandbox.
 - `http-host.test.ts` — `resume` (Workflow and Task), `retry`, and the retried Agent's
   `execute` each return 403 before lookup with no attempt or lifecycle write.
-- `http-host.test.ts` — cap 1 rejects a resumed Workflow with 429 before any attempt or
-  lifecycle write, then succeeds after the competing execution releases capacity.
+- `http-host.test.ts` — cap 1 rejects a later-generation (attempt 2) Workflow resume with
+  429 before any attempt or lifecycle write, then succeeds after the competing execution
+  releases capacity.
 - `http-host.test.ts` — cancelling a resumed attempt aborts the sandbox and leaves attempts 1
-  (`interrupted`) and 2 (`cancelled`) immutable.
+  (`interrupted`) and 2 (`cancelled`) immutable; an explicit retry appends attempt 3 and
+  completes the Task, and a later Workflow resume skips it.
+- `http-host.test.ts` — a persisted three-generation chain survives two restarts with
+  monotonic attempts, correct kinds, immediate-predecessor links, and unchanged earlier
+  records, ending in a completed attempt 3.
+- `http-host.test.ts` — concurrent duplicate Workflow resume, Task resume, and Task retry
+  each return one 409 `execution_conflict`, one appended attempt, and one sandbox start;
+  sequential repeats after completion are 200 no-ops.
 - `persistence.test.ts` — attempt chains survive restart, terminal records stay immutable,
   `resume` only accepts `interrupted`, `retry` follows `failed`/`cancelled`, and a
-  non-contiguous replay fails closed.
+  non-contiguous replay fails closed. A resumed attempt is interrupted once by reconciliation;
+  a second pass creates no attempt and appends no journal bytes.
 
 ### Security tests / evidence labels
 
@@ -240,8 +290,12 @@ Schema regeneration produced no diff.
   SIGKILL, cap rejection, and journal-level crash reconciliation.
 - **Resume/retry evidence label:** every resume/retry HTTP proof composes the real
   `LocalCommandExecutor`/`LocalCommandVerifier` around the labelled `stub-container` sandbox.
-  It proves authorization-before-lookup, attempt identity, cap ordering, cancellation/abort
-  handling, and verifier invocation. It is not container-isolation or real-provider evidence.
+  It proves authorization-before-lookup, multi-generation attempt identity, no-write
+  reconciliation, duplicate suppression, cap ordering, cancellation/abort handling, and
+  verifier invocation. It is not container-isolation or real-provider evidence. A real-runtime
+  proof would additionally cover per-generation container creation/teardown, killing the
+  generation-2 container on cancel, workspace reuse across generations, image availability,
+  and the same PID/memory/network limits on every generation.
 - **Not integration tested here:** any real Docker, bubblewrap, or Seatbelt invocation. The
   Docker daemon/tools are unavailable in this workspace. The process test proves the shared
   child-process helper kills a direct child; it is not isolation evidence.
@@ -260,8 +314,9 @@ Schema regeneration produced no diff.
 2. **Verifier provenance.** Add key generation/distribution/rotation and kernel-side
    signature verification, or explicitly retain the current host-configured trust model.
 3. **Execution re-drive quality.** Resume/retry are implemented and authorized per ADR-0022,
-   but there is still no automatic retry, backoff loop, scheduler, or capacity queue. Resumed
-   and retried work has not been exercised against real Docker/bubblewrap/Seatbelt providers.
+   with multi-generation and duplicate suppression, but there is still no automatic retry,
+   backoff loop, scheduler, or capacity queue. Multi-generation resume/retry has not been
+   exercised against real Docker/bubblewrap/Seatbelt providers.
 4. **Mission model.** ADR-0017 is blocked on a sourced field model; do not invent a sixth
    entity or merge Mission into Organizational Containers.
 5. **Secret broker.** Provider credentials must be brokered to authorized adapters only;
@@ -295,17 +350,21 @@ Schema regeneration produced no diff.
   is never reopened, and a Workflow resume never silently retries a failed sibling (ADR-0022).
 - A resumed/retried attempt re-enters the same concurrency cap, and startup still never
   re-drives work; a lease expiry remains an interrupted attempt requiring explicit authority.
+- Attempt chains are not capped at two; every generation links to its immediate predecessor,
+  repeated reconciliation is a no-op, and concurrent duplicate redrives return 409 without
+  appending a second attempt or starting a second sandbox.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
 
 ## Next concrete work
 
-1. Push this branch to `upstream community/open-source-foundation` only.
+1. Observe CI on `a816fe3` and the docs tip; push only
+   `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.
 3. Add verifier key provenance and a secret broker before claiming production execution
    security.
-4. Exercise resume/retry against real sandbox providers, including a crash during a resumed
-   attempt and cancellation of a retried attempt.
+4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
+   crashes, cancelling generation 2, and workspace reuse across generations.
 5. Source and review ADR-0017's Mission fields before adding any Mission API/schema.

@@ -140,12 +140,18 @@ vault notes as operational storage.
   `interrupted` latest attempt. `POST /v1/tasks/:id/retry` accepts `failed`, `cancelled`, or
   an unverified `completed` attempt and appends a distinct attempt. All three authorize before
   lookup, re-enter the same concurrency cap, and return 200 idempotently once the Task or
-  Workflow is already complete.
+  Workflow is already complete. Attempts are not capped at two: a resumed attempt can itself
+  be interrupted and resumed again, and every successor links to its immediate predecessor.
+  A duplicate concurrent resume/retry for the same Workflow or Task returns a typed 409
+  `execution_conflict` before any second attempt or sandbox start; an in-process kernel claim
+  and the ledger's terminal-predecessor check both enforce it.
 - **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; running
   Task executions are also marked `interrupted`; and their `active`/`monitored` Workflows and
   Tasks are transitioned to `suspended`. Interrupted work is never re-executed or completed
-  by recovery. A second startup sees terminal records and is a no-op. `/health` reports how
-  many Workflows and executions were recovered.
+  by recovery. A second startup sees terminal records and is a no-op; if the latest attempt
+  is already `interrupted` by an earlier resume, reconciliation creates no attempt and a
+  repeated pass writes nothing. `/health` reports how many Workflows and executions were
+  recovered.
 
 Known limitations, recorded rather than hidden: no journal compaction or snapshotting yet
 (the journal fails closed at 64 MiB), no schema-migration framework, backup/restore is a
@@ -249,16 +255,23 @@ single-process lock.
 - concurrent dispatch rejected with 429 before lifecycle writes, then retried successfully;
 - crash-interrupted Workflow resume appending attempt 2 while attempt 1 stays `interrupted`,
   then a repeated resume returning 200 idempotently with no third attempt;
+- a persisted three-generation `interrupted → resume → interrupted → resume → completed`
+  chain across two restarts, with monotonic attempts, correct kinds, immediate-predecessor
+  links, and unchanged earlier records;
+- repeated reconciliation over an already-interrupted resumed attempt creating no attempt and
+  writing no journal bytes, proven through the real persisted ledger;
+- concurrent duplicate Workflow resume, Task resume, and Task retry each returning one 409
+  and producing exactly one appended attempt and one sandbox start;
+- cancellation of a resumed attempt aborting the sandbox and leaving attempts 1 and 2
+  immutable, followed by an explicit retry that appends attempt 3 and completes the Task;
 - a cancelled attempt refusing `resume` with 409 while an authorized `retry` appends a
   distinct attempt and preserves the cancelled record;
 - a failed attempt blocking Workflow resume until its Task is explicitly retried, then a
   Workflow resume that skips the completed Task and starts no sandbox;
 - `resume`, `retry`, and the retried Agent's `execute` each denied with 403 before lookup and
   with no attempt or lifecycle write;
-- the concurrency cap rejecting Workflow resume with 429 before any attempt/lifecycle write,
-  then succeeding after capacity is released;
-- cancellation of a resumed attempt aborting the sandbox and leaving attempts 1
-  (`interrupted`) and 2 (`cancelled`) immutable;
+- the concurrency cap rejecting a later-generation Workflow resume with 429 before any
+  attempt/lifecycle write, then succeeding after capacity is released;
 - restart recovery of Tasks/Workflows and running executions from the operational journal;
 - interrupted dispatch/execution recovered as `interrupted`, with its Workflow and Task
   `suspended`, and a second startup making no further changes;
@@ -273,7 +286,9 @@ single-process lock.
   host process. Learning records remain in-memory. Backup/restore is a documented file copy,
   not an automated procedure. Dispatch is idempotent and leased. Resume and retry are
   deliberate, authorized, append-only operations (ADR-0022); there is still no automatic
-  resume, backoff loop, scheduler, or capacity queue.
+  resume, backoff loop, scheduler, or capacity queue. Multi-generation resume and duplicate
+  suppression are proven only against the labelled `stub-container` double, not a real
+  container runtime.
 - **Execution and verification.** The fixed `local.exec` path exists for Docker,
   bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured

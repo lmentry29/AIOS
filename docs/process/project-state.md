@@ -1,7 +1,9 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
-local evidence only; no GitHub Actions run has been observed for the current code head.
+local evidence only. The preceding head `c4a26cd` passed the `ci`, `conformance`, and
+`schema-check` workflows; the hardening head `a816fe3` and its docs tip are pushed after this
+snapshot, so read their checks from GitHub.
 
 ## Repository and active change
 
@@ -10,7 +12,7 @@ local evidence only; no GitHub Actions run has been observed for the current cod
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `ce876cf` (`feat(host): add authorized resume and retry for interrupted work`)
+- Verified code head: `a816fe3` (`fix(host): harden multi-generation resume and duplicate redrives`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -69,31 +71,37 @@ external-provider verification.
   (failed/cancelled/unverified completed) as new append-only execution attempts. Workflow and
   Task are both resume units; a cancelled record is never reopened. Authorization is exact and
   precedes lookup; resumed work re-enters the same cap and startup never auto-resumes.
+  Attempts are not capped at two across repeated crashes; every generation links to its
+  immediate predecessor. Repeated reconciliation over an already-interrupted attempt writes
+  nothing, and concurrent duplicate resume/retry requests return typed 409 before a second
+  attempt or sandbox start.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-Local checks at code head `ce876cf` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `a816fe3` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
 - `pnpm -r run lint` — pass.
-- `pnpm -r run test` — pass, **450 tests total**.
-- Host: **71 tests** in 7 files, including 28 loopback HTTP tests, cancellation with a
+- `pnpm -r run test` — pass, **454 tests total**.
+- Host: **75 tests** in 7 files, including 31 loopback HTTP tests, cancellation with a
   test-only sandbox stub, a real child-process SIGKILL test with a labelled
   `test-only-process` provider, cap enforcement/retry, late-result rejection, journal-level
-  crash/restart reconciliation, and authorized resume/retry over append-only attempts.
+  crash/restart reconciliation, authorized resume/retry over append-only attempts, a
+  three-generation persisted resume chain, duplicate concurrent redrive suppression, and a
+  no-write second reconciliation over an already-interrupted attempt.
 - Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
   orchestration: 26; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
 
 These are local results, not CI results. The real Docker, bubblewrap, and Seatbelt providers
-could not be integration-tested here: the Docker daemon is inaccessible and the other tools
-are absent. The cancellation, resume/retry, and crash tests use clearly labelled test-only
-process/sandbox doubles where a real isolation provider is unavailable; they do not claim
-container isolation.
+could not be integration-tested here: `docker info` cannot reach a daemon, and `bwrap`,
+`podman`, and `sandbox-exec` are absent. The cancellation, multi-generation resume/retry, and
+crash tests use clearly labelled test-only process/sandbox doubles where a real isolation
+provider is unavailable; they do not claim container isolation.
 
 ## Production blockers — not optional
 
@@ -106,8 +114,9 @@ container isolation.
    a compromised host process.
 3. **Execution re-drive quality.** Resume/retry are deliberate, authorized, append-only
    operations (ADR-0022), and the cap still rejects rather than queues. There is no automatic
-   retry, backoff loop, scheduler, or capacity queue; resumed work has not been exercised
-   against real Docker/bubblewrap/Seatbelt providers.
+   retry, backoff loop, scheduler, or capacity queue. Multi-generation resume, duplicate
+   suppression, and cancellation across generations are proven only against the labelled
+   `stub-container` double, not a real Docker/bubblewrap/Seatbelt provider.
 4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
    infrastructure inventory, or secret broker exists.
 5. **Identity/policy lifecycle.** Bearer sessions and a durable policy registry exist, but
@@ -127,12 +136,13 @@ container isolation.
 
 ## Next work order
 
-1. Push the branch and observe CI on the exact commit; do not treat local results as CI.
+1. Observe CI on the hardening head `a816fe3` and its docs tip; do not treat local results as
+   CI.
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.
-4. Exercise resume/retry against real sandbox providers, including a crash during a resumed
-   attempt and cancellation of a retried attempt.
+4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
+   crashes, cancelling generation 2, and workspace reuse across generations.
 5. Source/review the Mission field model before adding any Mission API/schema.
 6. Build a secret broker before any provider credential is introduced.
 7. Keep PR #1 draft; do not merge or push `main`.
