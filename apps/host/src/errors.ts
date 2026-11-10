@@ -49,3 +49,17 @@ export class HostExecutionError extends Error {
     this.name = 'HostExecutionError';
   }
 }
+
+/**
+ * A run was stopped because its workspace exceeded the configured disk ceiling.
+ *
+ * This is a distinct type so the managed lifecycle can journal `disk_quota_exceeded`
+ * rather than reporting a cancellation, timeout, or generic execution failure. It is still
+ * a `HostExecutionError` so the CLI and HTTP surface keep their existing fail-closed shape.
+ */
+export class WorkspaceQuotaExceededError extends HostExecutionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkspaceQuotaExceededError';
+  }
+}

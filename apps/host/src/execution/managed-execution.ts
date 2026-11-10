@@ -6,6 +6,7 @@ import {
   type ExecutionAttemptRequest,
   type TaskExecutionResult,
 } from '@aios/orchestration';
+import { WorkspaceQuotaExceededError } from '../errors.js';
 import { type ExecutionLedger, type ExecutionRecord, evidenceDigest } from '../persistence/execution-ledger.js';
 
 export interface CancellableExecutionPort {
@@ -17,6 +18,7 @@ function isCancellable(value: AgentExecutionPort): value is AgentExecutionPort &
 }
 
 function failureCode(error: unknown): string {
+  if (error instanceof WorkspaceQuotaExceededError) return 'disk_quota_exceeded';
   if (error instanceof TaskCancelledError) return 'task_cancelled';
   if (error instanceof Error && error.name.length > 0) {
     return error.name.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 120);

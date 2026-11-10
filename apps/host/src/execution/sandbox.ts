@@ -224,6 +224,7 @@ class BubblewrapSandbox implements SandboxProvider {
       ...binds,
       '--proc', '/proc',
       '--dev', '/dev',
+      '--size', '67108864',
       '--tmpfs', '/tmp',
       ...(workspace === undefined
         ? ['--ro-bind', '/', '/']

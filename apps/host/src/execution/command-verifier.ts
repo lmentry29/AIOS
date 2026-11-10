@@ -8,7 +8,7 @@ import type { HostExecutionConfig } from '../config.js';
 import { HostExecutionError, HostUnavailableError } from '../errors.js';
 import { evidenceDigest, type ExecutionLedger } from '../persistence/execution-ledger.js';
 import type { SandboxProvider } from './sandbox.js';
-import type { RunWorkspaceManager } from './workspace.js';
+import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
 /** Late-bound reference to the host's durable execution ledger. */
 export interface ExecutionLedgerRef {
@@ -61,7 +61,28 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         throw new HostExecutionError('The verifier is not bound to a durable execution ledger.');
       }
       const attempt = ledger.getForTask(request.task.entity_id);
-      if (attempt === undefined || attempt.state !== 'completed') {
+      if (attempt === undefined) {
+        return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
+      }
+      // A quota-stopped run is a terminal durable failure, never a success. Bind the
+      // rejection to that exact attempt and its evidence, so a caller cannot present the
+      // failed run as an accepted result or detach the failure from its journal record.
+      if (attempt.state === 'failed' && attempt.reason_code === 'disk_quota_exceeded') {
+        return {
+          accepted: false,
+          reason: 'The durable execution attempt was stopped by the per-workspace disk quota.',
+          verifier_id: this.verifier_id,
+          evidence: [
+            `verifier:${this.verifier_id}`,
+            `task:${request.task.entity_id}`,
+            `execution_id:${attempt.execution_id}`,
+            `execution_attempt:${attempt.attempt}`,
+            'failure_reason_code:disk_quota_exceeded',
+            `failure_evidence_sha256:${evidenceDigest(attempt.evidence)}`,
+          ],
+        };
+      }
+      if (attempt.state !== 'completed') {
         return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
       }
       if (!request.agent_ids.includes(attempt.agent_id)) {
@@ -78,14 +99,52 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     const cwd = this.workspaces.resolveCwd(workspace, intent.cwd);
     const timeoutMs = Math.min(intent.timeout_ms ?? this.config.default_timeout_ms, this.config.default_timeout_ms);
     const expectedExitCode = intent.expected_exit_code ?? 0;
-    const result = await this.provider.run({
-      argv: intent.argv,
-      workspaceDirectory: workspace,
-      cwd,
-      timeoutMs,
-      maxOutputBytes: this.config.max_output_bytes,
-      env: { AIOS_TASK_ID: request.task.entity_id, AIOS_VERIFIER_ID: this.verifier_id },
-    });
+    const controller = new AbortController();
+    const quota = new WorkspaceQuotaGuard(
+      workspace,
+      this.config.workspace_max_bytes,
+      () => controller.abort(),
+    );
+    let result: Awaited<ReturnType<SandboxProvider['run']>>;
+    try {
+      quota.start();
+      result = await this.provider.run({
+        argv: intent.argv,
+        workspaceDirectory: workspace,
+        cwd,
+        timeoutMs,
+        maxOutputBytes: this.config.max_output_bytes,
+        env: { AIOS_TASK_ID: request.task.entity_id, AIOS_VERIFIER_ID: this.verifier_id },
+        signal: controller.signal,
+      });
+    } finally {
+      quota.stop();
+    }
+
+    if (quota.state.measurementFailure !== undefined || quota.state.exceeded) {
+      this.workspaces.discard(request.task.entity_id);
+      return {
+        accepted: false,
+        reason: quota.state.exceeded
+          ? 'Verification workspace exceeded its disk limit; the command was stopped and no artifact was accepted.'
+          : 'Verification workspace usage could not be measured; the command was stopped rather than accepted unmeasured.',
+        verifier_id: this.verifier_id,
+        evidence: [
+          `verifier:${this.verifier_id}`,
+          `task:${request.task.entity_id}`,
+          `quota_limit_bytes:${this.config.workspace_max_bytes}`,
+          `quota_exceeded:${quota.state.exceeded}`,
+          `quota_measurement_failure:${quota.state.measurementFailure !== undefined}`,
+          ...(boundAttempt === undefined
+            ? []
+            : [
+                `execution_id:${boundAttempt.execution_id}`,
+                `execution_attempt:${boundAttempt.attempt}`,
+                `bound_result_sha256:${evidenceDigest(request.execution_result)}`,
+              ]),
+        ],
+      };
+    }
 
     const accepted = !result.spawnError
       && !result.timedOut

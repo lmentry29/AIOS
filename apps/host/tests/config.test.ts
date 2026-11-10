@@ -88,6 +88,7 @@ describe('host configuration', () => {
       image: 'node:22-alpine',
       default_timeout_ms: 60_000,
       max_output_bytes: 64 * 1024,
+      workspace_max_bytes: 256 * 1024 * 1024,
       max_concurrent_tasks: 1,
     });
     expect(parseHostConfig(validConfig({
@@ -120,6 +121,12 @@ describe('host configuration', () => {
     for (const invalid of [0, 33, 1.5, '2']) {
       expect(() => parseHostConfig(validConfig({ execution: { ...base, max_concurrent_tasks: invalid } })))
         .toThrow(/max_concurrent_tasks/);
+    }
+    expect(parseHostConfig(validConfig({ execution: { ...base, workspace_max_bytes: 1024 } }))
+      .execution?.workspace_max_bytes).toBe(1024);
+    for (const invalid of [0, 1023, 8 * 1024 * 1024 * 1024 + 1, 1.5, '1024']) {
+      expect(() => parseHostConfig(validConfig({ execution: { ...base, workspace_max_bytes: invalid } })))
+        .toThrow(/workspace_max_bytes/);
     }
     expect(() => parseHostConfig(validConfig({ execution: { ...base, image: undefined, provider: 'bubblewrap' } })))
       .not.toThrow();

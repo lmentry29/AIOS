@@ -113,7 +113,10 @@ export class StubSandbox implements SandboxProvider {
   }
 }
 
-export function makeExecutionConfig(directory?: string): HostExecutionConfig {
+export function makeExecutionConfig(
+  directory?: string,
+  overrides: Partial<HostExecutionConfig> = {},
+): HostExecutionConfig {
   return {
     workspace_directory: directory ?? mkdtempSync(join(tmpdir(), 'aios-execution-')),
     agent_id: AGENT_ID,
@@ -122,6 +125,8 @@ export function makeExecutionConfig(directory?: string): HostExecutionConfig {
     image: 'node:22-alpine',
     default_timeout_ms: 5_000,
     max_output_bytes: 16 * 1024,
+    workspace_max_bytes: 16 * 1024 * 1024,
     max_concurrent_tasks: 1,
+    ...overrides,
   };
 }

@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import type { TaskEntity } from '@aios/core';
 import { TaskCancelledError, type AgentExecutionPort, type TaskExecutionResult } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
-import { HostExecutionError, HostUnavailableError } from '../errors.js';
+import { HostExecutionError, HostUnavailableError, WorkspaceQuotaExceededError } from '../errors.js';
 import type { SandboxProvider, SandboxResult } from './sandbox.js';
-import type { RunWorkspaceManager } from './workspace.js';
+import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
 const MAX_TIMEOUT_MS = 300_000;
@@ -83,8 +83,14 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     const controller = new AbortController();
     this.active.set(task.entity_id, controller);
+    const quota = new WorkspaceQuotaGuard(
+      workspace,
+      this.config.workspace_max_bytes,
+      () => controller.abort(),
+    );
     let result: SandboxResult;
     try {
+      quota.start();
       result = await this.provider.run({
         argv: intent.argv,
         workspaceDirectory: workspace,
@@ -95,7 +101,24 @@ export class LocalCommandExecutor implements AgentExecutionPort {
         signal: controller.signal,
       });
     } finally {
+      quota.stop();
       if (this.active.get(task.entity_id) === controller) this.active.delete(task.entity_id);
+    }
+
+    // Enforced during the run: a crossed ceiling aborts the provider, and the oversized
+    // workspace is discarded rather than retained for later ingestion. A failed measurement
+    // also stops the run; continuing unmeasured would silently drop the cap.
+    if (quota.state.measurementFailure !== undefined) {
+      this.workspaces.discard(task.entity_id);
+      throw new HostExecutionError(
+        `Workspace usage could not be measured (${quota.state.measurementFailure}); the run was stopped rather than left uncapped.`,
+      );
+    }
+    if (quota.state.exceeded) {
+      this.workspaces.discard(task.entity_id);
+      throw new WorkspaceQuotaExceededError(
+        `Workspace exceeded its ${this.config.workspace_max_bytes}-byte limit; the run was stopped.`,
+      );
     }
 
     if (result.cancelled) {

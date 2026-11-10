@@ -91,6 +91,12 @@ export interface HostExecutionConfig {
   /** Upper bound applied to captured stdout and stderr per stream. */
   max_output_bytes: number;
   /**
+   * Per-run workspace disk ceiling, sampled while the sandbox is live. A run that crosses
+   * it is aborted and journaled as `disk_quota_exceeded`. This is not a filesystem quota;
+   * a fast writer can overshoot between samples and the workspace is then discarded.
+   */
+  workspace_max_bytes: number;
+  /**
    * Maximum number of Task executions allowed to run at once. A dispatch beyond this
    * limit is rejected before execution with HTTP 429; it is not silently fanned out.
    */
@@ -188,6 +194,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     'image',
     'default_timeout_ms',
     'max_output_bytes',
+    'workspace_max_bytes',
     'max_concurrent_tasks',
   ]), 'execution');
 
@@ -242,6 +249,15 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     maxOutputBytes = value;
   }
 
+  let workspaceMaxBytes = 256 * 1024 * 1024;
+  if (raw.workspace_max_bytes !== undefined) {
+    const value = raw.workspace_max_bytes;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1024 || value > 8 * 1024 * 1024 * 1024) {
+      fail('execution.workspace_max_bytes', 'must be an integer between 1024 and 8589934592');
+    }
+    workspaceMaxBytes = value;
+  }
+
   let maxConcurrentTasks = 1;
   if (raw.max_concurrent_tasks !== undefined) {
     const value = raw.max_concurrent_tasks;
@@ -259,6 +275,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     ...(image === undefined ? {} : { image }),
     default_timeout_ms: defaultTimeoutMs,
     max_output_bytes: maxOutputBytes,
+    workspace_max_bytes: workspaceMaxBytes,
     max_concurrent_tasks: maxConcurrentTasks,
   };
 }
