@@ -82,7 +82,10 @@ passing build.
     events are durable with policy state. The canonical object store used only for Founder
     queries and some policy/evidence paths still has in-memory or test/development
     implementations.
-    The journals are not compacted, have no migration framework, and are single-process. Production use still requires protected secrets,
+    The operational journal supports offline checkpoint compaction (`compact-journal`) and
+    verified restore (`restore-journal`) under ADR-0025; the learning and authorization-audit
+    journals are not compacted, and no journal has a migration framework. All journals remain
+    single-process. Production use still requires protected secrets,
     a completed sandbox/provider matrix, operational controls, and independent review.
     Keep these limitations explicit in code and documentation.
 14. **No unrestricted host execution.** A task may run only through the fixed

@@ -52,3 +52,34 @@ namespaces through AppArmor. The Security workflow now sets
 `kernel.unprivileged_userns_clone=1`) for the job before running the suite. This is a
 runner-level test prerequisite, not a production hardening step: a host that ships with the
 restriction keeps it, and the provider still fails closed when it cannot create a namespace.
+
+## 2026-11-10 — journal compaction and recovery drill
+
+Host: Linux 6.1.102, Node 26.13.0, pnpm 11.11.0. Commands actually run:
+
+```sh
+pnpm --filter @aios/host run build
+node tools/security/journal-drill.mjs
+pnpm --filter @aios/host test
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+```
+
+Drill output (verbatim, exit 0):
+
+```json
+{"step":"size_limit","ok":true,"appended":11,"journal_bytes":3820}
+{"step":"compact","ok":true,"records_archived":11,"bytes_before":3820,"bytes_after":456,"archive_sha256":"46b927e19f75b737e524e108e79713dddc8104c65675592f0f93b6372328e327","append_after_compaction":true}
+{"step":"corruption_detected","ok":true,"corrupted_offset":340}
+{"step":"restore","ok":true,"records":11,"head_hash":"4bf92106b92a7f8ef63a958fb9cb060d65aa247c38376279caed2223d8429b2d","backup_created":true}
+{"step":"restore_idempotent","ok":true,"unchanged":true}
+{"step":"tampered_archive_rejected","ok":true}
+{"step":"known_good_state","ok":true,"kinds":["probe"]}
+{"drill":"journal-recovery","ok":true,"steps":7}
+```
+
+- Journal recovery regressions: **5 passed** (`journal-recovery.test.ts`): size-limit compaction and continued appends, byte-corruption detection with restore and backup, tampered-archive rejection with the target byte-identical, restore idempotency plus refusal to overwrite a different valid journal, and verifier acceptance of the true result with rejection of a forged result after compact-and-reopen.
+- Host suite after the change: **117 passed, 9 skipped**; the 9 skips are the live suite when `AIOS_BWRAP_DIR` is unset. The same live suite passed **9/9** with the real binary.
+- Full workspace gate (`build`, `typecheck`, `lint`, `test`) exited 0.
+
+Limits of this evidence: the archive is not signed or encrypted, restore is offline only, and no multi-host or concurrent-restore drill was attempted (the journal lock refuses a live host).

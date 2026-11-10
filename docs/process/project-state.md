@@ -28,6 +28,10 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
 
 ## Security hardening (2026-11-10)
 
+- Operational journal recovery: offline checkpoint compaction (`compact-journal`) and
+  integrity-checked, idempotent restore (`restore-journal`) are implemented under ADR-0025.
+  Execution attempts and verifier result digests survive compaction. Archives are
+  digest-verified but unsigned and unencrypted; retention is an operator duty.
 - The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
   passed 9/9 adversarial cases covering host-file reads, workspace symlink escape, network
   interfaces, environment clearing, PID-namespace privacy, writes outside the workspace,

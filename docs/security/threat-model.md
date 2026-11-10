@@ -53,6 +53,9 @@ Founder Intelligence vault's own access controls.
   not executable on the validation host.
 - **macOS.** `sandbox-exec` is deprecated; a supported macOS path requires Apple
   Containerization on macOS 26 / Apple silicon, which is not implemented or validated here.
+- **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor
+  signed; an attacker who can rewrite the archive and its digest can forge history. Retention
+  and custody remain operator responsibilities (ADR-0025).
 - **Identity lifecycle.** No login, key rotation, detached policy signature, or external audit
   custody (recorded in ADR-0023/ADR-0024).
 - **Observability is not audit.** Structured logs help diagnosis; only the append-only audit

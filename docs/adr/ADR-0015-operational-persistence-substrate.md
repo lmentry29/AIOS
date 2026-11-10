@@ -1,11 +1,11 @@
 # ADR-0015 — Operational Persistence Substrate
 
 ## Status
-**Accepted** (2026-11-10; extended by ADR-0021). This ADR does not amend ADR-0014. It
+**Accepted** (2026-11-10; extended by ADR-0021, amended by ADR-0025). This ADR does not amend ADR-0014. It
 concerns operational Task/Workflow/Artifact/run/execution state only, which ADR-0014
 explicitly leaves as a separate architectural question. Acceptance is based on the
 implemented journal and its tested recovery, tamper-detection, idempotency, lease, and
-execution-lifecycle behavior; it is not a claim that compaction or migrations exist.
+execution-lifecycle behavior; it is not a claim that migrations exist; checkpoint compaction and verified restore were added by ADR-0025.
 
 ## Context
 

@@ -21,6 +21,19 @@ node apps/host/dist/cli.js publish-policy --config /abs/host.json --policy /abs/
 node apps/host/dist/cli.js revoke-policy --config /abs/host.json --revocation /abs/revocation.json
 ```
 
+The journal has an offline recovery path. Both commands require the host to be stopped:
+
+```sh
+node apps/host/dist/cli.js compact-journal --config /abs/host.json --archive /abs/archive.json
+node apps/host/dist/cli.js restore-journal --config /abs/host.json --archive /abs/archive.json
+```
+
+Compaction exports a digest-verified archive and replaces the live journal with one snapshot
+record that names the archived head. Restore validates the whole archive before writing,
+refuses a different valid journal, preserves a damaged target as a backup, and is idempotent
+for the same archive. Archives are integrity-checked but not encrypted or signed, and their
+retention is an operator responsibility (ADR-0025).
+
 While the host is running, a human principal with an exact `administer_policy` grant on
 every target may publish and attach a replacement through `POST /v1/policies`; the policy
 and all attachments commit atomically and the next authorization decision uses the new
