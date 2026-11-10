@@ -130,6 +130,17 @@ vault notes as operational storage.
   executor sends `SIGKILL`; Docker additionally kills its uniquely named container. The
   verifier is skipped when cancellation is observed before verification starts. An active
   Task becomes `suspended`; a queued Task remains `created`, and a later dispatch is rejected.
+- **Resume and retry (ADR-0022).** The ledger is an append-only chain of attempts. Each
+  attempt carries its own `execution_id`, a monotonic `attempt`, an `attempt_kind`
+  (`initial`/`resume`/`retry`), and the `previous_execution_id` it follows; the predecessor is
+  never rewritten. `POST /v1/workflows/:id/resume` requires exact `resume` grants on the
+  Workflow and on each interrupted Task it re-drives, skips completed Tasks, executes
+  remaining `created` Tasks, and refuses a `failed`/`cancelled`/unverified-completed sibling
+  with 409 until that Task is explicitly retried. `POST /v1/tasks/:id/resume` accepts only an
+  `interrupted` latest attempt. `POST /v1/tasks/:id/retry` accepts `failed`, `cancelled`, or
+  an unverified `completed` attempt and appends a distinct attempt. All three authorize before
+  lookup, re-enter the same concurrency cap, and return 200 idempotently once the Task or
+  Workflow is already complete.
 - **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; running
   Task executions are also marked `interrupted`; and their `active`/`monitored` Workflows and
   Tasks are transitioned to `suspended`. Interrupted work is never re-executed or completed
@@ -153,6 +164,9 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
 | POST | `/v1/tasks/:id/cancel` | Requires exact `cancel`; optional bounded `reason`; 202, or 200 if already cancelled |
+| POST | `/v1/workflows/:id/resume` | Requires exact `resume` on the Workflow and each interrupted Task; completed Tasks are skipped |
+| POST | `/v1/tasks/:id/resume` | Requires exact `resume`; only an `interrupted` latest attempt; 200 idempotent when already completed |
+| POST | `/v1/tasks/:id/retry` | Requires exact `retry`; appends a distinct attempt after `failed`, `cancelled`, or unverified `completed` |
 | GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage and `read_evidence` |
 | POST | `/v1/intake` | `{ kind: "task" \| "workflow", entity }`; provenance must match the session |
 | POST | `/v1/workflows/:id/dispatch` | Requires `Idempotency-Key`; replays a completed key, 409 while another lease is live, 503 without adapters |
@@ -233,6 +247,18 @@ single-process lock.
   skipped, and a terminal cancelled execution plus cancelled run recorded;
 - queued cancellation and denied cancellation, with no execution or ledger write on denial;
 - concurrent dispatch rejected with 429 before lifecycle writes, then retried successfully;
+- crash-interrupted Workflow resume appending attempt 2 while attempt 1 stays `interrupted`,
+  then a repeated resume returning 200 idempotently with no third attempt;
+- a cancelled attempt refusing `resume` with 409 while an authorized `retry` appends a
+  distinct attempt and preserves the cancelled record;
+- a failed attempt blocking Workflow resume until its Task is explicitly retried, then a
+  Workflow resume that skips the completed Task and starts no sandbox;
+- `resume`, `retry`, and the retried Agent's `execute` each denied with 403 before lookup and
+  with no attempt or lifecycle write;
+- the concurrency cap rejecting Workflow resume with 429 before any attempt/lifecycle write,
+  then succeeding after capacity is released;
+- cancellation of a resumed attempt aborting the sandbox and leaving attempts 1
+  (`interrupted`) and 2 (`cancelled`) immutable;
 - restart recovery of Tasks/Workflows and running executions from the operational journal;
 - interrupted dispatch/execution recovered as `interrupted`, with its Workflow and Task
   `suspended`, and a second startup making no further changes;
@@ -245,9 +271,9 @@ single-process lock.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
   host process. Learning records remain in-memory. Backup/restore is a documented file copy,
-  not an automated procedure. Dispatch is idempotent and leased, and cancellation is
-  terminal per execution, but there is no retry backoff or automatic resume of interrupted
-  work.
+  not an automated procedure. Dispatch is idempotent and leased. Resume and retry are
+  deliberate, authorized, append-only operations (ADR-0022); there is still no automatic
+  resume, backoff loop, scheduler, or capacity queue.
 - **Execution and verification.** The fixed `local.exec` path exists for Docker,
   bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured

@@ -144,9 +144,10 @@ execution-state change and uses the shared evaluator.
 
 ## Consequences
 
-- Cancelling a Task is terminal for that execution. A retry requires a new Task/Workflow;
-  there is no resume or automatic retry. This is deliberate until a resume operation has its
-  own ADR and evidence model.
+- Cancelling a Task is terminal for that execution attempt. ADR-0022 adds an explicitly
+  authorized `retry` that appends a distinct attempt while preserving the cancelled record;
+  `resume` is reserved for interrupted attempts and can never reopen a cancellation. There is
+  still no automatic retry, backoff, scheduler, or capacity queue.
 - A queued Task remains `created` after cancellation; readers must consult the execution
   ledger to see that it will not execute. The API has no dedicated Task-cancel state.
 - The default cap is 1. Operators must explicitly raise it; no host silently fans out.

@@ -77,6 +77,6 @@ orchestration, the host API, or tests' semantics.
 - Backup/restore is file-level: stop the host, copy the owner-only directory, restart. This is
   documented and testable, but not yet automated.
 - Interrupted runs and executions are recoverable as evidence, not silently retried.
-  Operators must create a new Workflow (or a future resume operation) after reviewing the
-  interrupted work. Cancellation is terminal for an execution; there is no resume operation
-  yet.
+  ADR-0022 adds an explicit, authorized resume for interrupted work and an explicit retry
+  after failure or cancellation; both append a new execution attempt and never reopen the
+  terminal record. Cancellation remains terminal for the attempt it terminates.

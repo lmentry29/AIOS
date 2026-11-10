@@ -3,18 +3,20 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, Task execution lifecycle).
+Last updated: 2026-11-10 (Freebuff Cloud session, resume/retry slice).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `d414cbe` (`feat(host): make Task execution cancellable, bounded, and recoverable`)
+- Verified code head: `ce876cf` (`feat(host): add authorized resume and retry for interrupted work`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `ce876cf` — authorized resume/retry over append-only attempts
+  - `eea8b2c` — verified Task execution lifecycle record
   - `21ccdb0` — authorized Task/Workflow list routes
   - `cb16610` — Docker isolation argv test
   - `2d68052` — workspace permissions and one-Action evidence fix
@@ -118,7 +120,52 @@ call inside a dispatch.
 - The execution record is the authority for cancellation/recovery; canonical lifecycle stays
   within ADR-0003's existing state graph.
 
-## Verification actually executed at `d414cbe`
+## Completed — deliberate resume and retry (`ce876cf`)
+
+ADR-0022 resolves the previous "no resume" limitation without weakening terminal
+cancellation or startup recovery.
+
+### Append-only attempts
+
+- `ExecutionRecord` now carries `attempt`, `attempt_kind` (`initial`/`resume`/`retry`), and
+  `previous_execution_id`. `ExecutionLedger` keeps an ordered attempt chain per Task;
+  `getForTask()` observes the latest attempt and `listForTask()` exposes immutable history.
+- `start()` creates only attempt 1. `resume()` accepts only an `interrupted` predecessor;
+  `retry()` accepts `failed`, `cancelled`, or unverified `completed` and rejects a running or
+  interrupted predecessor. A cancelled record is never reopened or rewritten.
+- Journal replay validates contiguous attempt numbers and matching predecessors. A
+  pre-ADR-0022 single record replays as attempt 1/`initial`; ambiguous chains fail closed.
+
+### Authorized routes
+
+- `resume` and `retry` are new exact `AccessAction` values in `@aios/founder` and the
+  orchestration authorization union. There is no owner/role/wildcard shortcut and no
+  "resume implies retry".
+- `POST /v1/workflows/:id/resume`, `POST /v1/tasks/:id/resume`, and
+  `POST /v1/tasks/:id/retry` authorize before resource lookup, matching cancel. The kernel
+  re-evaluates the same action on the authenticated actor.
+- Workflow resume requires `resume` on the Workflow and on every interrupted Task it
+  re-drives, plus `execute` for each Agent. Completed Tasks are skipped, interrupted Tasks get
+  a new attempt, and remaining `created` Tasks execute. A `failed`, `cancelled`, or
+  unverified-completed sibling blocks the resume with 409 until the Task is explicitly
+  retried; a Workflow resume never silently retries a Task.
+- Task-level resume/retry executes only that Task and leaves its Workflow lifecycle
+  unchanged (normally `suspended`).
+
+### Capacity, cancellation, and idempotency
+
+- Resumed/retried work goes through the same `ManagedExecutionPort` and
+  `execution.max_concurrent_tasks` gate; a full cap returns 429 before lifecycle or attempt
+  writes and starts no sandbox.
+- Cancellation still reaches the provider on a resumed attempt. The route commits the
+  cancellation before aborting; the managed wrapper rechecks the new attempt's identity and
+  state, so a late result cannot complete it.
+- Repeating resume/retry after completion returns 200 with `resumed:false`/`retried:false`
+  and creates no new attempt. Repeated work while active returns 409.
+- Startup reconciliation is unchanged: it marks running attempts `interrupted` and suspends
+  work, and never calls resume/retry. A second start remains a no-op.
+
+## Verification actually executed at `ce876cf`
 
 Local only; no CI run was observed.
 
@@ -135,7 +182,7 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **61 passed** (7 files) |
+| `@aios/host` | **71 passed** (7 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
@@ -147,7 +194,7 @@ All six commands exited 0. Exact test results:
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 15 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **440 passed** |
+| **Total** | **450 passed** |
 
 Schema regeneration produced no diff.
 
@@ -168,6 +215,21 @@ Schema regeneration produced no diff.
 - `managed-execution.test.ts` — a late executor result cannot overwrite a cancelled terminal
   record; the cap rejects before creating a second execution.
 - `config.test.ts` — rejects 0, 33, fractional, and string `max_concurrent_tasks` values.
+- `http-host.test.ts` — crash-interrupted Workflow resume appends attempt 2 and leaves
+  attempt 1 `interrupted`; a repeated resume is a 200 no-op with no third attempt.
+- `http-host.test.ts` — a cancelled attempt rejects `resume` with 409 while an authorized
+  `retry` appends attempt 2 and preserves the cancelled record; repeated retry is a 200 no-op.
+- `http-host.test.ts` — a failed attempt blocks Workflow resume until the Task is explicitly
+  retried; the later Workflow resume skips the completed Task and starts no sandbox.
+- `http-host.test.ts` — `resume` (Workflow and Task), `retry`, and the retried Agent's
+  `execute` each return 403 before lookup with no attempt or lifecycle write.
+- `http-host.test.ts` — cap 1 rejects a resumed Workflow with 429 before any attempt or
+  lifecycle write, then succeeds after the competing execution releases capacity.
+- `http-host.test.ts` — cancelling a resumed attempt aborts the sandbox and leaves attempts 1
+  (`interrupted`) and 2 (`cancelled`) immutable.
+- `persistence.test.ts` — attempt chains survive restart, terminal records stay immutable,
+  `resume` only accepts `interrupted`, `retry` follows `failed`/`cancelled`, and a
+  non-contiguous replay fails closed.
 
 ### Security tests / evidence labels
 
@@ -193,9 +255,9 @@ Schema regeneration produced no diff.
    PID/memory limits, and hostile command probes. Seatbelt needs macOS testing.
 2. **Verifier provenance.** Add key generation/distribution/rotation and kernel-side
    signature verification, or explicitly retain the current host-configured trust model.
-3. **Resume and retry semantics.** Cancellation is terminal per execution. There is no
-   resume operation, automatic retry, capacity queue, or backoff. Adding one needs its own
-   evidence model and ADR.
+3. **Execution re-drive quality.** Resume/retry are implemented and authorized per ADR-0022,
+   but there is still no automatic retry, backoff loop, scheduler, or capacity queue. Resumed
+   and retried work has not been exercised against real Docker/bubblewrap/Seatbelt providers.
 4. **Mission model.** ADR-0017 is blocked on a sourced field model; do not invent a sixth
    entity or merge Mission into Organizational Containers.
 5. **Secret broker.** Provider credentials must be brokered to authorized adapters only;
@@ -225,6 +287,10 @@ Schema regeneration produced no diff.
   `cancelled` state, and an active Task moves to `suspended`.
 - Concurrency beyond the cap is rejected, not queued; default 1, maximum 32.
 - Restart recovery marks interrupted work and suspends it; it never re-executes or completes.
+- Resume and retry are distinct exact actions over append-only attempts; a cancelled attempt
+  is never reopened, and a Workflow resume never silently retries a failed sibling (ADR-0022).
+- A resumed/retried attempt re-enters the same concurrency cap, and startup still never
+  re-drives work; a lease expiry remains an interrupted attempt requiring explicit authority.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
@@ -236,6 +302,6 @@ Schema regeneration produced no diff.
    the explicit container-kill path.
 3. Add verifier key provenance and a secret broker before claiming production execution
    security.
-4. Design resume/retry semantics separately if needed; do not silently loosen the terminal
-   cancellation rule.
+4. Exercise resume/retry against real sandbox providers, including a crash during a resumed
+   attempt and cancellation of a retried attempt.
 5. Source and review ADR-0017's Mission fields before adding any Mission API/schema.

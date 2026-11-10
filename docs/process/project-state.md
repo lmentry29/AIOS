@@ -10,7 +10,7 @@ local evidence only; no GitHub Actions run has been observed for the current cod
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `d414cbe` (`feat(host): make Task execution cancellable, bounded, and recoverable`)
+- Verified code head: `ce876cf` (`feat(host): add authorized resume and retry for interrupted work`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -30,12 +30,12 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/agents` | Agent lifecycle/conformance runner; not a general tool-executing agent runtime |
 | `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
 | `@aios/learning` | Knowledge records and evolution stages; in-memory |
-| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with the exact `cancel` action, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
-| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads, cancellation preflight/checks; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger, authorized cancellation, strict concurrency cap, and recovery-to-suspended |
+| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with the exact `cancel`/`resume`/`retry` actions, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
+| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads, cancellation preflight/checks, and authorized resume/retry orchestration; execution is injected |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
-broker, no signed verifier provenance, no resume/retry operation, and no live
+broker, no signed verifier provenance, no automatic retry/backoff loop, and no live
 external-provider verification.
 
 ## Architecture decisions
@@ -65,21 +65,25 @@ external-provider verification.
   execution ledger; process termination via `AbortSignal`/`SIGKILL`; strict
   `execution.max_concurrent_tasks` (1–32, default 1) with deterministic 429 rejection; startup
   reconciliation of interrupted executions without re-execution or duplicate terminal effects.
+- ADR-0022 — **Accepted (2026-11-10)**: deliberate `resume` (interrupted) and `retry`
+  (failed/cancelled/unverified completed) as new append-only execution attempts. Workflow and
+  Task are both resume units; a cancelled record is never reopened. Authorization is exact and
+  precedes lookup; resumed work re-enters the same cap and startup never auto-resumes.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-Local checks at code head `d414cbe` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `ce876cf` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
 - `pnpm -r run lint` — pass.
-- `pnpm -r run test` — pass, **440 tests total**.
-- Host: **61 tests** in 7 files, including 21 loopback HTTP tests, cancellation with a
+- `pnpm -r run test` — pass, **450 tests total**.
+- Host: **71 tests** in 7 files, including 28 loopback HTTP tests, cancellation with a
   test-only sandbox stub, a real child-process SIGKILL test with a labelled
-  `test-only-process` provider, cap enforcement/retry, late-result rejection, and
-  journal-level crash/restart reconciliation.
+  `test-only-process` provider, cap enforcement/retry, late-result rejection, journal-level
+  crash/restart reconciliation, and authorized resume/retry over append-only attempts.
 - Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
   orchestration: 26; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
@@ -99,8 +103,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
    a compromised host process.
-3. **Resume/retry semantics.** Cancellation is terminal per execution and the cap rejects
-   rather than queues. There is no resume, automatic retry, or backoff.
+3. **Execution re-drive quality.** Resume/retry are deliberate, authorized, append-only
+   operations (ADR-0022), and the cap still rejects rather than queues. There is no automatic
+   retry, backoff loop, scheduler, or capacity queue; resumed work has not been exercised
+   against real Docker/bubblewrap/Seatbelt providers.
 4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
    infrastructure inventory, or secret broker exists.
 5. **Identity/policy lifecycle.** Bearer sessions and a durable policy registry exist, but
@@ -124,7 +130,8 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.
-4. Design and review resume/retry semantics before weakening terminal cancellation.
+4. Exercise resume/retry against real sandbox providers, including a crash during a resumed
+   attempt and cancellation of a retried attempt.
 5. Source/review the Mission field model before adding any Mission API/schema.
 6. Build a secret broker before any provider credential is introduced.
 7. Keep PR #1 draft; do not merge or push `main`.
