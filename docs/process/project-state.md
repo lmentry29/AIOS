@@ -1,10 +1,10 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest security code head: `8ca3e9c` (F-014 dependency upgrade plus
-explicit canonical-array bounds); its documentation/validation commit follows. The historical
-heads below remain the last CI verification recorded in this file; re-check the new head
-instead of reusing them.
+evidence from observed CI. Latest security code head: `43e2dd6` (F-014 dependency upgrade plus
+explicit canonical-array bounds, and F-015 bounded task-environment record); its
+documentation/validation commit follows. The historical heads below remain the last CI
+verification recorded in this file; re-check the new head instead of reusing them.
 Code head `4422229` (authorized runtime policy retirement) sits on
 the branch above the previously verified merge head `8c950e6`, which merged `upstream/main`
 at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
@@ -36,15 +36,15 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
   integrity-checked, idempotent restore (`restore-journal`) are implemented under ADR-0025.
   Execution attempts and verifier result digests survive compaction. Archives are
   digest-verified but unsigned and unencrypted; retention is an operator duty.
-- Zod 4.6.7 plus explicit array bounds close F-014 (GHSA-mrhx-c7xc-m3w5). The schema
-  generator uses native `z.toJSONSchema` with draft-07 input semantics, inline reuse,
-  fail-closed cycles, and recursive `additionalProperties:false`; generated schemas are
-  committed and checked by `schema-check`. Every canonical array now has a finite
-  `maxItems` (256 ordinary entries; 1,024 lifecycle/history entries), enforced by a runtime
-  regression, a recursive generated-contract test, and a 1,000,000-entry/64 MiB drill. The
-  temporary audit exception is removed. F-015 records the remaining unbounded
-  `execution.env` record; external intake is body-capped at 256 KiB by default but the record
-  has no schema-level entry bound.
+- Zod 4.6.7 plus explicit bounds close F-014 and F-015. The schema generator uses native
+  `z.toJSONSchema` with draft-07 input semantics, inline reuse, fail-closed cycles, and
+  recursive `additionalProperties:false`; generated schemas are committed and checked by
+  `schema-check`. Every canonical array now has a finite `maxItems` (256 ordinary entries;
+  1,024 lifecycle/history entries), enforced by a runtime regression, a recursive
+  generated-contract test, and a 1,000,000-entry/64 MiB drill. `TaskEnvironment` caps the
+  dynamic `execution.env` map at 64 entries before value inspection and publishes
+  `maxProperties: 64`; the extended drill rejects 100,000 keys with one issue under a 64 MiB
+  heap. The temporary audit exception is removed.
 - Policy lifecycle audit events now carry a canonical SHA-256 of the exact policy, recomputed
   on registry load; substituted policy content is rejected even when the event hash chain still
   verifies. This is F-009 tamper evidence, not a signature: external key custody, rotation, and

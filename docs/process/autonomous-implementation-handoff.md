@@ -3,11 +3,11 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, bounded canonical collections and
-F-014 second-pass validation). Latest security code head: `8ca3e9c` (explicit array bounds on
-top of the Zod 4.6.7 upgrade); its documentation/validation commit follows. Re-check this head
-rather than older CI lines below. F-009's digest mitigation and F-005's fail-closed
-regression remain in place from `24d2791`.
+Last updated: 2026-11-10 (Freebuff Cloud session, bounded canonical collections and F-015
+task-environment closure). Latest security code head: `43e2dd6` (explicit array bounds on top
+of the Zod 4.6.7 upgrade, plus the bounded environment record); its documentation/validation
+commit follows. Re-check this head rather than older CI lines below. F-009's digest mitigation
+and F-005's fail-closed regression remain in place from `24d2791`.
 
 ## Repository state
 
@@ -674,17 +674,17 @@ relationships; a recursive contract test requires finite `maxItems` on every gen
 `tools/security/collection-bound-drill.mjs` parses 1,000,000 invalid actions under a 64 MiB
 heap and reports one issue in 12 ms.
 
-Evidence at `8ca3e9c`: core **49/49**, full gate **46/46 tasks**, host **132 passed/17 skipped**,
+Evidence at `43e2dd6`: core **51/51**, full gate **46/46 tasks**, host **132 passed/17 skipped**,
 live bwrap **17/17**, resource-limit/quota/seccomp/collection drills all exit 0, audit **0
-triaged**, secret scan **272 tracked files, no findings**. F-015 records the remaining
-`execution.env` record: external intake is bounded by the 256 KiB default request-body cap,
-but the schema itself has no record entry bound; a 100,000-key direct parse still emitted
-100,000 issues. Do not claim F-015 fixed until a bounded-record regression exists.
+triaged**, secret scan **273 tracked files, no findings**. F-015 is closed: `TaskEnvironment`
+rejects more than 64 entries before inspecting values; the generated contract carries
+`maxProperties: 64`, and the extended drill rejects 100,000 keys under a 64 MiB heap with one
+issue in about 100 ms. The host allowlist and 256 KiB default request-body cap remain defense
+in depth.
 
-Next action: close F-015 (bounded `execution.env` record), then F-013 (host session-token
-rotation/revocation), with a real expiry/revocation regression and the same full-gate/live
-evidence. Do not claim signed policy provenance or macOS isolation until the recorded blockers
-are cleared.
+Next action: close F-013 (host session-token rotation/revocation) in the production identity
+path, with a real expiry/revocation regression and the same full-gate/live evidence. Do not
+claim signed policy provenance or macOS isolation until the recorded blockers are cleared.
 
 ## Next concrete work
 
