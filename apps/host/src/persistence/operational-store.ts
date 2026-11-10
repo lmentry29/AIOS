@@ -367,6 +367,15 @@ export interface DurableStoreOptions {
   maxJournalBytes?: number;
 }
 
+/** Snapshot record written by compaction; replayed through the same validated restores. */
+export interface OperationalSnapshot {
+  tasks: unknown[];
+  workflows: unknown[];
+  artifacts: unknown[];
+  runs: unknown[];
+  executions: unknown[];
+}
+
 /**
  * Durable operational state for Tasks, Workflows, Artifacts, dispatch runs, and Task
  * execution lifecycle records.
@@ -416,10 +425,43 @@ export class DurableOperationalStore {
         this.runs.restore(record.payload);
       } else if (record.kind === 'execution') {
         this.executions.restore(record.payload);
+      } else if (record.kind === 'journal_snapshot') {
+        if (!isRecord(record.payload)) {
+          throw new JournalError('Operational journal contains a malformed compaction snapshot.');
+        }
+        const snapshot = record.payload;
+        for (const key of ['tasks', 'workflows', 'artifacts', 'runs', 'executions'] as const) {
+          if (!Array.isArray(snapshot[key])) {
+            throw new JournalError('Operational journal contains a compaction snapshot with a missing collection.');
+          }
+        }
+        for (const entity of snapshot.tasks as unknown[]) this.tasks.restore(entity);
+        for (const entity of snapshot.workflows as unknown[]) this.workflows.restore(entity);
+        for (const entity of snapshot.artifacts as unknown[]) this.artifacts.restore(entity);
+        for (const run of snapshot.runs as unknown[]) this.runs.restore(run);
+        for (const execution of snapshot.executions as unknown[]) this.executions.restore(execution);
       } else {
         throw new JournalError(`Operational journal contains an unknown record kind "${record.kind}".`);
       }
     }
+  }
+
+  /**
+   * Exports the full verified journal to `archivePath`, then replaces the live journal
+   * with one snapshot record. Every current entity, run, and execution attempt is carried
+   * into the snapshot and replayed through the same validated restore methods, so the
+   * verifier's durable attempt and result digest survive the rewrite. The archive is
+   * written and verified first; if it fails, the live journal is untouched.
+   */
+  compact(archivePath: string): ReturnType<AppendOnlyJournal['compactWithSnapshot']> {
+    const snapshot: OperationalSnapshot = {
+      tasks: this.tasks.list(),
+      workflows: this.workflows.list(),
+      artifacts: this.artifacts.list(),
+      runs: this.runs.list(),
+      executions: this.executions.list(),
+    };
+    return this.journal.compactWithSnapshot('journal_snapshot', snapshot, archivePath);
   }
 
   close(): void {

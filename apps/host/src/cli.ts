@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { join } from 'node:path';
 import { loadHostConfig } from './config.js';
+import { AppendOnlyJournal } from './persistence/journal.js';
+import { DurableOperationalStore } from './persistence/operational-store.js';
 import { createLocalExecutionAdapters, type ExecutionLedgerRef } from './execution/index.js';
 import { provisionPolicies, revokePolicies } from './policy-admin.js';
 import { createHostRuntime } from './runtime.js';
@@ -22,6 +25,8 @@ const USAGE = `Usage:
   aios-host serve --config <absolute-config-path>
   aios-host publish-policy --config <absolute-config-path> --policy <absolute-policy-path>
   aios-host revoke-policy --config <absolute-config-path> --revocation <absolute-revocation-path>
+  aios-host compact-journal --config <absolute-config-path> --archive <absolute-archive-path>
+  aios-host restore-journal --config <absolute-config-path> --archive <absolute-archive-path>
 `;
 
 function writeStartupFailure(message: string): void {
@@ -109,6 +114,7 @@ async function main(): Promise<void> {
       config: { type: 'string' },
       policy: { type: 'string' },
       revocation: { type: 'string' },
+      archive: { type: 'string' },
     },
   });
   const command = parsed.positionals[0];
@@ -126,6 +132,33 @@ async function main(): Promise<void> {
       provisioningPath: parsed.values.policy,
     });
     process.stdout.write(`${JSON.stringify({ event: 'policy_published', ...result })}\n`);
+    return;
+  }
+  if (command === 'compact-journal') {
+    if (!parsed.values.config || !parsed.values.archive) {
+      throw new Error('compact-journal requires --config and --archive.');
+    }
+    const config = loadHostConfig(parsed.values.config);
+    // Must run with the host stopped: the journal holds a single-process lock.
+    const store = new DurableOperationalStore({ directory: config.operational_store.directory });
+    try {
+      const result = store.compact(parsed.values.archive);
+      process.stdout.write(`${JSON.stringify({ event: 'journal_compacted', ...result })}\n`);
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  if (command === 'restore-journal') {
+    if (!parsed.values.config || !parsed.values.archive) {
+      throw new Error('restore-journal requires --config and --archive.');
+    }
+    const config = loadHostConfig(parsed.values.config);
+    const result = AppendOnlyJournal.restore({
+      filePath: join(config.operational_store.directory, 'operational.jsonl'),
+      archivePath: parsed.values.archive,
+    });
+    process.stdout.write(`${JSON.stringify({ event: 'journal_restored', ...result })}\n`);
     return;
   }
   if (command === 'revoke-policy') {
