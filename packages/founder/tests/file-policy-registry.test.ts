@@ -108,6 +108,22 @@ describe('FilePolicyRegistry', () => {
     }
   });
 
+
+  it('recovers a stale lock only when its recorded process no longer exists', () => {
+    const h = setup();
+    mkdirSync(join(h.directory, 'state'), { recursive: true });
+    const lockPath = `${h.filePath}.lock`;
+    writeFileSync(lockPath, JSON.stringify({ pid: 2_147_483_647, created_at: new Date().toISOString() }), { mode: 0o600 });
+    const registry = new FilePolicyRegistry({ filePath: h.filePath });
+    try {
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid: number };
+      expect(lock.pid).toBe(process.pid);
+    } finally {
+      registry.close();
+      rmSync(h.directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects non-absolute paths and invalid state files', () => {
     expect(() => new FilePolicyRegistry({ filePath: 'relative/policies.json' })).toThrow(/absolute file path/);
     const h = setup();
