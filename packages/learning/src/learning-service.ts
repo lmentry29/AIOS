@@ -1,8 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Importance, MemoryObjectEntity as MemoryObjectEntityType, MemoryType } from '@aios/core';
 import { MemoryObjectEntity } from '@aios/core';
 import { ObjectStore } from '@aios/objects';
-import { ArchivedKnowledgeError, InvalidStagePromotionError, KnowledgeNotFoundError } from './errors.js';
+import {
+  ArchivedKnowledgeError,
+  InvalidStagePromotionError,
+  KnowledgeNotFoundError,
+  MemoryApprovalError,
+} from './errors.js';
 import { type KnowledgeStage, type PromotableStage, stageRank } from './knowledge-stage.js';
 
 export interface ObservationOptions {
@@ -32,6 +37,125 @@ export interface KnowledgeRepositoryPort {
   get(id: string): KnowledgeRecord | undefined;
   update(record: KnowledgeRecord): void;
   listByStage(stage: KnowledgeStage): KnowledgeRecord[];
+  /**
+   * Optional atomic commit for an approval-bound permanent promotion. A durable adapter
+   * implements this so the stage change and the approval consumption are one journal
+   * record; the service falls back to update()+approval.update() for in-memory adapters.
+   */
+  commitPromotion?(record: KnowledgeRecord, approval: MemoryWriteApproval): void;
+}
+
+/** Stages that make a Memory record permanent. Draft stages need no approval. */
+export const PERMANENT_KNOWLEDGE_STAGES = ['published', 'institutional_standard'] as const;
+export type PermanentKnowledgeStage = (typeof PERMANENT_KNOWLEDGE_STAGES)[number];
+
+export function isPermanentKnowledgeStage(stage: KnowledgeStage): stage is PermanentKnowledgeStage {
+  return stage === 'published' || stage === 'institutional_standard';
+}
+
+export type MemoryApprovalStatus = 'pending' | 'approved' | 'rejected' | 'consumed';
+
+/**
+ * A recorded request to make one Memory record permanent, bound to the exact record,
+ * transition, and content the principal reviewed. `expires_at` is enforced at decision
+ * and write time; a pending or approved-but-expired approval never authorizes a write.
+ */
+export interface MemoryWriteApproval {
+  approval_id: string;
+  memory_id: string;
+  from_stage: KnowledgeStage;
+  target_stage: PermanentKnowledgeStage;
+  /** SHA-256 over the memory id, subject, and content at request time. */
+  content_hash: string;
+  requested_by: string;
+  requested_at: string;
+  expires_at: string;
+  status: MemoryApprovalStatus;
+  decided_by?: string;
+  decided_at?: string;
+  reason?: string;
+  consumed_at?: string;
+}
+
+export interface MemoryApprovalRepositoryPort {
+  create(approval: MemoryWriteApproval): MemoryWriteApproval;
+  get(approvalId: string): MemoryWriteApproval | undefined;
+  update(approval: MemoryWriteApproval): MemoryWriteApproval;
+}
+
+/** The trusted host supplies the existing deny-by-default authorization boundary here. */
+export interface MemoryApprovalAuthorityPort {
+  authorize(actorId: string, approval: MemoryWriteApproval): Promise<boolean>;
+}
+
+export interface LearningServiceOptions {
+  /** Lifetime of a pending approval; defaults to 15 minutes and is bounded to 24 hours. */
+  approval_ttl_ms?: number;
+  /** Injectable clock for tests and deterministic expiry. */
+  now?: () => Date;
+}
+
+const DEFAULT_APPROVAL_TTL_MS = 15 * 60 * 1000;
+const MIN_APPROVAL_TTL_MS = 1_000;
+const MAX_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+
+function isActorIdentifier(value: unknown): value is string {
+  return typeof value === 'string'
+    && (/^human:[^\s:*]+$/.test(value)
+      || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+function isHumanPrincipal(value: string): boolean {
+  return /^human:[^\s:*]+$/.test(value);
+}
+
+/** Deterministic serialization so an approval cannot be replayed against altered content. */
+function canonicalForHash(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : canonicalForHash(item))).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .filter((key) => record[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonicalForHash(record[key])}`)
+      .join(',')}}`;
+  }
+  if (value === undefined) return 'null';
+  return JSON.stringify(value) as string;
+}
+
+export function memoryWriteContentHash(memoryId: string, subject: string, content: unknown): string {
+  return createHash('sha256')
+    .update(canonicalForHash({ memory_id: memoryId, subject, content }))
+    .digest('hex');
+}
+
+/** In-memory approval adapter for tests and single-process development; not durable. */
+export class InMemoryMemoryApprovalRepository implements MemoryApprovalRepositoryPort {
+  private readonly approvals = new Map<string, MemoryWriteApproval>();
+
+  create(approval: MemoryWriteApproval): MemoryWriteApproval {
+    if (this.approvals.has(approval.approval_id)) {
+      throw new Error(`Memory approval "${approval.approval_id}" already exists.`);
+    }
+    this.approvals.set(approval.approval_id, structuredClone(approval));
+    return structuredClone(approval);
+  }
+
+  get(approvalId: string): MemoryWriteApproval | undefined {
+    const approval = this.approvals.get(approvalId);
+    return approval ? structuredClone(approval) : undefined;
+  }
+
+  update(approval: MemoryWriteApproval): MemoryWriteApproval {
+    if (!this.approvals.has(approval.approval_id)) {
+      throw new Error(`Memory approval "${approval.approval_id}" does not exist.`);
+    }
+    this.approvals.set(approval.approval_id, structuredClone(approval));
+    return structuredClone(approval);
+  }
 }
 
 /** In-memory adapter for tests and single-process development; not durable. */
@@ -117,10 +241,31 @@ function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
 export class LearningService {
   private readonly memories: MemoryObjectRepositoryPort;
   private readonly knowledge: KnowledgeRepositoryPort;
+  private readonly approvals: MemoryApprovalRepositoryPort;
+  private readonly authority: MemoryApprovalAuthorityPort;
+  private readonly now: () => Date;
+  private readonly approvalTtlMs: number;
 
-  constructor(store?: MemoryObjectRepositoryPort, knowledgeStore?: KnowledgeRepositoryPort) {
+  constructor(
+    store?: MemoryObjectRepositoryPort,
+    knowledgeStore?: KnowledgeRepositoryPort,
+    approvalStore?: MemoryApprovalRepositoryPort,
+    authority?: MemoryApprovalAuthorityPort,
+    options: LearningServiceOptions = {},
+  ) {
     this.memories = store ?? new ObjectStore<MemoryObjectEntityType>(MemoryObjectEntity);
     this.knowledge = knowledgeStore ?? new InMemoryKnowledgeRepository();
+    this.approvals = approvalStore ?? new InMemoryMemoryApprovalRepository();
+    // Absent an explicit authority, every approval decision is denied. This is the same
+    // default-deny posture as the rest of the host authorization chain.
+    this.authority = authority ?? { authorize: async () => false };
+    this.now = options.now ?? (() => new Date());
+    this.approvalTtlMs = options.approval_ttl_ms ?? DEFAULT_APPROVAL_TTL_MS;
+    if (!Number.isSafeInteger(this.approvalTtlMs)
+      || this.approvalTtlMs < MIN_APPROVAL_TTL_MS
+      || this.approvalTtlMs > MAX_APPROVAL_TTL_MS) {
+      throw new MemoryApprovalError('Memory approval lifetime must be between one second and 24 hours.');
+    }
   }
 
   /**
@@ -184,7 +329,7 @@ export class LearningService {
    * Deliberately does NOT touch lifecycle_state — that is the orthogonal axis, and
    * writing it here is the conflation §2.7 warns against.
    */
-  async promote(observationId: string, toStage: PromotableStage): Promise<void> {
+  async promote(observationId: string, toStage: PromotableStage, approvalId?: string): Promise<void> {
     const record = this.require(observationId);
 
     if (record.stage === 'historical_archive') {
@@ -195,7 +340,148 @@ export class LearningService {
       throw new InvalidStagePromotionError(observationId, record.stage, toStage);
     }
 
-    this.knowledge.update({ ...record, stage: toStage });
+    if (!isPermanentKnowledgeStage(toStage)) {
+      this.knowledge.update({ ...record, stage: toStage });
+      return;
+    }
+
+    // Permanent memory writes are deny-by-default: no approval, no write. The approval is
+    // bound to this memory, this transition, and this content, and is consumed exactly once.
+    const approval = this.requireApprovedPromotion(approvalId, record, toStage);
+    const promoted = { ...record, stage: toStage };
+    const consumed: MemoryWriteApproval = {
+      ...approval,
+      status: 'consumed',
+      consumed_at: this.now().toISOString(),
+    };
+    if (this.knowledge.commitPromotion) {
+      this.knowledge.commitPromotion(promoted, consumed);
+    } else {
+      this.knowledge.update(promoted);
+      this.approvals.update(consumed);
+    }
+  }
+
+  /**
+   * Proposes making a record permanent. A proposal is not an authorization and writes no
+   * Memory: it creates a pending approval bound to the record, transition, and content.
+   */
+  async requestPermanentPromotion(
+    memoryId: string,
+    toStage: PromotableStage,
+    actorId: string,
+  ): Promise<MemoryWriteApproval> {
+    if (!isActorIdentifier(actorId)) {
+      throw new MemoryApprovalError('A permanent Memory approval request requires a valid authenticated actor identifier.');
+    }
+    if (!isPermanentKnowledgeStage(toStage)) {
+      throw new MemoryApprovalError('Only published or institutional_standard Memory promotions require approval.');
+    }
+    const record = this.require(memoryId);
+    if (record.stage === 'historical_archive') throw new ArchivedKnowledgeError(memoryId);
+    if (stageRank(toStage) <= stageRank(record.stage)) {
+      throw new InvalidStagePromotionError(memoryId, record.stage, toStage);
+    }
+
+    const now = this.now();
+    return this.approvals.create({
+      approval_id: randomUUID(),
+      memory_id: memoryId,
+      from_stage: record.stage,
+      target_stage: toStage,
+      content_hash: memoryWriteContentHash(record.id, record.subject, record.content),
+      requested_by: actorId,
+      requested_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + this.approvalTtlMs).toISOString(),
+      status: 'pending',
+    });
+  }
+
+  /**
+   * Records a human principal's explicit decision. Deny-by-default: the actor must be a
+   * human principal and the injected authorization boundary must allow the decision.
+   */
+  async decidePermanentPromotion(
+    approvalId: string,
+    decision: 'approved' | 'rejected',
+    actorId: string,
+    reason?: string,
+  ): Promise<MemoryWriteApproval> {
+    if (!isActorIdentifier(actorId) || !isHumanPrincipal(actorId)) {
+      throw new MemoryApprovalError('Permanent Memory approvals can only be decided by an authenticated human principal.');
+    }
+    if (decision !== 'approved' && decision !== 'rejected') {
+      throw new MemoryApprovalError('A permanent Memory approval decision must be approved or rejected.');
+    }
+    if (reason !== undefined && (typeof reason !== 'string' || reason.length > 1000)) {
+      throw new MemoryApprovalError('Approval reasons must be strings of at most 1,000 characters.');
+    }
+    const approval = this.approvals.get(approvalId);
+    if (!approval) throw new MemoryApprovalError(`No permanent Memory approval found with id "${approvalId}".`);
+    if (approval.status !== 'pending') {
+      throw new MemoryApprovalError(`Memory approval "${approvalId}" is already ${approval.status}.`);
+    }
+    const now = this.now();
+    if (Date.parse(approval.expires_at) <= now.getTime()) {
+      throw new MemoryApprovalError(`Memory approval "${approvalId}" has expired.`);
+    }
+
+    let allowed = false;
+    try {
+      allowed = await this.authority.authorize(actorId, approval);
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      throw new MemoryApprovalError(`Permanent Memory approval "${approvalId}" was denied for principal "${actorId}".`);
+    }
+
+    const trimmedReason = reason?.trim();
+    return this.approvals.update({
+      ...approval,
+      status: decision,
+      decided_by: actorId,
+      decided_at: now.toISOString(),
+      ...(trimmedReason ? { reason: trimmedReason } : {}),
+    });
+  }
+
+  getMemoryApproval(approvalId: string): MemoryWriteApproval | undefined {
+    const approval = this.approvals.get(approvalId);
+    return approval ? structuredClone(approval) : undefined;
+  }
+
+  private requireApprovedPromotion(
+    approvalId: string | undefined,
+    record: KnowledgeRecord,
+    toStage: PermanentKnowledgeStage,
+  ): MemoryWriteApproval {
+    if (!approvalId) {
+      throw new MemoryApprovalError(
+        `Promoting knowledge "${record.id}" to "${toStage}" is a permanent Memory write and requires an explicit approval.`,
+      );
+    }
+    const approval = this.approvals.get(approvalId);
+    if (!approval) {
+      throw new MemoryApprovalError(`No permanent Memory approval found with id "${approvalId}".`);
+    }
+    if (approval.status !== 'approved') {
+      throw new MemoryApprovalError(
+        `Permanent Memory approval "${approvalId}" is ${approval.status}; a pending, rejected, or consumed approval cannot authorize a write.`,
+      );
+    }
+    if (approval.memory_id !== record.id
+      || approval.from_stage !== record.stage
+      || approval.target_stage !== toStage
+      || approval.content_hash !== memoryWriteContentHash(record.id, record.subject, record.content)) {
+      throw new MemoryApprovalError(
+        `Permanent Memory approval "${approvalId}" is bound to a different record, transition, or content.`,
+      );
+    }
+    if (Date.parse(approval.expires_at) <= this.now().getTime()) {
+      throw new MemoryApprovalError(`Permanent Memory approval "${approvalId}" has expired.`);
+    }
+    return approval;
   }
 
   /** Moves a record to 'historical_archive', the terminal stage of the axis (§2.7). */

@@ -22,6 +22,7 @@ import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
 import { ManagedExecutionPort, type CancellableExecutionPort } from './execution/managed-execution.js';
 import type { ExecutionLedger } from './persistence/execution-ledger.js';
+import { DurableLearningStore } from './persistence/learning-store.js';
 import {
   DurableOperationalStore,
   type DurableCollection,
@@ -92,6 +93,8 @@ export interface HostRuntime {
   founder: FounderInterface;
   /** Durable operational repositories (ADR-0015). */
   operational: DurableOperationalStore;
+  /** Approval-gated Learning System state, durable in learning.jsonl. */
+  learning: LearningService;
   runs: DurableRunCoordinator;
   taskStore: DurableTaskRepository;
   workflowStore: DurableCollection<WorkflowEntity>;
@@ -177,9 +180,10 @@ function resolveAgentUnlessConfigured(
  * - Tasks, Workflows, Artifacts, and dispatch runs are durable through the hash-chained
  *   operational journal (ADR-0015) with idempotency keys and leases. Founder Intelligence
  *   remains in the Obsidian vault (ADR-0014); this does not create a second Founder store.
- * - Learning records and the canonical object store used only for Founder queries remain
- *   in-memory. No execution or verification adapter is invented: missing adapters fail
- *   closed.
+ * - Learning records are durable in a separate hash-chained journal, and permanent Memory
+ *   promotions require a recorded human approval. The canonical object store used only for
+ *   Founder queries remains in-memory. No execution or verification adapter is invented:
+ *   missing adapters fail closed.
  * - The vault/Gmail/Notion readers are composed against the shared evaluator but are only
  *   live once the local Obsidian++ service and credentials exist.
  */
@@ -195,6 +199,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
 
   const policies = new FilePolicyRegistry({ filePath: config.policy_file });
   let operational: DurableOperationalStore | undefined;
+  let learningStore: DurableLearningStore | undefined;
   try {
     const authorization = new AuthorizationService(
       policies,
@@ -208,6 +213,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       directory: config.operational_store.directory,
       leaseMs: config.dispatch_lease_ms,
     });
+    learningStore = new DurableLearningStore({ directory: config.operational_store.directory });
     const recovered = reconcileInterruptedWork(operational);
     const recoveredWorkflows = recovered.workflows;
     const recoveredExecutions = recovered.executions;
@@ -215,7 +221,21 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     const workflowStore = operational.workflows;
     const artifactStore = operational.artifacts;
     const objectStore = new ObjectStore<CanonicalEntity>(CanonicalEntitySchema);
-    const learning = new LearningService();
+    const learning = new LearningService(
+      learningStore.memoryRepository,
+      learningStore.knowledgeRepository,
+      learningStore.approvalRepository,
+      {
+        // An approval is a human governance action. Reuse the protected Founder decision
+        // collection and its existing exact `intake` grant rather than inventing a new
+        // authorization action; the evaluator still denies by default.
+        authorize: async (actorId) => boundary.authorize({
+          actor_id: actorId,
+          action: 'intake',
+          resource_id: config.decision_collection_id,
+        }),
+      },
+    );
 
     const execution = new ManagedExecutionPort(
       options.execution ?? new UnconfiguredExecutionPort(),
@@ -285,6 +305,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       kernel,
       founder,
       operational,
+      learning,
       runs: operational.runs,
       taskStore,
       workflowStore,
@@ -297,11 +318,13 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       verificationConfigured: options.verification !== undefined,
       evidenceConfigured: config.obsidian !== undefined,
       close: () => {
+        learningStore?.close();
         operational?.close();
         policies.close();
       },
     };
   } catch (error) {
+    learningStore?.close();
     operational?.close();
     policies.close();
     throw error;

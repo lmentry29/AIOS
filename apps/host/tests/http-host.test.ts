@@ -2034,3 +2034,31 @@ describe('trusted host HTTP surface', () => {
     expect(empty.body).toEqual({ task_id: task.entity_id, attempts: [] });
   });
 });
+
+describe('permanent Memory approvals through the trusted host boundary', () => {
+  it('requires an authorized human approval and leaves the stage at observation otherwise', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({ policy: makePolicy(task.entity_id, workflow.entity_id) });
+    const learning = harness.runtime.learning;
+    const id = await learning.recordObservation('Approval-gated finding', { value: 1 });
+
+    await expect(learning.promote(id, 'published')).rejects.toThrow(/requires an explicit approval/);
+    expect(learning.getKnowledge(id)?.stage).toBe('observation');
+
+    const approval = await learning.requestPermanentPromotion(id, 'published', FOUNDER);
+    // A human principal with no grant on the protected decision collection is denied.
+    await expect(
+      learning.decidePermanentPromotion(approval.approval_id, 'approved', 'human:intruder'),
+    ).rejects.toThrow(/denied/);
+    expect(learning.getMemoryApproval(approval.approval_id)?.status).toBe('pending');
+    await expect(learning.promote(id, 'published', approval.approval_id))
+      .rejects.toThrow(/pending/);
+    expect(learning.getKnowledge(id)?.stage).toBe('observation');
+
+    await learning.decidePermanentPromotion(approval.approval_id, 'approved', FOUNDER);
+    await learning.promote(id, 'published', approval.approval_id);
+    expect(learning.getKnowledge(id)?.stage).toBe('published');
+    expect(learning.getMemoryApproval(approval.approval_id)?.status).toBe('consumed');
+  });
+});

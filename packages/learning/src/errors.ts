@@ -1,5 +1,20 @@
 import type { KnowledgeStage } from './knowledge-stage.js';
 
+/**
+ * Thrown when a permanent Memory promotion is attempted without a recorded approval from
+ * an authorized human principal, or when the approval is rejected, expired, consumed, or
+ * bound to a different record/stage/content.
+ *
+ * Ephemeral observations and draft-stage promotions (candidate, validated) do not require
+ * approval and never throw this. `published` and `institutional_standard` are permanent.
+ */
+export class MemoryApprovalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MemoryApprovalError';
+  }
+}
+
 /** Thrown when an operation references a knowledge id not held by this service. */
 export class KnowledgeNotFoundError extends Error {
   constructor(id: string) {
