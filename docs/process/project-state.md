@@ -1,6 +1,7 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and Actions APIs. This snapshot describes the public repository and the active implementation branch; it does not claim local-machine verification.
+Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
+local evidence only; no GitHub Actions run has been observed for the current code head.
 
 ## Repository and active change
 
@@ -8,102 +9,118 @@ Last verified: 2026-11-09 via GitHub repository, pull-request, commit, tree, and
 - Visibility: public; default branch: `main`
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
-- PR status: open, draft, not merged. Do not merge while implementation and audit work remain.
-- Latest implementation head at snapshot: `c0afc36dfbce74c2231ef503fa8b39b47c169336`
-- The PR adds an MIT license and contributor/community files on its branch. The default branch's GitHub repository metadata still reports no recognized license until that change is merged.
-- No external adoption is claimed. Repository metadata at the last live read showed 1 star, 0 forks, 0 network forks, and 0 subscribers. Those are point-in-time counts, not measures of downstream impact.
+- PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
+- Verified code head: `2d68052` (`fix(host): keep Docker workspaces usable and action evidence honest`)
+- The docs commit that updates this file follows the code head. Read `git log --oneline -4`
+  for the actual tip.
+- Do not push `main`. The implementation branch may be pushed to
+  `upstream community/open-source-foundation`.
 
-## Current package maturity
+## Current package and application maturity
 
-Nine planned workspace packages have source implementations, at different maturity levels:
+Nine workspace packages contain domain implementations at different maturity levels.
+`apps/host` is an application/composition root, not a tenth package.
 
-| Package | Current state |
+| Component | Current state |
 |---|---|
-| `@aios/core` | Established schemas and canonical types |
-| `@aios/objects` | Established in-memory object store with lifecycle, relationship, immutability, and mutation guards |
-| `@aios/work-hierarchy` | Task and Objective stores |
+| `@aios/core` | Established Zod schemas and generated JSON Schema, including the fixed `local_command` Task execution/verification specs |
+| `@aios/objects` | In-memory object store with lifecycle, relationship, immutability, mutation guards, and recovery-only `restore()` |
+| `@aios/work-hierarchy` | Task and Objective stores; Mission remains a typed reference with no backing record |
 | `@aios/containers` | Project store only; eight container concepts remain unpromoted by ADR-0011 |
-| `@aios/agents` | Agent lifecycle/conformance runner; not a real tool-executing agent runtime |
-| `@aios/tools` | Plugin lifecycle management; adapter invocation remains deferred |
-| `@aios/learning` | Knowledge records and evolution stages |
-| `@aios/founder` | Early runtime: authorization-gated canonical/memory reads, human-only decision capture and review queue, collection-scoped decision artifacts, default-deny authorization, human-only policy administration |
-| `@aios/orchestration` | Early runtime: authorized intake, ordered dispatch, multi-agent coordination, distinct host-configured verifier identity with explicit evidence-read permission, evidence artifacts, status/evidence reads |
+| `@aios/agents` | Agent lifecycle/conformance runner; not a general tool-executing agent runtime |
+| `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
+| `@aios/learning` | Knowledge records and evolution stages; in-memory |
+| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
+| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads; execution is injected |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, recovery-to-suspended |
 
-Founder and Orchestration are not production-complete. Their interfaces are adapter-driven; in-memory implementations are for tests/development only.
+Not production-ready. There is no UI, no general capability/provider runtime, no secret
+broker, no signed verifier provenance, and no live external-provider verification.
 
-## Authorization and architecture decisions
+## Architecture decisions
 
-- ADR-0013 — **Accepted (2026-11-08)**: resource-attached, exact-match, default-deny authorization; deny overrides allow; no wildcard or owner-implied grants; identity must come from a trusted host; policy lifecycle and decision auditing must be durable and append-only.
-- ADR-0014 — **Accepted (2026-08-17)**: Obsidian vault is the persistence substrate for Founder Intelligence; AIOS schemas validate managed records; no separate database for Founder Intelligence; AIOS reads and proposes by default; permanent Memory requires explicit human review and authorization.
-- ADR-0012 — **Proposed (2026-07-14)**: extends capability mediation to end-users and supersedes the plugin-ID-centric invocation shape. It remains unaccepted; the new capability-mediated runtime contract and Capability Registry schema are follow-on engineering work.
-- Organizational Containers — ADR-0011 promotes Project only. Eight other container types remain references because the certified source corpus does not define their fields. Do not invent schemas to make a checklist appear complete.
-- Plugin/Adapter execution — explicitly deferred until a real adapter integration exists.
-- Lifecycle conformance — the prior known Task-substate mismatch was addressed in the latest implementation branch by keeping Agent execution substates on Agent records and removing the Agent-only Task substate dependency.
+- ADR-0013 — **Accepted (2026-11-08)**: resource-attached, exact-match, default-deny
+  authorization; deny overrides allow; no wildcard or owner-implied grants; identity comes
+  from the trusted host; policy lifecycle and decisions require durable append-only audit.
+- ADR-0014 — **Accepted (2026-08-17)**: the Obsidian vault is the Founder Intelligence
+  persistence substrate; no parallel Founder database; read-and-propose by default;
+  permanent Memory requires explicit human review/authorization.
+- ADR-0015 — **Accepted (2026-11-10)**: hash-chained, fsync'd append-only operational
+  journal for Task/Workflow/Artifact/run state, with idempotency, leases, tamper detection,
+  and recovery-to-suspended. No compaction or migration framework yet.
+- ADR-0016 — **Accepted (2026-11-10)**: `packages/*` are the platform domain; `apps/host`
+  is the trusted local application; UI is an untrusted future client. The host rejects every
+  `Origin` until a session/CSRF/cookie ADR exists.
+- ADR-0017 — **Proposed (2026-11-10)**: Mission as a Canonical Object subtype. Blocked on a
+  sourced field-level model; do not invent a sixth entity or merge Mission with containers.
+- ADR-0018 — **Proposed (2026-11-10)**: infrastructure records as canonical objects with
+  secret references only. No infrastructure store or secret broker exists.
+- ADR-0019 — **Accepted (2026-11-10)**: fixed `local.exec`, fail-closed sandbox providers
+  (Docker/bubblewrap/Seatbelt), bounded/hashed evidence, and an independently executed
+  verifier command.
+- ADR-0020 — **Accepted (2026-11-10)**: `@aios/*` remain private; distribution is an
+  application artifact under named release profiles. No npm publication.
+- ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
+  first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-At commit `c0afc36dfbce74c2231ef503fa8b39b47c169336`, GitHub Actions reported:
-- CI: passed (`pnpm turbo lint typecheck test build`)
-- Conformance: passed
-- Schema Check: passed
+Local checks at code head `2d68052` (Node 26.13.0, pnpm 11.11.0):
 
-The verified suite includes a cross-package Founder → authorization → orchestration integration test using the real in-memory policy registry and authorization service, plus regression tests for human-only policy administration, immutable policy snapshots, policy identity matching, Founder collection isolation, and distinct authorized verifier identity. Conformance reports 107 passing tests across six files. Entity-specific lifecycle rules are covered: Agent substates are restricted to active; Task, Workflow, and Plugin substates are rejected where no vocabulary is ratified. No known conformance test remains deliberately failing.
+- `pnpm -r run build` — pass.
+- `pnpm -r run typecheck` — pass.
+- `pnpm -r run lint` — pass (the only issue found was an unused verifier type import, fixed
+  before the final host check).
+- `pnpm -r run test` — pass.
+- Host: **52 tests** in 6 files, including 16 loopback HTTP tests and a composed
+  executor/verifier dispatch test.
+- Core: **46 tests**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
+  orchestration: 26; other package suites pass.
+- Generated `schemas/generated/task.json` includes the execution/verification definitions.
 
-These are GitHub Actions results; no local-machine execution or production deployment is claimed.
+These are local results, not CI results. The real Docker, bubblewrap, and Seatbelt providers
+could not be integration-tested here: the Docker daemon is inaccessible and the other tools
+are absent. The adapter tests use a clearly labelled test-only sandbox that isolates nothing.
 
 ## Production blockers — not optional
 
-1. **Founder Intelligence persistence:** The accepted source of truth is the Obsidian vault, not a separate database. A read-only vault evidence adapter/VaultObjectStore is not yet implemented in AIOS. The completed read-only reconciliation found no notes explicitly managed as Founder canonical objects; none were hydrated or migrated, and proposed classifications remain pending human review. Do not bulk-migrate, reclassify, or write to the vault. The local Obsidian API must pass its separate authentication, loopback, path-containment, and dependency audit before AIOS connects. **Operational task/run state** (TaskStore, Workflow state, execution evidence, policy registry, authorization audit) remains in-memory; its durable storage contract is unresolved and must not be conflated with Founder Intelligence persistence.
-2. **Identity:** No authenticated identity/session subsystem exists. Actor IDs passed into the kernel are identifiers, not proof of identity. A production host must derive them from validated sessions/tokens and enforce authorization at every entry point.
-3. **Policy lifecycle:** ADR-0013 defines the semantics, but durable policy publication, attachment, replacement, revocation, trusted bootstrap, and atomic audit persistence have no production adapter.
-4. **Execution:** Orchestration has ports, not production model/tool adapters, sandbox isolation, secret brokering, execution quotas, or safe tool allowlists. The verifier now has a distinct host-configured identity and must be authorized to read evidence; a distinct identifier alone does not prove independent provider/process isolation.
-5. **Verification:** The verifier is injected. There is no production-grade independent verifier or evidence provenance chain; an executor must never be able to self-attest.
-6. **Reliability:** No durable run journal, idempotency keys, leases, retry policy, compensation, crash recovery, or distributed concurrency control.
-7. **Capability mediation:** ADR-0012 is Proposed; the registry, capability model, provider selection, health/cost policy, and capability execution contract are not implemented.
-8. **Platform boundary:** AIOS-as-personal-OS versus applications-on-AIOS, multi-tenancy, per-user isolation, and deployment architecture remain unratified.
-9. **Security operations:** No completed threat model, penetration test, SLOs, operational monitoring/alerting, incident response runbook, or disaster-recovery validation.
-10. **Operational proof:** The repository has test coverage and a deterministic test harness, but no verified continuously running deployment or real external provider integration.
-
-## Addendum — 2026-11-10 (local-only verification, no CI run)
-
-This addendum records work performed in a cloud workspace against branch
-`community/open-source-foundation` at base commit `c2d369d26224ecc75c2f0c376944cedd7d1019dd`.
-It is local evidence only: no GitHub Actions run accompanied it, and CI results below still
-refer to the earlier commit they name.
-
-- `apps/host/` was added as the trusted local composition root (an application, not a tenth
-  package). It loads owner-only configuration, authenticates bearer sessions against stored
-  SHA-256 digests, composes one `FilePolicyRegistry` and one `AuthorizationService`, injects
-  the same boundary into Founder and Orchestration, and serves a loopback-only reviewed API.
-  Policy administration remains an offline human-only CLI; no policy mutation route exists.
-- Blockers 1 (trusted composition root) and 2 (identity) are now **partially** addressed:
-  identity/session binding and shared authorization exist and are tested over real loopback
-  HTTP. Operational persistence, real execution adapters, and an independent production
-  verifier remain unimplemented, so the host dispatches only when a caller supplies those
-  adapters and otherwise fails closed with 503.
-- Baseline at that commit, executed locally with Node 26.13.0 and pnpm 11.11.0:
-  `pnpm -r run build`, `typecheck`, `lint`, and `test` all exited 0 before the change
-  (107 conformance tests, 43 integration tests, plus per-package unit tests). Turborepo was
-  invoked as `turbo run <task> --root .` where possible; the cloud worktree's gitdir lives
-  outside the checkout, so Turbo's default cache path resolved outside the writable tree.
-
-Do not read this addendum as a production-readiness claim. The maturity table above and the
-blocker list below remain the authoritative status until a fresh full audit replaces them.
+1. **Execution isolation proof.** Docker/bubblewrap/Seatbelt implementations need testing on
+   hosts where they actually run, including mount permissions, network denial, PID/memory
+   limits, and hostile commands. Bubblewrap has no cgroup accounting or seccomp profile and
+   is trusted-local only.
+2. **Verifier provenance.** A distinct configured verifier plus an independently executed
+   command is implemented, but there is no signed decision, key rotation, or protection from
+   a compromised host process.
+3. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
+   infrastructure inventory, or secret broker exists.
+4. **Identity/policy lifecycle.** Bearer sessions and a durable policy registry exist, but
+   there is no user-facing login, policy recovery/rotation procedure, or independent audit
+   sink. Policy administration is an offline human CLI.
+5. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
+   per-note authorization, retrieval/context assembly, contradiction detection, and reviewed
+   memory writes remain open. Do not bulk-migrate or modify the vault.
+6. **Live connectors.** Gmail/Notion/Obsidian++ need OAuth/token lifecycle, scopes, health,
+   pagination, rate limits, retries, and live integration tests.
+7. **UI.** No UI exists. The host rejects all browser origins by design (ADR-0016).
+8. **Orchestration depth.** No dependencies, scheduler, parallelism, cancellation, approval
+   gates, or automatic resume of suspended work.
+9. **Operations.** No journal compaction/migrations, automated backup/restore drill,
+   metrics/tracing/alerting, threat model, incident runbook, or SLOs.
+10. **Release.** No installer, signed update channel, or supported npm install path.
 
 ## Next work order
 
-1. Keep the PR draft and work on the implementation branch; do not claim production readiness.
-2. Verify the new founder→authorization→orchestration integration test and lockfile changes through CI.
-3. Resolve the founder decisions called out in ADR-0012 and the open container-model conflict without inventing source material.
-4. Implement the read-only Obsidian vault evidence adapter first. Preserve source provenance, validate only explicitly AIOS-managed records, and surface classifications as reviewable proposals. Do not add a separate Founder Intelligence database or write to the vault.
-5. Add a trusted host identity boundary and a durable policy/audit adapter for operational execution state, with transactional append-only behavior.
-6. Add a real sandboxed execution adapter and an independently operated verifier.
-7. Add run journaling, idempotency, recovery, observability, security review, and deployment/restore validation.
-8. Re-run a clean independent audit against the certified architecture and the actual deployed runtime.
+1. Push the branch and observe CI on the exact commit; do not treat local results as CI.
+2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results.
+3. Add verifier key provenance or explicitly retain and document the host-trust model.
+4. Source/review the Mission field model before adding any Mission API/schema.
+5. Build a secret broker before any provider credential is introduced.
+6. Keep PR #1 draft; do not merge or push `main`.
 
 ## Source-of-truth rules
 
 - This file is a status snapshot, not architectural authority.
 - `docs/architecture/` and accepted ADRs govern normative behavior.
-- `docs/process/divergence-log.md` records unresolved differences and deferred decisions.
-- Update this file only from fresh repository and CI evidence. Never copy an old status snapshot forward without re-verification.
+- `docs/process/divergence-log.md` records unresolved differences.
+- Update this file only from fresh repository and test/CI evidence; never copy an old status
+  forward without re-verification.

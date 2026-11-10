@@ -190,6 +190,9 @@ single-process lock.
 
 `apps/host/tests/http-host.test.ts` exercises, over real loopback HTTP:
 
+- dispatch through the real fixed executor and independently executed verifier adapters
+  (with a test-only sandbox stub; no real isolation is claimed by that test);
+
 - health without authentication leaking nothing;
 - identical 401 behavior across missing/malformed/wrong credentials;
 - DNS-rebinding and cross-origin rejection;
