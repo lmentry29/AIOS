@@ -87,7 +87,9 @@ describe('FilePolicyRegistry', () => {
     const state = JSON.parse(readFileSync(h.filePath, 'utf8')) as {
       audit_events: Array<{ payload: { actor_id?: string } }>;
     };
-    state.audit_events[0]!.payload.actor_id = 'human:tampered';
+    const firstEvent = state.audit_events[0];
+    if (!firstEvent) throw new Error('Expected a persisted audit event.');
+    firstEvent.payload.actor_id = 'human:tampered';
     writeFileSync(h.filePath, JSON.stringify(state), { mode: 0o600 });
     expect(() => new FilePolicyRegistry({ filePath: h.filePath })).toThrow(/hash chain verification failed/);
     rmSync(h.directory, { recursive: true, force: true });
