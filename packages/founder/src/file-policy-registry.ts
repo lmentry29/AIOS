@@ -174,6 +174,7 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
   private readonly filePath: string;
   private readonly lockPath: string;
   private lockDescriptor: number | undefined;
+  private ownsLock = false;
   private closed = false;
 
   constructor(options: FilePolicyRegistryOptions) {
@@ -185,6 +186,7 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
     try {
       this.lockDescriptor = openSync(this.lockPath, 'wx', 0o600);
+      this.ownsLock = true;
       writeFileSync(this.lockDescriptor, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), 'utf8');
       fsyncSync(this.lockDescriptor);
       this.state = this.loadState();
@@ -341,6 +343,9 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
       try { closeSync(this.lockDescriptor); } catch { /* Best-effort close. */ }
       this.lockDescriptor = undefined;
     }
-    try { unlinkSync(this.lockPath); } catch { /* Lock may not have been created. */ }
+    if (this.ownsLock) {
+      try { unlinkSync(this.lockPath); } catch { /* Best-effort lock cleanup. */ }
+      this.ownsLock = false;
+    }
   }
 }
