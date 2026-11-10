@@ -51,6 +51,14 @@ first local slice and explicitly rejects a subprocess as a security boundary.
 8. **No secret channel.** Task environment is allowlisted (`LANG`, `LC_*`, `TZ`,
    `AIOS_*`). Provider credentials must not be passed through a Task, and raw stdout is
    not evidence.
+9. **A verification decision is attributed, and the attribution is enforced.** A verifier's
+   decision names the verifier principal that produced it. The kernel requires that identity
+   to equal the host-configured `verifier_id` and rejects a missing or different identity as
+   unverified; it persists the identity with `verifier_accepted` in the evidence artifact.
+   Reading execution evidence fails closed unless the record was accepted and its verifier
+   identity matches the verifier this host currently trusts. This is principal attribution,
+   not signing: it prevents a swapped or misattributed record from being presented as
+   verified, but it does not withstand a compromised host process.
 
 ## Alternatives considered
 
@@ -70,9 +78,13 @@ first local slice and explicitly rejects a subprocess as a security boundary.
 - Bubblewrap/Landlock/seccomp hardening, retry/backoff, and resource accounting beyond the
   provider limits remain follow-up work. Cancellation, bounded concurrency, and restart
   reconciliation of Task executions are implemented under ADR-0021.
+- The verifier identity is bound into the persisted evidence and re-checked on read, so a
+  host that changes its configured verifier treats older evidence as not verified. That is
+  deliberate and requires re-verification rather than silent acceptance.
 - A signed verifier decision is not yet implemented. The current trust anchor is the
   host-configured verifier principal plus an actual independent command; a future ADR must
-  add key distribution/rotation before claiming cryptographic verifier provenance.
+  add key distribution/rotation and remote attestation before claiming cryptographic
+  verifier provenance.
 - Coordination (`coordinate()`) is not implemented by the local adapter. It fails rather
   than pretending that one command coordinated multiple Agents.
 
@@ -106,3 +118,15 @@ adapters are configured, and dispatches through the real executor/verifier pair 
 clearly labelled test-only sandbox. It also covers authorized/denied cancellation, skipped
 verification, cap rejection, and crash/restart reconciliation; see ADR-0021 for the exact
 property-to-test mapping.
+
+`http-host.test.ts` proves the verifier binding end to end:
+`binds persisted verification evidence to the configured verifier across a reopen` accepts
+the configured verifier's record, reopens the same persisted host with a different verifier
+to reject it with the existing typed denial (`orchestration_rejected`), then reopens with the
+original verifier and returns the unchanged record. `rejects persisted evidence with no
+verifier identity and records no completion` rejects an unattributed durable artifact and
+leaves its Task `created`. `orchestration-kernel.test.ts` adds `rejects a verification
+decision attributed to a different verifier` and `rejects a verification decision with no
+verifier identity`, both before any evidence write or Task completion. The existing
+`executes, independently verifies, and exposes durable evidence over one shared authorization
+chain` path remains unchanged.

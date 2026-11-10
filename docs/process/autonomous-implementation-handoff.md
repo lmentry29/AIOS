@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, all-or-nothing Workflow attempt-inspection hardening).
+Last updated: 2026-11-10 (Freebuff Cloud session, verifier-attributed evidence binding).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `8cd427a` (`fix(orchestration): deny Workflow attempt history all-or-nothing`)
+- Verified code head: `05769e1` (`feat(orchestration): bind verification evidence to the configured verifier`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `05769e1` — verifier-attributed, persisted evidence binding
   - `8cd427a` — all-or-nothing Workflow attempt inspection
   - `0b01cec` — read-only Task/Workflow attempt-chain inspection
   - `a816fe3` — multi-generation attempt chains, no-write reconciliation, duplicate redrive suppression
@@ -38,9 +39,9 @@ Last updated: 2026-11-10 (Freebuff Cloud session, all-or-nothing Workflow attemp
 - Docker CLI is present but the daemon is not reachable to this user; `bwrap`, `podman`, and
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
-- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `0b01cec` and its docs tip
-  `44df776`. Checks for the all-or-nothing hardening head `8cd427a` and its docs tip are
-  observed after the push; this handoff does not assert them.
+- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `8cd427a` and its docs tip
+  `c64ba42`. Checks for the verifier-binding head `05769e1` and its docs tip are observed
+  after the push; this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -209,6 +210,39 @@ crashes and duplicate requests.
   later resume returns 429 before any lifecycle or attempt write; after release, generation 3
   completes.
 
+## Completed — verifier-attributed evidence binding (`05769e1`)
+
+Verification evidence now names the principal that produced it, and that identity is enforced
+on both the acceptance and the read path.
+
+- `TaskVerificationDecision` requires `verifier_id`. `verifyResult` rejects a decision whose
+  identity is missing or differs from the host-configured verifier, before any evidence write
+  or Task completion, using the existing `OrchestrationError`.
+- `LocalCommandVerifier` returns its configured `verifier_id`; the kernel persists it with
+  `verifier_accepted` in the durable evidence artifact.
+- `getExecutionEvidence` re-reads the persisted record and fails closed unless it was accepted
+  and its verifier identity equals the verifier this host currently trusts. HTTP maps the
+  existing typed error to 409 `orchestration_rejected`; no route, error type, or mutation was
+  added.
+
+### Proof
+
+- `http-host.test.ts` — `binds persisted verification evidence to the configured verifier
+  across a reopen`: the configured verifier's evidence reads 200 with `verifier_id` and
+  `verifier_accepted: true`; reopening the same persisted host with a different verifier
+  rejects the record with 409 `orchestration_rejected`; reopening with the original verifier
+  returns the unchanged artifact.
+- `http-host.test.ts` — `rejects persisted evidence with no verifier identity and records no
+  completion`: a durable artifact without `verifier_id` is rejected after reopen and its Task
+  remains `created` with the same `audit_trail_ref`.
+- `orchestration-kernel.test.ts` — `rejects a verification decision attributed to a different
+  verifier` and `rejects a verification decision with no verifier identity`: both reject
+  before evidence or completion, leaving the Task `suspended`.
+- Existing verification, resume/retry, and attempt-inspection suites are unchanged and pass,
+  including the 401/403/404 contracts and all-or-nothing Workflow inspection.
+- Not cryptographic provenance. A compromised host process can still lie; signed decisions,
+  key distribution/rotation, and remote attestation remain the open trust-model decision.
+
 ## Completed — all-or-nothing Workflow attempt inspection (`8cd427a`)
 
 Workflow attempt inspection now fails closed as a single unit instead of authorizing and
@@ -277,7 +311,7 @@ Operators can audit the full chain without redriving it.
 - 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
   Workflow.
 
-## Verification actually executed at `8cd427a`
+## Verification actually executed at `05769e1`
 
 Local at commit time; CI is observed after the push, not asserted here.
 
@@ -294,19 +328,19 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **80 passed** (7 files) |
+| `@aios/host` | **82 passed** (7 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
 | `@aios/objects` | 32 passed |
 | `@aios/founder` | 50 passed |
-| `@aios/orchestration` | 28 passed |
+| `@aios/orchestration` | 30 passed |
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 15 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **461 passed** |
+| **Total** | **465 passed** |
 
 Schema regeneration produced no diff.
 
@@ -369,6 +403,13 @@ Schema regeneration produced no diff.
   byte-identical, and reopens to unchanged attempt states for both Tasks.
 - `http-host.test.ts` — a fully authorized multi-Task Workflow returns every step Task's
   history in declared order, including the unchanged three-generation chain.
+- `http-host.test.ts` — configured-verifier evidence reads back across a reopen, a swapped
+  verifier rejects it with 409 `orchestration_rejected`, and the original verifier restores
+  the unchanged record.
+- `http-host.test.ts` — a persisted artifact with no verifier identity is rejected and leaves
+  its Task `created` with no completion.
+- `orchestration-kernel.test.ts` — a decision from a different verifier or with no verifier
+  identity is rejected before evidence write or Task completion.
 
 ### Security tests / evidence labels
 
@@ -448,13 +489,16 @@ Schema regeneration produced no diff.
   appending a second attempt or starting a second sandbox.
 - Attempt history is a read-only projection of the execution ledger under exact `read_status`;
   it returns ordered generations with predecessor chains and never redrives.
+- Verification decisions are attributed: the persisted evidence records the configured
+  verifier and reads fail closed on a missing or swapped identity. This is principal
+  attribution, not signing or cryptographic provenance.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
 
 ## Next concrete work
 
-1. Observe CI on `8cd427a` and the docs tip; push only
+1. Observe CI on `05769e1` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.

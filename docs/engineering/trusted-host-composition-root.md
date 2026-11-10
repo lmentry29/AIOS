@@ -181,7 +181,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | POST | `/v1/workflows/:id/resume` | Requires exact `resume` on the Workflow and each interrupted Task; completed Tasks are skipped |
 | POST | `/v1/tasks/:id/resume` | Requires exact `resume`; only an `interrupted` latest attempt; 200 idempotent when already completed |
 | POST | `/v1/tasks/:id/retry` | Requires exact `retry`; appends a distinct attempt after `failed`, `cancelled`, or unverified `completed` |
-| GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage and `read_evidence` |
+| GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage, `read_evidence`, and the accepted verifier-identity binding |
 | POST | `/v1/intake` | `{ kind: "task" \| "workflow", entity }`; provenance must match the session |
 | POST | `/v1/workflows/:id/dispatch` | Requires `Idempotency-Key`; replays a completed key, 409 while another lease is live, 503 without adapters |
 | POST | `/v1/founder/query` | Authorization-filtered canonical and learning search |
@@ -231,7 +231,9 @@ single-process lock.
    `execution.workspace_directory` must be an owner-only parent outside the Obsidian vault,
    `agent_id` and `verifier_id` must be distinct UUIDs, and `provider` is `auto`,
    `bubblewrap`, `seatbelt`, or `docker`. Docker additionally requires a pre-pulled image.
-   The verifier runs its own command; it does not trust the executor's summary.
+   The verifier runs its own command; it does not trust the executor's summary. Its decision
+   must name the configured verifier, and persisted evidence is re-checked on read: a missing
+   or mismatched verifier identity is rejected rather than presented as verified.
 
 ## Security properties, restated as tests
 
@@ -252,6 +254,10 @@ single-process lock.
 - intake-only policy denying dispatch with no lifecycle writes;
 - full execute → independent verify → evidence retrieval;
 - one audit chain containing the executor, verifier, dispatch, and Founder reads;
+- verification evidence bound to the configured verifier: a matching record reads back
+  unchanged across a reopen, a swapped verifier configuration rejects the persisted record
+  with `orchestration_rejected` and records no completion, and a record with no verifier
+  identity is rejected while its Task stays `created`;
 - 503 and unchanged lifecycle state when adapters are absent;
 - conflict on re-dispatch of a completed workflow;
 - human-only governance and bootstrap-only audit reads;
