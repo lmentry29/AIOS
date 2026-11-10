@@ -409,6 +409,31 @@ describe('trusted host HTTP surface', () => {
     expect(stored?.audit_trail_ref).toBeTruthy();
   });
 
+  it('lists only the Tasks and Workflows the authenticated principal may read', async () => {
+    const task = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({ policy: makePolicy(task.entity_id, workflow.entity_id) });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+
+    const founderTasks = await call(harness, 'GET', '/v1/tasks', { token: FOUNDER_TOKEN });
+    expect(founderTasks.status).toBe(200);
+    expect(founderTasks.body).toMatchObject({ total: 1 });
+    expect((founderTasks.body?.tasks as Array<Record<string, unknown>>)[0]?.entity_id).toBe(task.entity_id);
+
+    const agentTasks = await call(harness, 'GET', '/v1/tasks', { token: AGENT_TOKEN });
+    expect(agentTasks.status).toBe(200);
+    expect(agentTasks.body).toEqual({ tasks: [], total: 0 });
+
+    const founderWorkflows = await call(harness, 'GET', '/v1/workflows', { token: FOUNDER_TOKEN });
+    expect(founderWorkflows.status).toBe(200);
+    expect(founderWorkflows.body).toMatchObject({ total: 1 });
+    const agentWorkflows = await call(harness, 'GET', '/v1/workflows', { token: AGENT_TOKEN });
+    expect(agentWorkflows.body).toEqual({ workflows: [], total: 0 });
+
+    expect((await call(harness, 'GET', '/v1/tasks?limit=0', { token: FOUNDER_TOKEN })).status).toBe(400);
+  });
+
   it('refuses to dispatch when no execution or verification adapter is configured', async () => {
     const task = makeTask();
     const workflow = makeWorkflow([task.entity_id]);

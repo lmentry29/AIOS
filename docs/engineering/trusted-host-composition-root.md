@@ -133,6 +133,8 @@ Loopback only, no CORS headers, `no-store` responses.
 |---|---|---|
 | GET | `/health` | Unauthenticated readiness; no configuration or secrets |
 | GET | `/v1/session` | Verified principal, session id, human flag |
+| GET | `/v1/tasks?limit=` | Lists only Tasks on which the session has `read_status` |
+| GET | `/v1/workflows?limit=` | Lists only Workflows on which the session has `read_status` |
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
 | GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage and `read_evidence` |
@@ -192,6 +194,8 @@ single-process lock.
 
 - dispatch through the real fixed executor and independently executed verifier adapters
   (with a test-only sandbox stub; no real isolation is claimed by that test);
+- Task/Workflow lists filtered per resource, not by hiding an unauthorized global list
+  behind a 403;
 
 - health without authentication leaking nothing;
 - identical 401 behavior across missing/malformed/wrong credentials;

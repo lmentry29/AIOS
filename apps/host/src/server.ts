@@ -343,6 +343,16 @@ function auditLimit(url: URL): number {
   return value;
 }
 
+function pageLimit(url: URL): number {
+  const raw = url.searchParams.get('limit');
+  if (raw === null) return 50;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 200) {
+    throw new HostHttpError(400, 'invalid_limit', 'Query parameter "limit" must be an integer between 1 and 200.');
+  }
+  return value;
+}
+
 function buildRoutes(runtime: HostRuntime): Route[] {
   const dispatchEnabled = runtime.executionConfigured && runtime.verificationConfigured;
 
@@ -378,6 +388,42 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           human: isHumanPrincipal(session.principal_id),
         },
       }),
+    },
+    {
+      pattern: /^\/v1\/tasks$/,
+      allow: ['GET'],
+      handle: async ({ runtime: host, session, url }) => {
+        const limit = pageLimit(url);
+        const tasks = [];
+        for (const task of host.taskStore.listTasks()) {
+          if (await host.authorization.authorize({
+            actor_id: session.principal_id,
+            action: 'read_status',
+            resource_id: task.entity_id,
+          })) {
+            tasks.push(task);
+          }
+        }
+        return { status: 200, body: { tasks: tasks.slice(0, limit), total: tasks.length } };
+      },
+    },
+    {
+      pattern: /^\/v1\/workflows$/,
+      allow: ['GET'],
+      handle: async ({ runtime: host, session, url }) => {
+        const limit = pageLimit(url);
+        const workflows = [];
+        for (const workflow of host.workflowStore.list()) {
+          if (await host.authorization.authorize({
+            actor_id: session.principal_id,
+            action: 'read_status',
+            resource_id: workflow.entity_id,
+          })) {
+            workflows.push(workflow);
+          }
+        }
+        return { status: 200, body: { workflows: workflows.slice(0, limit), total: workflows.length } };
+      },
     },
     {
       pattern: /^\/v1\/tasks\/([^/]+)$/,

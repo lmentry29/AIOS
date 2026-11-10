@@ -91,8 +91,9 @@ pnpm -r run test
 Observed results after the execution slice and fixes:
 
 - build/typecheck/lint: pass (host lint passed after removing one unused type import).
-- `@aios/host`: **53 passed** (6 files), including 16 HTTP tests and a fake-Docker CLI
-  test that verifies the exact isolation flags/argv without claiming real isolation.
+- `@aios/host`: **54 passed** (6 files), including 17 HTTP tests (with per-resource Task/
+  Workflow list filtering) and a fake-Docker CLI test that verifies the exact isolation
+  flags/argv without claiming real isolation.
 - `@aios/core`: **46 passed** (4 files).
 - `tests/conformance`: **107 passed** (6 files).
 - `tests/integration`: **43 passed** (6 files).

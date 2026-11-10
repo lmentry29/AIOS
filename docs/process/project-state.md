@@ -72,9 +72,9 @@ Local checks at code head `2d68052` (Node 26.13.0, pnpm 11.11.0):
 - `pnpm -r run lint` — pass (the only issue found was an unused verifier type import, fixed
   before the final host check).
 - `pnpm -r run test` — pass.
-- Host: **53 tests** in 6 files, including 16 loopback HTTP tests, a composed
-  executor/verifier dispatch test, and a fake-Docker CLI test of the isolation flags and
-  argv preservation.
+- Host: **54 tests** in 6 files, including 17 loopback HTTP tests, per-resource Task/
+  Workflow list filtering, a composed executor/verifier dispatch test, and a fake-Docker
+  CLI test of the isolation flags and argv preservation.
 - Core: **46 tests**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
   orchestration: 26; other package suites pass.
 - Generated `schemas/generated/task.json` includes the execution/verification definitions.
