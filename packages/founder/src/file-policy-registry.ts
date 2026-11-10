@@ -191,10 +191,7 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     this.filePath = join(canonicalDirectory, basename(requestedPath));
     this.lockPath = `${this.filePath}.lock`;
     try {
-      this.lockDescriptor = openSync(this.lockPath, 'wx', 0o600);
-      this.ownsLock = true;
-      writeFileSync(this.lockDescriptor, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), 'utf8');
-      fsyncSync(this.lockDescriptor);
+      this.acquireLock();
       this.state = this.loadState();
     } catch (error) {
       this.releaseLock();
@@ -300,6 +297,37 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     if (this.closed) return;
     this.closed = true;
     this.releaseLock();
+  }
+
+  private acquireLock(): void {
+    let descriptor: number;
+    try {
+      descriptor = openSync(this.lockPath, 'wx', 0o600);
+    } catch (error) {
+      if (!isRecord(error) || error.code !== 'EEXIST') throw error;
+      let existing: unknown;
+      try {
+        existing = JSON.parse(readFileSync(this.lockPath, 'utf8'));
+      } catch {
+        throw new FilePolicyRegistryError('An unreadable policy lock exists; verify no AIOS process is active before removing it.');
+      }
+      if (!isRecord(existing) || !Number.isSafeInteger(existing.pid) || (existing.pid as number) < 1) {
+        throw new FilePolicyRegistryError('An invalid policy lock exists; refusing to remove it.');
+      }
+      let processIsAlive = true;
+      try {
+        process.kill(existing.pid as number, 0);
+      } catch (processError) {
+        processIsAlive = !isRecord(processError) || processError.code !== 'ESRCH';
+      }
+      if (processIsAlive) throw new FilePolicyRegistryError('The local policy registry is already open in another process.');
+      unlinkSync(this.lockPath);
+      descriptor = openSync(this.lockPath, 'wx', 0o600);
+    }
+    this.lockDescriptor = descriptor;
+    this.ownsLock = true;
+    writeFileSync(descriptor, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), 'utf8');
+    fsyncSync(descriptor);
   }
 
   private loadState(): FilePolicyState {
