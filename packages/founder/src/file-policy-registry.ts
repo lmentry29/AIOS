@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, chmodSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { closeSync, chmodSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type {
   AccessPolicy,
   AccessPolicyStore,
@@ -62,7 +62,7 @@ function canonicalJson(value: unknown): string {
   if (isRecord(value)) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? 'null';
 }
 
 function eventHash(event: Omit<AuditEnvelope, 'hash'>): string {
@@ -181,9 +181,15 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     if (!options || typeof options.filePath !== 'string' || !isAbsolute(options.filePath)) {
       throw new FilePolicyRegistryError('Policy state path must be an absolute file path.');
     }
-    this.filePath = options.filePath;
+    const requestedPath = resolve(options.filePath);
+    mkdirSync(dirname(requestedPath), { recursive: true, mode: 0o700 });
+    const canonicalDirectory = realpathSync(dirname(requestedPath));
+    if (!lstatSync(canonicalDirectory).isDirectory()) {
+      throw new FilePolicyRegistryError('Policy state parent must be a dedicated directory.');
+    }
+    chmodSync(canonicalDirectory, 0o700);
+    this.filePath = join(canonicalDirectory, basename(requestedPath));
     this.lockPath = `${this.filePath}.lock`;
-    mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
     try {
       this.lockDescriptor = openSync(this.lockPath, 'wx', 0o600);
       this.ownsLock = true;
