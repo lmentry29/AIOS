@@ -114,6 +114,17 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+
+  it('rejects local connector responses that exceed the per-source byte limits', async () => {
+    const oversizedBody = 'x'.repeat(300_000);
+    const fetcher = vi.fn(async () => new Response(oversizedBody, {
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const h = reader(fetcher);
+    await expect(h.instance.searchGmail('subject:invoice', 'human:founder'))
+      .rejects.toThrow(/response exceeded its size limit/);
+  });
+
   it('rejects malformed provider responses and oversized result collections', async () => {
     const malformed = reader(vi.fn(async () => response({ results: [{ id: 'x' }] })) as unknown as typeof fetch);
     await expect(malformed.instance.searchGmail('test', 'human:founder')).rejects.toThrow(/subject/);
