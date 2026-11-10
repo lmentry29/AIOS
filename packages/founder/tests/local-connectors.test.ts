@@ -109,6 +109,7 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
       .toThrow(/distinct valid resource UUIDs/);
     const h = reader(fetcher);
     await expect(h.instance.searchGmail('bad\nquery', 'human:founder')).rejects.toBeInstanceOf(LocalConnectorEvidenceError);
+    await expect(h.instance.searchGmail('   ', 'human:founder')).rejects.toBeInstanceOf(LocalConnectorEvidenceError);
     await expect(h.instance.searchGmail('test', 'untrusted actor')).rejects.toBeInstanceOf(LocalConnectorEvidenceError);
     expect(fetcher).not.toHaveBeenCalled();
   });
