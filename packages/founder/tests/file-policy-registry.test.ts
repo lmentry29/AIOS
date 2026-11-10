@@ -144,6 +144,82 @@ describe('FilePolicyRegistry', () => {
     }
   });
 
+  it('retires a version with fallback and denies when no version remains', async () => {
+    const h = setup();
+    let registry = new FilePolicyRegistry({ filePath: h.filePath });
+    try {
+      const replacement: AccessPolicy = { ...h.policy, policy_id: randomUUID(), version: 2 };
+      await registry.publishAndAttach(h.policy, [h.resourceId], 'human:founder');
+      await registry.publishAndAttach(replacement, [h.resourceId], 'human:founder');
+      await registry.retirePolicy(replacement.policy_id, [h.resourceId], 'human:founder');
+      expect(await registry.resolve(h.resourceId)).toBe(h.policy.policy_id);
+      expect(registry.listPolicyAudit().map((event) => event.operation))
+        .toEqual(['publish', 'attach', 'publish', 'attach', 'revoke']);
+      await expect(registry.attach(h.resourceId, replacement.policy_id, 'human:founder'))
+        .rejects.toThrow(/retired/);
+
+      const auth = new AuthorizationService(registry, (resourceId) => registry.resolve(resourceId), registry);
+      expect(await auth.authorize({
+        actor_id: 'human:founder',
+        action: 'read_evidence',
+        resource_id: h.resourceId,
+      })).toBe(true);
+
+      await registry.retirePolicy(h.policy.policy_id, [h.resourceId], 'human:founder');
+      expect(await registry.resolve(h.resourceId)).toBeUndefined();
+      expect(await auth.authorize({
+        actor_id: 'human:founder',
+        action: 'read_evidence',
+        resource_id: h.resourceId,
+      })).toBe(false);
+      expect(registry.listAuthorizationAudit().at(-1)).toMatchObject({
+        decision: 'deny',
+        reason: 'resource_policy_missing_or_invalid',
+      });
+
+      registry.close();
+      registry = new FilePolicyRegistry({ filePath: h.filePath });
+      expect(await registry.resolve(h.resourceId)).toBeUndefined();
+      expect(registry.listPolicyAudit()).toHaveLength(6);
+      await expect(registry.retirePolicy(h.policy.policy_id, [], 'human:founder'))
+        .rejects.toMatchObject({ code: 'policy_already_revoked' });
+    } finally {
+      registry.close();
+      rmSync(h.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid, unattached, mismatched, and repeated retirements without touching state', async () => {
+    const h = setup();
+    const registry = new FilePolicyRegistry({ filePath: h.filePath });
+    try {
+      const unreferenced: AccessPolicy = { ...h.policy, policy_id: randomUUID(), version: 1 };
+      await registry.publishAndAttach(h.policy, [h.resourceId], 'human:founder');
+      await registry.publish(unreferenced, 'human:founder');
+      const before = readFileSync(h.filePath, 'utf8');
+
+      await expect(registry.retirePolicy(randomUUID(), [h.resourceId], 'human:founder'))
+        .rejects.toMatchObject({ code: 'policy_not_found' });
+      await expect(registry.retirePolicy(unreferenced.policy_id, [], 'human:founder'))
+        .rejects.toMatchObject({ code: 'policy_not_attached' });
+      await expect(registry.retirePolicy(h.policy.policy_id, [randomUUID()], 'human:founder'))
+        .rejects.toMatchObject({ code: 'target_scope_mismatch' });
+      await expect(registry.retirePolicy(h.policy.policy_id, ['not-a-uuid'], 'human:founder'))
+        .rejects.toMatchObject({ code: 'invalid_targets' });
+      expect(readFileSync(h.filePath, 'utf8')).toBe(before);
+
+      await registry.retirePolicy(h.policy.policy_id, [h.resourceId], 'human:founder');
+      const after = readFileSync(h.filePath, 'utf8');
+      await expect(registry.retirePolicy(h.policy.policy_id, [h.resourceId], 'human:founder'))
+        .rejects.toMatchObject({ code: 'policy_already_revoked' });
+      expect(readFileSync(h.filePath, 'utf8')).toBe(after);
+      expect(await registry.resolve(h.resourceId)).toBeUndefined();
+    } finally {
+      registry.close();
+      rmSync(h.directory, { recursive: true, force: true });
+    }
+  });
+
   it('verifies the audit hash chain on reopen and rejects out-of-band edits', async () => {
     const h = setup();
     const registry = new FilePolicyRegistry({ filePath: h.filePath });

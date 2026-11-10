@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { FounderAuthorizationError, FounderInputError, PolicyPublicationError } from '@aios/founder';
+import { FounderAuthorizationError, FounderInputError, PolicyPublicationError, PolicyRevocationError } from '@aios/founder';
 import {
   ExecutionAttemptConflictError,
   ExecutionCapacityError,
@@ -12,7 +12,7 @@ import type { HostConfig } from './config.js';
 import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
 import { isHumanPrincipal } from './identity.js';
-import { parseRuntimePolicyPublication } from './policy-admin.js';
+import { parseRuntimePolicyPublication, parseRuntimePolicyRevocation } from './policy-admin.js';
 import { ExecutionConflictError } from './persistence/execution-ledger.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
 import { withRequestId } from './request-context.js';
@@ -179,7 +179,9 @@ function logFailure(requestId: string, path: string, mapped: { status: number; c
  * - Every authenticated route derives its actor from the verified session. A request body
  *   may never name its own actor.
  * - Runtime policy administration is a human-only `POST /v1/policies` path requiring an
- *   exact `administer_policy` grant on every target. The offline bootstrap CLI remains.
+ *   exact `administer_policy` grant on every target. `POST /v1/policies/:id/revoke`
+ *   requires an exact `revoke_policy` grant on every referenced target. The offline
+ *   bootstrap CLIs remain.
  * - Response bodies are `no-store`, and error responses never include stack traces or
  *   caller-supplied payloads.
  */
@@ -335,7 +337,7 @@ export class HostHttpServer {
 async function requireAllowed(
   runtime: HostRuntime,
   session: AuthenticatedSession,
-  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry' | 'administer_policy',
+  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry' | 'administer_policy' | 'revoke_policy',
   resourceId: string,
 ): Promise<void> {
   const allowed = await runtime.boundary.authorize({
@@ -362,6 +364,28 @@ async function requirePolicyAdministration(
         403,
         'policy_admin_denied',
         'An exact administer_policy grant is required on every target resource.',
+      );
+    }
+  }
+  requireHuman(session);
+}
+
+async function requirePolicyRevocation(
+  runtime: HostRuntime,
+  session: AuthenticatedSession,
+  resourceIds: readonly string[],
+): Promise<void> {
+  for (const resourceId of resourceIds) {
+    const allowed = await runtime.boundary.authorize({
+      actor_id: session.principal_id,
+      action: 'revoke_policy',
+      resource_id: resourceId,
+    });
+    if (!allowed) {
+      throw new HostHttpError(
+        403,
+        'policy_revoke_denied',
+        'An exact revoke_policy grant is required on every target resource.',
       );
     }
   }
@@ -469,6 +493,35 @@ function buildRoutes(runtime: HostRuntime): Route[] {
             version: document.policy.version,
             attached: document.attach_to,
           },
+        };
+      },
+    },
+    {
+      pattern: /^\/v1\/policies\/([^/]+)\/revoke$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session, readJson }, params) => {
+        const policyId = uuidParam(params[1], 'policyId');
+        const targets = parseRuntimePolicyRevocation(jsonBody(await readJson()));
+        // The exact target set is authorized before lookup. The registry then re-checks
+        // that the set exactly matches every resource referencing the version and commits
+        // the retirement, fallback attachments, and lifecycle events as one snapshot.
+        await requirePolicyRevocation(host, session, targets);
+        try {
+          await host.policies.retirePolicy(policyId, targets, session.principal_id);
+        } catch (error) {
+          if (error instanceof PolicyRevocationError) {
+            const status = error.code === 'policy_not_found'
+              ? 404
+              : error.code === 'invalid_policy_id' || error.code === 'invalid_targets'
+                ? 400
+                : 409;
+            throw new HostHttpError(status, error.code, error.message);
+          }
+          throw error;
+        }
+        return {
+          status: 200,
+          body: { policy_id: policyId, retired: true, targets },
         };
       },
     },

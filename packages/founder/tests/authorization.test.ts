@@ -62,6 +62,40 @@ describe('AuthorizationService', () => {
     }])).toThrow(/human/);
   });
 
+  it('requires an exact human revoke_policy grant', async () => {
+    const adminPolicy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [actorId],
+        actions: ['revoke_policy'],
+        resource_ids: [resourceId],
+      }],
+    };
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([adminPolicy]),
+      async () => adminPolicy.policy_id,
+      audit,
+    );
+
+    expect(await auth.authorize({ actor_id: actorId, action: 'revoke_policy', resource_id: resourceId })).toBe(true);
+    expect(await auth.authorize({ actor_id: 'human:other', action: 'revoke_policy', resource_id: resourceId })).toBe(false);
+    expect(await auth.authorize({ actor_id: actorId, action: 'revoke_policy', resource_id: randomUUID() })).toBe(false);
+    expect(audit.list()).toContainEqual(expect.objectContaining({
+      action: 'revoke_policy',
+      decision: 'allow',
+      reason: 'matching_allow',
+    }));
+    const adminRule = adminPolicy.rules[0];
+    if (!adminRule) throw new Error('Revoke policy fixture rule missing.');
+    expect(() => new StaticAccessPolicyStore([{
+      ...adminPolicy,
+      rules: [{ ...adminRule, subject_ids: [randomUUID()] }],
+    }])).toThrow(/human/);
+  });
+
   it('denies when the resource has no policy or references an unknown policy', async () => {
     const noPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => undefined, new InMemoryAuthorizationAuditStore());
     const unknownPolicy = new AuthorizationService(new StaticAccessPolicyStore([policy]), async () => randomUUID(), new InMemoryAuthorizationAuditStore());
@@ -161,6 +195,7 @@ describe('AuthorizationService', () => {
       publish: async (next, actor) => { events.push(`publish:${next.policy_id}:${actor}`); },
       attach: async (resource, id, actor) => { events.push(`attach:${resource}:${id}:${actor}`); },
       revoke: async (resource, actor) => { events.push(`revoke:${resource}:${actor}`); },
+      retirePolicy: async (id, targets, actor) => { events.push(`retire:${id}:${targets.join(',')}:${actor}`); },
     });
     const nextPolicy: AccessPolicy = { ...policy, policy_id: randomUUID(), version: 1 };
 
@@ -192,6 +227,7 @@ describe('AuthorizationService', () => {
       publish: async (next) => { published = next; },
       attach: async () => undefined,
       revoke: async () => undefined,
+      retirePolicy: async () => undefined,
     });
 
     const mutableRule = mutable.rules[0];
@@ -223,6 +259,7 @@ describe('AuthorizationService', () => {
       publish: async () => undefined,
       attach: async () => undefined,
       revoke: async () => undefined,
+      retirePolicy: async () => undefined,
     });
     await expect(admin.attach(resourceId, randomUUID(), actorId)).rejects.toBeInstanceOf(PolicyAdministrationError);
   });
@@ -235,6 +272,7 @@ describe('AuthorizationService', () => {
       publish: async () => undefined,
       attach: async () => undefined,
       revoke: async () => undefined,
+      retirePolicy: async () => undefined,
     });
 
     await expect(admin.attach(resourceId, policyId, actorId)).rejects.toBeInstanceOf(PolicyAdministrationError);

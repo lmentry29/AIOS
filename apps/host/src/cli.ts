@@ -2,7 +2,7 @@
 import { parseArgs } from 'node:util';
 import { loadHostConfig } from './config.js';
 import { createLocalExecutionAdapters } from './execution/index.js';
-import { provisionPolicies } from './policy-admin.js';
+import { provisionPolicies, revokePolicies } from './policy-admin.js';
 import { createHostRuntime } from './runtime.js';
 import { createHostServer } from './server.js';
 
@@ -15,12 +15,13 @@ import { createHostServer } from './server.js';
  * boundary, the host still starts but reports dispatch disabled and refuses dispatch
  * with 503; it never falls back to an unsandboxed process.
  *
- * `publish-policy` is the human-only offline bootstrap path. It must run with the host
- * stopped, because the durable registry holds a single-process lock.
+ * `publish-policy` and `revoke-policy` are the human-only offline bootstrap paths. They
+ * must run with the host stopped, because the durable registry holds a single-process lock.
  */
 const USAGE = `Usage:
   aios-host serve --config <absolute-config-path>
   aios-host publish-policy --config <absolute-config-path> --policy <absolute-policy-path>
+  aios-host revoke-policy --config <absolute-config-path> --revocation <absolute-revocation-path>
 `;
 
 function writeStartupFailure(message: string): void {
@@ -102,6 +103,7 @@ async function main(): Promise<void> {
     options: {
       config: { type: 'string' },
       policy: { type: 'string' },
+      revocation: { type: 'string' },
     },
   });
   const command = parsed.positionals[0];
@@ -119,6 +121,17 @@ async function main(): Promise<void> {
       provisioningPath: parsed.values.policy,
     });
     process.stdout.write(`${JSON.stringify({ event: 'policy_published', ...result })}\n`);
+    return;
+  }
+  if (command === 'revoke-policy') {
+    if (!parsed.values.config || !parsed.values.revocation) {
+      throw new Error('revoke-policy requires --config and --revocation.');
+    }
+    const result = await revokePolicies({
+      configPath: parsed.values.config,
+      revocationPath: parsed.values.revocation,
+    });
+    process.stdout.write(`${JSON.stringify({ event: 'policy_revoked', ...result })}\n`);
     return;
   }
   process.stdout.write(USAGE);

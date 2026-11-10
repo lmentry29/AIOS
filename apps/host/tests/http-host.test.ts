@@ -288,6 +288,18 @@ function policyForTargets(
   };
 }
 
+function revokePolicy(
+  harness: Harness,
+  policyId: string,
+  targets: readonly string[],
+  token = OPERATOR_TOKEN,
+) {
+  return call(harness, 'POST', `/v1/policies/${policyId}/revoke`, {
+    token,
+    body: { targets },
+  });
+}
+
 function suspendWorkflow(harness: Harness, workflowId: string): void {
   harness.runtime.workflowStore.transitionLifecycle(workflowId, 'validated', FOUNDER);
   harness.runtime.workflowStore.transitionLifecycle(workflowId, 'active', FOUNDER);
@@ -2482,5 +2494,360 @@ describe('runtime policy administration', () => {
     expect(restarted.authorizationAudit.list().slice(0, before.length)).toEqual(before);
     expect((await call({ ...harness, baseUrl: `http://${address.host}:${address.port}` },
       'GET', `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN })).status).toBe(200);
+  });
+});
+
+describe('runtime policy revocation', () => {
+  it('retires an exact-granted version, falls back, then denies when none remains', async () => {
+    const task = makeTask();
+    const resource = task.entity_id;
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['intake', 'read_status'],
+          resource_ids: [resource],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['administer_policy', 'revoke_policy'],
+          resource_ids: [resource],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    const replacement: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 2,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [OPERATOR],
+        actions: ['read_status', 'administer_policy', 'revoke_policy'],
+        resource_ids: [resource],
+      }],
+    };
+
+    const published = await call(harness, 'POST', '/v1/policies', {
+      token: OPERATOR_TOKEN,
+      body: { policy: replacement, attach_to: [resource] },
+    });
+    expect(published.status).toBe(201);
+    expect((await call(harness, 'GET', `/v1/tasks/${resource}`, { token: FOUNDER_TOKEN })).status).toBe(403);
+    expect((await call(harness, 'GET', `/v1/tasks/${resource}`, { token: OPERATOR_TOKEN })).status).toBe(200);
+
+    const revoked = await revokePolicy(harness, replacement.policy_id, [resource]);
+    expect(revoked.status).toBe(200);
+    expect(revoked.body).toMatchObject({
+      policy_id: replacement.policy_id,
+      retired: true,
+      targets: [resource],
+    });
+    expect(await harness.runtime.policies.resolve(resource)).toBe(initial.policy_id);
+    expect((await call(harness, 'GET', `/v1/tasks/${resource}`, { token: FOUNDER_TOKEN })).status).toBe(200);
+    expect((await call(harness, 'GET', `/v1/tasks/${resource}`, { token: OPERATOR_TOKEN })).status).toBe(403);
+
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: revoked.headers.get('x-request-id'),
+      actor_id: OPERATOR,
+      action: 'revoke_policy',
+      resource_id: resource,
+      policy_id: replacement.policy_id,
+      policy_version: 2,
+      decision: 'allow',
+      reason: 'matching_allow',
+    }));
+
+    const policyBytes = readFileSync(harness.policyPath, 'utf8');
+    const auditBytes = readFileSync(
+      join(harness.runtime.config.operational_store.directory, 'authorization-audit.jsonl'),
+      'utf8',
+    );
+    expect(policyBytes).not.toContain(OPERATOR_TOKEN);
+    expect(auditBytes).not.toContain(OPERATOR_TOKEN);
+    expect(auditBytes).not.toContain('Bearer');
+
+    const beforeRepeat = readFileSync(harness.policyPath, 'utf8');
+    const repeated = await revokePolicy(harness, replacement.policy_id, [resource]);
+    expect(repeated.status).toBe(409);
+    expect(repeated.body?.error).toBe('policy_already_revoked');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeRepeat);
+
+    const last = await revokePolicy(harness, initial.policy_id, [resource]);
+    expect(last.status).toBe(200);
+    expect(await harness.runtime.policies.resolve(resource)).toBeUndefined();
+    const denied = await call(harness, 'GET', `/v1/tasks/${resource}`, { token: FOUNDER_TOKEN });
+    expect(denied.status).toBe(403);
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: denied.headers.get('x-request-id'),
+      action: 'read_status',
+      resource_id: resource,
+      decision: 'deny',
+      reason: 'resource_policy_missing_or_invalid',
+    }));
+  });
+
+  it('denies unauthorized, mismatched-action, and partial-scope revocations without mutation', async () => {
+    const resourceA = randomUUID();
+    const resourceB = randomUUID();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['administer_policy'],
+          resource_ids: [resourceA, resourceB],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['administer_policy'],
+          resource_ids: [resourceA, resourceB],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['revoke_policy'],
+          resource_ids: [resourceA],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    const replacement: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 2,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['revoke_policy'],
+          resource_ids: [resourceA],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['read_status'],
+          resource_ids: [resourceB],
+        },
+      ],
+    };
+    expect((await call(harness, 'POST', '/v1/policies', {
+      token: OPERATOR_TOKEN,
+      body: { policy: replacement, attach_to: [resourceA, resourceB] },
+    })).status).toBe(201);
+    const before = readFileSync(harness.policyPath, 'utf8');
+
+    const noGrant = await revokePolicy(harness, replacement.policy_id, [resourceA, resourceB], FOUNDER_TOKEN);
+    expect(noGrant.status).toBe(403);
+    expect(noGrant.body?.error).toBe('policy_revoke_denied');
+
+    const agent = await revokePolicy(harness, replacement.policy_id, [resourceA, resourceB], AGENT_TOKEN);
+    expect(agent.status).toBe(403);
+    expect(agent.body?.error).toBe('policy_revoke_denied');
+
+    const partial = await revokePolicy(harness, replacement.policy_id, [resourceA, resourceB], OPERATOR_TOKEN);
+    expect(partial.status).toBe(403);
+    expect(partial.body?.error).toBe('policy_revoke_denied');
+    expect(harness.runtime.authorizationAudit.list()).toContainEqual(expect.objectContaining({
+      request_id: partial.headers.get('x-request-id'),
+      action: 'revoke_policy',
+      resource_id: resourceB,
+      decision: 'deny',
+      reason: 'no_matching_allow',
+    }));
+
+    const scope = await revokePolicy(harness, replacement.policy_id, [resourceA], OPERATOR_TOKEN);
+    expect(scope.status).toBe(409);
+    expect(scope.body?.error).toBe('target_scope_mismatch');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(before);
+    expect(await harness.runtime.policies.resolve(resourceA)).toBe(replacement.policy_id);
+    expect(await harness.runtime.policies.resolve(resourceB)).toBe(replacement.policy_id);
+    expect(harness.runtime.policies.listPolicyAudit().filter((event) => event.operation === 'revoke'))
+      .toHaveLength(0);
+  });
+
+  it('rejects unknown, unattached, invalid-shape, and out-of-scope retirements without changing state', async () => {
+    const resource = randomUUID();
+    const other = randomUUID();
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['read_status'],
+          resource_ids: [resource],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['administer_policy', 'revoke_policy'],
+          resource_ids: [resource],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    const otherPolicy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 2,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [OPERATOR],
+        actions: ['revoke_policy'],
+        resource_ids: [other],
+      }],
+    };
+    await harness.runtime.policies.publishAndAttach(otherPolicy, [other], OPERATOR);
+    const beforeFailures = readFileSync(harness.policyPath, 'utf8');
+
+    const unknown = await revokePolicy(harness, randomUUID(), [resource]);
+    expect(unknown.status).toBe(404);
+    expect(unknown.body?.error).toBe('policy_not_found');
+
+    const invalidShape = await call(harness, 'POST', `/v1/policies/${initial.policy_id}/revoke`, {
+      token: OPERATOR_TOKEN,
+      body: { targets: 'not-an-array' },
+    });
+    expect(invalidShape.status).toBe(400);
+    expect(invalidShape.body?.error).toBe('invalid_targets');
+
+    const duplicate = await call(harness, 'POST', `/v1/policies/${initial.policy_id}/revoke`, {
+      token: OPERATOR_TOKEN,
+      body: { targets: [resource, resource] },
+    });
+    expect(duplicate.status).toBe(400);
+    expect(duplicate.body?.error).toBe('invalid_targets');
+
+    const outOfScope = await revokePolicy(harness, initial.policy_id, [resource, other]);
+    expect(outOfScope.status).toBe(409);
+    expect(outOfScope.body?.error).toBe('target_scope_mismatch');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeFailures);
+
+    const unreferenced: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [OPERATOR],
+        actions: ['revoke_policy'],
+        resource_ids: [resource],
+      }],
+    };
+    await harness.runtime.policies.publish(unreferenced, OPERATOR);
+    const beforeNotAttached = readFileSync(harness.policyPath, 'utf8');
+    const unattached = await revokePolicy(harness, unreferenced.policy_id, [resource]);
+    expect(unattached.status).toBe(409);
+    expect(unattached.body?.error).toBe('policy_not_attached');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeNotAttached);
+    expect(await harness.runtime.policies.resolve(resource)).toBe(initial.policy_id);
+    expect(await harness.runtime.policies.resolve(other)).toBe(otherPolicy.policy_id);
+  });
+
+  it('does not mutate policy when the revocation authorization audit append fails', async () => {
+    const task = makeTask();
+    const resource = task.entity_id;
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['read_status'],
+          resource_ids: [resource],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['revoke_policy'],
+          resource_ids: [resource],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial });
+    const before = readFileSync(harness.policyPath, 'utf8');
+    harness.runtime.authorizationAudit.close();
+
+    const blocked = await revokePolicy(harness, initial.policy_id, [resource]);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body?.error).toBe('policy_revoke_denied');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(before);
+    expect(await harness.runtime.policies.resolve(resource)).toBe(initial.policy_id);
+    expect(harness.runtime.policies.listPolicyAudit()).toHaveLength(2);
+  });
+
+  it('keeps a retirement and its fallback decision across restart', async () => {
+    const task = makeTask();
+    const resource = task.entity_id;
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-policy-revoke-restart-'));
+    const initial: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [
+        {
+          effect: 'allow',
+          subject_ids: [FOUNDER],
+          actions: ['intake', 'read_status'],
+          resource_ids: [resource],
+        },
+        {
+          effect: 'allow',
+          subject_ids: [OPERATOR],
+          actions: ['administer_policy', 'revoke_policy'],
+          resource_ids: [resource],
+        },
+      ],
+    };
+    const harness = await startHost({ policy: initial, directory });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    const replacement: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 2,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [OPERATOR],
+        actions: ['read_status', 'administer_policy', 'revoke_policy'],
+        resource_ids: [resource],
+      }],
+    };
+    expect((await call(harness, 'POST', '/v1/policies', {
+      token: OPERATOR_TOKEN,
+      body: { policy: replacement, attach_to: [resource] },
+    })).status).toBe(201);
+    expect((await revokePolicy(harness, replacement.policy_id, [resource])).status).toBe(200);
+    expect(await harness.runtime.policies.resolve(resource)).toBe(initial.policy_id);
+    const before = harness.runtime.authorizationAudit.list();
+
+    await harness.server.close();
+    harness.runtime.close();
+
+    const restarted = createHostRuntime({ config: loadHostConfig(harness.configPath) });
+    const server = createHostServer(restarted);
+    const address = await server.listen();
+    cleanups.push(async () => {
+      await server.close();
+      restarted.close();
+    });
+    expect(await restarted.policies.resolve(resource)).toBe(initial.policy_id);
+    expect(restarted.authorizationAudit.list().slice(0, before.length)).toEqual(before);
+    expect((await call({ ...harness, baseUrl: `http://${address.host}:${address.port}` },
+      'GET', `/v1/tasks/${resource}`, { token: FOUNDER_TOKEN })).status).toBe(200);
+
+    const beforeRepeat = readFileSync(harness.policyPath, 'utf8');
+    const repeated = await revokePolicy(
+      { ...harness, baseUrl: `http://${address.host}:${address.port}` },
+      replacement.policy_id,
+      [resource],
+    );
+    expect(repeated.status).toBe(409);
+    expect(repeated.body?.error).toBe('policy_already_revoked');
+    expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeRepeat);
   });
 });

@@ -9,7 +9,11 @@ import type {
   PolicyAdministrationPort,
   PolicyLifecycleAuditEvent,
 } from './authorization.js';
-import { StaticAccessPolicyStore } from './authorization.js';
+import {
+  MAX_POLICY_REVOCATION_TARGETS,
+  PolicyRevocationError,
+  StaticAccessPolicyStore,
+} from './authorization.js';
 
 const ZERO_HASH = '0'.repeat(64);
 const MAX_STATE_BYTES = 64 * 1024 * 1024;
@@ -26,9 +30,13 @@ interface AuditEnvelope {
 }
 
 interface FilePolicyState {
-  schema_version: 1;
+  schema_version: 2;
   policies: Record<string, AccessPolicy>;
   resource_policies: Record<string, string>;
+  /** Ordered effective/fallback versions per resource, oldest to current. */
+  resource_policy_history: Record<string, string[]>;
+  /** Immutable versions that must never decide again, even if still present in history. */
+  retired_policies: string[];
   audit_events: AuditEnvelope[];
 }
 
@@ -88,7 +96,14 @@ function clone<T>(value: T): T {
 }
 
 function initialState(): FilePolicyState {
-  return { schema_version: 1, policies: {}, resource_policies: {}, audit_events: [] };
+  return {
+    schema_version: 2,
+    policies: {},
+    resource_policies: {},
+    resource_policy_history: {},
+    retired_policies: [],
+    audit_events: [],
+  };
 }
 
 function appendEvent(state: FilePolicyState, kind: AuditKind, payload: PolicyLifecycleAuditEvent | AuthorizationDecisionAudit): void {
@@ -108,7 +123,7 @@ function appendEvent(state: FilePolicyState, kind: AuditKind, payload: PolicyLif
 function validateDecisionRecord(value: AuthorizationDecisionAudit): void {
   if (!isRecord(value) || !isUuid(value.request_id)
     || !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id))
-    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy'].includes(value.action))
+    || !(value.action === null || ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy', 'revoke_policy'].includes(value.action))
     || !(value.resource_id === null || isUuid(value.resource_id))
     || !(value.policy_id === null || isUuid(value.policy_id))
     || !(value.policy_version === null || (Number.isSafeInteger(value.policy_version) && value.policy_version >= 1))
@@ -120,7 +135,7 @@ function validateDecisionRecord(value: AuthorizationDecisionAudit): void {
 }
 
 function validateState(value: unknown): FilePolicyState {
-  if (!isRecord(value) || value.schema_version !== 1
+  if (!isRecord(value) || (value.schema_version !== 1 && value.schema_version !== 2)
     || !isRecord(value.policies) || !isRecord(value.resource_policies)
     || !Array.isArray(value.audit_events) || value.audit_events.length > MAX_AUDIT_EVENTS) {
     throw new FilePolicyRegistryError('Policy state file has an unsupported or malformed structure.');
@@ -139,12 +154,61 @@ function validateState(value: unknown): FilePolicyState {
     policies[policyId] = clone(policy as unknown as AccessPolicy);
   }
 
+  const resourcePolicyHistory: Record<string, string[]> = {};
+  const retiredPolicies: string[] = [];
+  if (value.schema_version === 1) {
+    // v1 stored only the effective attachment. It is migrated in memory to a one-entry
+    // stack; the next commit writes v2. No historical fallback can be invented from v1.
+    for (const [resourceId, policyId] of Object.entries(value.resource_policies)) {
+      if (!isUuid(resourceId) || typeof policyId !== 'string' || !policies[policyId]) {
+        throw new FilePolicyRegistryError('Policy state contains an invalid resource attachment.');
+      }
+      resourcePolicyHistory[resourceId] = [policyId];
+    }
+  } else {
+    if (!isRecord(value.resource_policy_history) || !Array.isArray(value.retired_policies)) {
+      throw new FilePolicyRegistryError('Policy state is missing its retirement history.');
+    }
+    for (const policyId of value.retired_policies) {
+      if (!isUuid(policyId) || !policies[policyId] || retiredPolicies.includes(policyId)) {
+        throw new FilePolicyRegistryError('Policy state contains an invalid retired policy.');
+      }
+      retiredPolicies.push(policyId);
+    }
+    const retired = new Set(retiredPolicies);
+    for (const [resourceId, history] of Object.entries(value.resource_policy_history)) {
+      if (!isUuid(resourceId) || !Array.isArray(history) || history.length === 0) {
+        throw new FilePolicyRegistryError('Policy state contains an invalid resource history.');
+      }
+      const seen = new Set<string>();
+      const validatedHistory: string[] = [];
+      for (const policyId of history) {
+        if (typeof policyId !== 'string' || !isUuid(policyId) || !policies[policyId]
+          || retired.has(policyId) || seen.has(policyId)) {
+          throw new FilePolicyRegistryError('Policy state contains an invalid policy history entry.');
+        }
+        seen.add(policyId);
+        validatedHistory.push(policyId);
+      }
+      resourcePolicyHistory[resourceId] = validatedHistory;
+    }
+  }
+
   const resourcePolicies: Record<string, string> = {};
   for (const [resourceId, policyId] of Object.entries(value.resource_policies)) {
     if (!isUuid(resourceId) || typeof policyId !== 'string' || !policies[policyId]) {
       throw new FilePolicyRegistryError('Policy state contains an invalid resource attachment.');
     }
+    const history = resourcePolicyHistory[resourceId];
+    if (!history || history.at(-1) !== policyId) {
+      throw new FilePolicyRegistryError('Policy state current attachment does not match its history.');
+    }
     resourcePolicies[resourceId] = policyId;
+  }
+  for (const resourceId of Object.keys(resourcePolicyHistory)) {
+    if (resourcePolicies[resourceId] === undefined) {
+      throw new FilePolicyRegistryError('Policy state history has no effective attachment.');
+    }
   }
 
   const auditEvents = value.audit_events as AuditEnvelope[];
@@ -175,7 +239,14 @@ function validateState(value: unknown): FilePolicyState {
     previousHash = hash;
   }
 
-  return { schema_version: 1, policies, resource_policies: resourcePolicies, audit_events: clone(auditEvents) };
+  return {
+    schema_version: 2,
+    policies,
+    resource_policies: resourcePolicies,
+    resource_policy_history: resourcePolicyHistory,
+    retired_policies: retiredPolicies,
+    audit_events: clone(auditEvents),
+  };
 }
 
 /**
@@ -328,6 +399,10 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     for (const resourceId of resourceIds) {
       const previousPolicyId = previousPolicies.get(resourceId);
       next.resource_policies[resourceId] = snapshot.policy_id;
+      next.resource_policy_history[resourceId] = [
+        ...(next.resource_policy_history[resourceId] ?? []),
+        snapshot.policy_id,
+      ];
       appendEvent(next, 'policy_lifecycle', {
         event_id: randomUUID(), operation: 'attach', actor_id: actorId,
         policy_id: snapshot.policy_id, policy_version: snapshot.version, resource_id: resourceId,
@@ -345,8 +420,13 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     }
     const policy = this.state.policies[policyId];
     if (!policy) throw new FilePolicyRegistryError('Cannot attach an unpublished policy.');
+    if (this.state.retired_policies.includes(policyId)) {
+      throw new FilePolicyRegistryError('A retired policy cannot be attached.');
+    }
     const next = clone(this.state);
     const previousPolicyId = next.resource_policies[resourceId];
+    const history = next.resource_policy_history[resourceId] ?? [];
+    next.resource_policy_history[resourceId] = [...history.filter((id) => id !== policyId), policyId];
     next.resource_policies[resourceId] = policyId;
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'attach', actor_id: actorId,
@@ -368,11 +448,76 @@ export class FilePolicyRegistry implements AccessPolicyStore, PolicyAdministrati
     const policy = next.policies[policyId];
     if (!policy) throw new FilePolicyRegistryError('Attached policy is missing from the registry.');
     delete next.resource_policies[resourceId];
+    delete next.resource_policy_history[resourceId];
     appendEvent(next, 'policy_lifecycle', {
       event_id: randomUUID(), operation: 'revoke', actor_id: actorId,
       policy_id: policyId, policy_version: policy.version, resource_id: resourceId,
       timestamp: new Date().toISOString(),
     });
+    this.commit(next);
+  }
+
+  /**
+   * Permanently retires one immutable policy version and removes it from every resource
+   * history. Each affected resource falls back to the newest remaining version, or to no
+   * attachment (deny) when none remains. The complete target set is required so the caller
+   * cannot retire a version that also governs a resource it did not name.
+   */
+  async retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void> {
+    this.assertOpen();
+    if (!isHumanPrincipal(actorId)) {
+      throw new FilePolicyRegistryError('Policy retirement requires an authenticated human administrator.');
+    }
+    if (!isUuid(policyId)) {
+      throw new PolicyRevocationError('invalid_policy_id', 'Policy retirement requires a valid policy UUID.');
+    }
+    if (!Array.isArray(resourceIds) || resourceIds.length > MAX_POLICY_REVOCATION_TARGETS
+      || resourceIds.some((id) => !isUuid(id)) || new Set(resourceIds).size !== resourceIds.length) {
+      throw new PolicyRevocationError(
+        'invalid_targets',
+        `Policy retirement requires 0-${MAX_POLICY_REVOCATION_TARGETS} distinct resource UUIDs.`,
+      );
+    }
+
+    const policy = this.state.policies[policyId];
+    if (!policy) throw new PolicyRevocationError('policy_not_found', 'Policy version was not found.');
+    if (this.state.retired_policies.includes(policyId)) {
+      throw new PolicyRevocationError('policy_already_revoked', 'Policy version has already been retired.');
+    }
+
+    const affected = Object.entries(this.state.resource_policy_history)
+      .filter(([, history]) => history.includes(policyId))
+      .map(([resourceId]) => resourceId)
+      .sort();
+    if (affected.length === 0) {
+      throw new PolicyRevocationError('policy_not_attached', 'Policy version is not attached to any resource.');
+    }
+    const supplied = new Set(resourceIds);
+    if (affected.length !== resourceIds.length || affected.some((resourceId) => !supplied.has(resourceId))) {
+      throw new PolicyRevocationError(
+        'target_scope_mismatch',
+        'The target set must exactly match every resource that references this policy version.',
+      );
+    }
+
+    const next = clone(this.state);
+    for (const resourceId of affected) {
+      const history = next.resource_policy_history[resourceId] ?? [];
+      const remaining = history.filter((id) => id !== policyId);
+      if (remaining.length === 0) {
+        delete next.resource_policy_history[resourceId];
+        delete next.resource_policies[resourceId];
+      } else {
+        next.resource_policy_history[resourceId] = remaining;
+        next.resource_policies[resourceId] = remaining.at(-1) as string;
+      }
+      appendEvent(next, 'policy_lifecycle', {
+        event_id: randomUUID(), operation: 'revoke', actor_id: actorId,
+        policy_id: policyId, policy_version: policy.version, resource_id: resourceId,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    next.retired_policies.push(policyId);
     this.commit(next);
   }
 

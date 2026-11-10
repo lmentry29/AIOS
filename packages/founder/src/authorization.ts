@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy' | 'revoke_policy';
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
@@ -58,6 +58,31 @@ export interface PolicyAdministrationPort {
   attach(resourceId: string, policyId: string, actorId: string): Promise<void>;
   /** Implementations must atomically remove the resource reference and append its audit event. */
   revoke(resourceId: string, actorId: string): Promise<void>;
+  /**
+   * Retire one immutable policy version from every resource that references it and append
+   * one lifecycle event per affected resource. The caller supplies the exact complete
+   * target set; implementations must reject a scope mismatch before writing anything.
+   */
+  retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void>;
+}
+
+/** Upper bound for the explicit target set on a revocation request. */
+export const MAX_POLICY_REVOCATION_TARGETS = 256;
+
+export type PolicyRevocationErrorCode =
+  | 'invalid_policy_id'
+  | 'invalid_targets'
+  | 'policy_not_found'
+  | 'policy_not_attached'
+  | 'policy_already_revoked'
+  | 'target_scope_mismatch';
+
+/** A rejected runtime retirement with a stable, wire-safe reason code. */
+export class PolicyRevocationError extends Error {
+  constructor(readonly code: PolicyRevocationErrorCode, message: string) {
+    super(message);
+    this.name = 'PolicyRevocationError';
+  }
 }
 
 export class PolicyAdministrationError extends Error {
@@ -113,6 +138,24 @@ export class PolicyAdministrationService {
     this.assertBootstrapPrincipal(actorId);
     if (!isUuid(resourceId)) throw new PolicyAdministrationError('Policy revocation requires a valid resource UUID.');
     await this.administration.revoke(resourceId, actorId);
+  }
+
+  /**
+   * Offline/bootstrap retirement of one immutable version. The runtime route performs the
+   * same operation only after the exact `revoke_policy` grant is checked on every target.
+   */
+  async retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void> {
+    this.assertBootstrapPrincipal(actorId);
+    if (!isUuid(policyId)) {
+      throw new PolicyRevocationError('invalid_policy_id', 'Policy retirement requires a valid policy UUID.');
+    }
+    if (!isPolicyTargetList(resourceIds)) {
+      throw new PolicyRevocationError(
+        'invalid_targets',
+        `Policy retirement requires 0-${MAX_POLICY_REVOCATION_TARGETS} distinct resource UUIDs.`,
+      );
+    }
+    await this.administration.retirePolicy(policyId, [...resourceIds], actorId);
   }
 
   private assertBootstrapPrincipal(actorId: string): void {
@@ -172,9 +215,9 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
         if (rule.actions.some((action: string) => !isAccessAction(action))) {
           throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
         }
-        if (rule.actions.includes('administer_policy')
+        if (rule.actions.some((action: string) => action === 'administer_policy' || action === 'revoke_policy')
           && rule.subject_ids.some((id: string) => !isHumanPrincipal(id))) {
-          throw new Error(`Access policy "${policy.policy_id}" may grant administer_policy only to human principals.`);
+          throw new Error(`Access policy "${policy.policy_id}" may grant policy administration only to human principals.`);
         }
       }
       this.policies.set(policy.policy_id, Object.freeze({
@@ -216,6 +259,8 @@ export interface PolicyLifecycleAuditEvent {
 export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdministrationPort {
   private readonly policies = new Map<string, AccessPolicy>();
   private readonly resourcePolicies = new Map<string, string>();
+  private readonly resourcePolicyHistory = new Map<string, string[]>();
+  private readonly retiredPolicies = new Set<string>();
   private readonly events: PolicyLifecycleAuditEvent[] = [];
 
   async get(policyId: string): Promise<AccessPolicy | undefined> {
@@ -256,7 +301,10 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
     if (!isHumanPrincipal(actorId)) throw new PolicyAdministrationError('Policy attachment requires an authenticated human administrator.');
     const policy = this.policies.get(policyId);
     if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
+    if (this.retiredPolicies.has(policyId)) throw new PolicyAdministrationError('A retired policy cannot be attached.');
     const previousPolicyId = this.resourcePolicies.get(resourceId);
+    const history = this.resourcePolicyHistory.get(resourceId) ?? [];
+    this.resourcePolicyHistory.set(resourceId, [...history.filter((id) => id !== policyId), policyId]);
     this.resourcePolicies.set(resourceId, policyId);
     this.events.push({
       event_id: randomUUID(),
@@ -277,6 +325,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
     const policy = this.policies.get(policyId);
     if (!policy) throw new PolicyAdministrationError('Attached policy is missing from the registry.');
     this.resourcePolicies.delete(resourceId);
+    this.resourcePolicyHistory.delete(resourceId);
     this.events.push({
       event_id: randomUUID(),
       operation: 'revoke',
@@ -286,6 +335,61 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       resource_id: resourceId,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  async retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void> {
+    if (!isHumanPrincipal(actorId)) {
+      throw new PolicyAdministrationError('Policy retirement requires an authenticated human administrator.');
+    }
+    if (!isUuid(policyId)) {
+      throw new PolicyRevocationError('invalid_policy_id', 'Policy retirement requires a valid policy UUID.');
+    }
+    if (!isPolicyTargetList(resourceIds)) {
+      throw new PolicyRevocationError(
+        'invalid_targets',
+        `Policy retirement requires 0-${MAX_POLICY_REVOCATION_TARGETS} distinct resource UUIDs.`,
+      );
+    }
+    const policy = this.policies.get(policyId);
+    if (!policy) throw new PolicyRevocationError('policy_not_found', 'Policy version was not found.');
+    if (this.retiredPolicies.has(policyId)) {
+      throw new PolicyRevocationError('policy_already_revoked', 'Policy version has already been retired.');
+    }
+    const affected = [...this.resourcePolicyHistory.entries()]
+      .filter(([, history]) => history.includes(policyId))
+      .map(([resourceId]) => resourceId)
+      .sort();
+    if (affected.length === 0) {
+      throw new PolicyRevocationError('policy_not_attached', 'Policy version is not attached to any resource.');
+    }
+    if (!sameStringSet(resourceIds, affected)) {
+      throw new PolicyRevocationError(
+        'target_scope_mismatch',
+        'The target set must exactly match every resource that references this policy version.',
+      );
+    }
+
+    for (const resourceId of affected) {
+      const history = this.resourcePolicyHistory.get(resourceId) ?? [];
+      const remaining = history.filter((id) => id !== policyId);
+      if (remaining.length === 0) {
+        this.resourcePolicyHistory.delete(resourceId);
+        this.resourcePolicies.delete(resourceId);
+      } else {
+        this.resourcePolicyHistory.set(resourceId, remaining);
+        this.resourcePolicies.set(resourceId, remaining.at(-1) as string);
+      }
+      this.events.push({
+        event_id: randomUUID(),
+        operation: 'revoke',
+        actor_id: actorId,
+        policy_id: policyId,
+        policy_version: policy.version,
+        resource_id: resourceId,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    this.retiredPolicies.add(policyId);
   }
 
   listAudit(): PolicyLifecycleAuditEvent[] {
@@ -406,7 +510,20 @@ function isHumanPrincipal(value: string): boolean {
 }
 
 function isAccessAction(value: string): value is AccessAction {
-  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy'].includes(value);
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy', 'revoke_policy'].includes(value);
+}
+
+function isPolicyTargetList(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.length <= MAX_POLICY_REVOCATION_TARGETS
+    && value.every((id) => typeof id === 'string' && isUuid(id))
+    && new Set(value).size === value.length;
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const values = new Set(right);
+  return left.every((value) => values.has(value));
 }
 
 function isUuid(value: string): boolean {

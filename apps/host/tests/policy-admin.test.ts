@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FilePolicyRegistry } from '@aios/founder';
 import { HostConfigError } from '../src/errors.js';
-import { provisionPolicies, readPolicyProvisioningDocument } from '../src/policy-admin.js';
+import {
+  provisionPolicies,
+  readPolicyProvisioningDocument,
+  readPolicyRevocationDocument,
+  revokePolicies,
+} from '../src/policy-admin.js';
 import {
   DECISION_COLLECTION_ID,
   FOUNDER,
@@ -62,6 +67,10 @@ function writeDocument(directory: string, document: unknown, mode = 0o600): stri
   return path;
 }
 
+function revocationDocument(policyId: string, resourceId: string): Record<string, unknown> {
+  return { policy_id: policyId, targets: [resourceId] };
+}
+
 describe('offline policy provisioning', () => {
   it('publishes one immutable policy, attaches it, and leaves a verifiable audit chain', async () => {
     const { directory, configPath, policyPath, resourceId } = setup();
@@ -90,6 +99,50 @@ describe('offline policy provisioning', () => {
     await provisionPolicies({ configPath, provisioningPath });
     await expect(provisionPolicies({ configPath, provisioningPath }))
       .rejects.toThrow(/immutable/);
+  });
+
+  it('retires an attached policy through the offline bootstrap path', async () => {
+    const { directory, configPath, policyPath, resourceId } = setup();
+    const provisioning = provisioningDocument(resourceId);
+    await provisionPolicies({
+      configPath,
+      provisioningPath: writeDocument(directory, provisioning),
+    });
+    const policyId = (provisioning.policy as { policy_id: string }).policy_id;
+    const result = await revokePolicies({
+      configPath,
+      revocationPath: writeDocument(directory, revocationDocument(policyId, resourceId)),
+    });
+    expect(result).toEqual({ policy_id: policyId, retired: true, targets: [resourceId] });
+
+    const registry = new FilePolicyRegistry({ filePath: policyPath });
+    try {
+      expect(await registry.resolve(resourceId)).toBeUndefined();
+      expect(registry.listPolicyAudit().map((event) => event.operation))
+        .toEqual(['publish', 'attach', 'revoke']);
+      expect(await registry.get(policyId)).toBeDefined();
+    } finally {
+      registry.close();
+    }
+  });
+
+  it('requires an owner-only revocation document with valid fields', () => {
+    const { directory, resourceId } = setup();
+    const document = revocationDocument(randomUUID(), resourceId);
+    expect(() => readPolicyRevocationDocument(writeDocument(directory, document, 0o644)))
+      .toThrow(/owner-only/);
+    expect(() => readPolicyRevocationDocument(writeDocument(directory, {
+      ...document,
+      policy_id: 'not-a-uuid',
+    }))).toThrow(/policy_id/);
+    expect(() => readPolicyRevocationDocument(writeDocument(directory, {
+      ...document,
+      targets: [resourceId, resourceId],
+    }))).toThrow(/repeat/);
+    expect(() => readPolicyRevocationDocument(writeDocument(directory, {
+      ...document,
+      extra: true,
+    }))).toThrow(/unsupported field/);
   });
 
   it('requires an owner-only provisioning document and valid fields', () => {
