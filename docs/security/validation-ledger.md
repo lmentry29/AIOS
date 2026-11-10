@@ -42,3 +42,13 @@ Full host suite: `pnpm --filter @aios/host test` → **109 passed, 9 skipped** (
 - bubblewrap is a shared-kernel boundary; the results do not transfer to Docker, gVisor, Seatbelt, or Apple Containerization.
 - The Docker adapter's isolation flags were inspected and unit-tested for argv shape, not executed against a daemon.
 - No resource-exhaustion benchmark (CPU/memory/disk) was run; the cgroup gap remains open.
+
+## 2026-11-10 — CI live boundary
+
+On `ubuntu-24.04` GitHub runners, `bwrap` installed from `noble-updates` (0.9.0-1ubuntu0.3)
+but the provider probe failed before any case ran: Ubuntu 24.04 restricts unprivileged user
+namespaces through AppArmor. The Security workflow now sets
+`kernel.apparmor_restrict_unprivileged_userns=0` (falling back to
+`kernel.unprivileged_userns_clone=1`) for the job before running the suite. This is a
+runner-level test prerequisite, not a production hardening step: a host that ships with the
+restriction keeps it, and the provider still fails closed when it cannot create a namespace.
