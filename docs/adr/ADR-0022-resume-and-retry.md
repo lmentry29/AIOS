@@ -176,13 +176,25 @@ oldest-first, ending with the immediate predecessor. A Workflow response is
 contiguity and every predecessor link and fails closed if the chain is missing, mismatched,
 or cyclic.
 
+Workflow inspection is all-or-nothing across its declared step Tasks. The kernel authorizes
+the Workflow, then authorizes every step Task, and only then resolves the steps and reads
+their histories, so a caller with `read_status` on the Workflow but not on any one step gets
+the existing typed denial and no partial chain — including when the ungranted step is later
+than an authorized sibling. The denial path performs no ledger history read and no lifecycle
+or attempt write. `denies Workflow attempt history before deriving any Task history when one
+step lacks read_status` proves both first-step and later-step denials with a history spy;
+`denies Workflow attempt inspection all-or-nothing when any step Task lacks read_status`
+proves the same over HTTP through a persisted ledger; and `returns every step Task history
+when the whole Workflow is authorized` covers the fully authorized multi-step response.
+
 Inspection is read-only by construction: it calls only `getTask`/`getWorkflow`, the
 authorization evaluator, and the ledger's ordered read. It never transitions lifecycle state,
 appends an attempt, or invokes an executor/verifier. Like every authorized read under
 ADR-0013, it records the authorization decision in the policy audit chain; that is separate
-from the operational journal. The test reads a three-generation chain through both routes,
-asserts the operational journal is byte-identical before and after (SHA-256), reopens the
-persisted ledger, and verifies every attempt and revision is unchanged.
+from the operational journal. `inspects a three-generation attempt chain without mutating the
+durable journal` reads the chain through both routes, asserts the operational journal is
+byte-identical before and after (SHA-256), reopens the persisted ledger, and verifies every
+attempt and revision is unchanged.
 
 ## Alternatives considered
 

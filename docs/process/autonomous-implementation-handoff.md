@@ -3,18 +3,19 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, read-only attempt-inspection slice).
+Last updated: 2026-11-10 (Freebuff Cloud session, all-or-nothing Workflow attempt-inspection hardening).
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `0b01cec` (`feat(host): expose read-only attempt history`)
+- Verified code head: `8cd427a` (`fix(orchestration): deny Workflow attempt history all-or-nothing`)
 - This handoff is the docs commit that follows that code head; read `git log --oneline -4`
   for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
   not merge PR #1.
 - Prior commits in this session:
+  - `8cd427a` — all-or-nothing Workflow attempt inspection
   - `0b01cec` — read-only Task/Workflow attempt-chain inspection
   - `a816fe3` — multi-generation attempt chains, no-write reconciliation, duplicate redrive suppression
   - `ce876cf` — authorized resume/retry over append-only attempts
@@ -37,8 +38,9 @@ Last updated: 2026-11-10 (Freebuff Cloud session, read-only attempt-inspection s
 - Docker CLI is present but the daemon is not reachable to this user; `bwrap`, `podman`, and
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
-- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `4b1dc5a`. Checks for
-  `0b01cec` and the docs tip are observed after the push; this handoff does not assert them.
+- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `0b01cec` and its docs tip
+  `44df776`. Checks for the all-or-nothing hardening head `8cd427a` and its docs tip are
+  observed after the push; this handoff does not assert them.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -207,6 +209,36 @@ crashes and duplicate requests.
   later resume returns 429 before any lifecycle or attempt write; after release, generation 3
   completes.
 
+## Completed — all-or-nothing Workflow attempt inspection (`8cd427a`)
+
+Workflow attempt inspection now fails closed as a single unit instead of authorizing and
+reading each step in one pass.
+
+- `getWorkflowAttempts` authorizes the Workflow before lookup, then authorizes every
+  declared step Task, then resolves the steps, and only then reads history. A missing
+  `read_status` on any step — first or later — returns the existing typed denial, not a
+  partial payload, and the history port is never called.
+- No new route, error type, or mutation. 401 on both attempt routes, 403 for denied grants,
+  and 404 for a granted-but-unknown id are unchanged.
+- Direct kernel callers get the same ordering: an unknown Workflow with no grant is a denial,
+  not a not-found.
+
+### Proof
+
+- `orchestration-kernel.test.ts` — `denies Workflow attempt history before deriving any
+  Task history when one step lacks read_status` covers both first-step and later-step
+  denials, asserts zero history reads, and leaves every Task `created`.
+- `http-host.test.ts` — `denies Workflow attempt inspection all-or-nothing when any step Task
+  lacks read_status` drives both step orders over HTTP against a persisted ledger with real
+  attempts on both Tasks: 403 `forbidden`, no tasks/attempts payload, byte-identical
+  operational journal, unchanged attempt lists, and the same states after reopening the
+  ledger.
+- `http-host.test.ts` — `returns every step Task history when the whole Workflow is
+  authorized` returns both per-Task chains in declared step order, with the three-generation
+  chain unchanged.
+- `http-host.test.ts` — the shared auth-contract test now covers 401 and 403 on both attempt
+  routes as well as unknown-id 404.
+
 ## Completed — read-only attempt inspection (`0b01cec`)
 
 Operators can audit the full chain without redriving it.
@@ -245,7 +277,7 @@ Operators can audit the full chain without redriving it.
 - 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
   Workflow.
 
-## Verification actually executed at `0b01cec`
+## Verification actually executed at `8cd427a`
 
 Local at commit time; CI is observed after the push, not asserted here.
 
@@ -262,19 +294,19 @@ All six commands exited 0. Exact test results:
 
 | Suite | Result |
 |---|---|
-| `@aios/host` | **78 passed** (7 files) |
+| `@aios/host` | **80 passed** (7 files) |
 | `@aios/core` | **46 passed** (4 files) |
 | `tests/conformance` | **107 passed** (6 files) |
 | `tests/integration` | **43 passed** (6 files) |
 | `@aios/objects` | 32 passed |
 | `@aios/founder` | 50 passed |
-| `@aios/orchestration` | 27 passed |
+| `@aios/orchestration` | 28 passed |
 | `@aios/tools` | 9 passed |
 | `@aios/work-hierarchy` | 24 passed |
 | `@aios/containers` | 21 passed |
 | `@aios/learning` | 15 passed |
 | `@aios/agents` | 6 passed |
-| **Total** | **458 passed** |
+| **Total** | **461 passed** |
 
 Schema regeneration produced no diff.
 
@@ -325,10 +357,18 @@ Schema regeneration produced no diff.
   return correctly.
 - `http-host.test.ts` — inspection leaves the operational journal byte-identical (SHA-256),
   appends no attempt, leaves every state/revision unchanged, and reopens to the same ledger.
-- `http-host.test.ts` — attempt inspection reuses 401 for no session, 403 for a missing
+- `http-host.test.ts` — both attempt routes reuse 401 for no session and 403 for a missing
   `read_status` grant, and 404 for a granted-but-unknown Task or Workflow.
 - `orchestration-kernel.test.ts` — the kernel projection returns the full chain without
   executing or verifying and rejects an unknown Task after authorization.
+- `orchestration-kernel.test.ts` — Workflow attempt inspection denies before any history
+  read when a first or later step Task lacks `read_status`, covers unknown-id ordering under
+  denial, and leaves every Task `created`.
+- `http-host.test.ts` — Workflow attempt inspection denies all-or-nothing for first- and
+  later-step missing grants, returns no payload, leaves the operational journal
+  byte-identical, and reopens to unchanged attempt states for both Tasks.
+- `http-host.test.ts` — a fully authorized multi-Task Workflow returns every step Task's
+  history in declared order, including the unchanged three-generation chain.
 
 ### Security tests / evidence labels
 
@@ -414,7 +454,7 @@ Schema regeneration produced no diff.
 
 ## Next concrete work
 
-1. Observe CI on `0b01cec` and the docs tip; push only
+1. Observe CI on `8cd427a` and the docs tip; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.

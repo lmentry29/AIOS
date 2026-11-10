@@ -1,9 +1,10 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
-local evidence only. The preceding head `4b1dc5a` passed the `ci`, `conformance`, and
-`schema-check` workflows; the attempt-inspection head `0b01cec` and its docs tip are pushed
-after this snapshot, so read their checks from GitHub.
+local evidence only. The attempt-inspection head `0b01cec` and its docs tip `44df776`
+passed the `ci`, `conformance`, and `schema-check` workflows; the all-or-nothing hardening
+head `8cd427a` and its docs tip are pushed after this snapshot, so read their checks from
+GitHub.
 
 ## Repository and active change
 
@@ -12,7 +13,7 @@ after this snapshot, so read their checks from GitHub.
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `0b01cec` (`feat(host): expose read-only attempt history`)
+- Verified code head: `8cd427a` (`fix(orchestration): deny Workflow attempt history all-or-nothing`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -33,8 +34,8 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
 | `@aios/learning` | Knowledge records and evolution stages; in-memory |
 | `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with the exact `cancel`/`resume`/`retry` actions, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
-| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads, cancellation preflight/checks, authorized resume/retry orchestration, and read-only Task/Workflow attempt-chain inspection; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, read-only attempt-history routes, strict concurrency cap, and recovery-to-suspended |
+| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads, cancellation preflight/checks, authorized resume/retry orchestration, and read-only Task/Workflow attempt-chain inspection with all-or-nothing step authorization; execution is injected |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
 broker, no signed verifier provenance, no automatic retry/backoff loop, and no live
@@ -76,27 +77,32 @@ external-provider verification.
   nothing, and concurrent duplicate resume/retry requests return typed 409 before a second
   attempt or sandbox start. A read-only attempt-history API returns the full chain with
   oldest-first predecessor links under exact `read_status`; it never transitions, appends,
-  or executes.
+  or executes. Workflow inspection is all-or-nothing: every declared step Task is authorized
+  before any history is read, so one missing grant denies the whole request with no partial
+  chain.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-Local checks at code head `0b01cec` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `8cd427a` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
 - `pnpm -r run lint` — pass.
-- `pnpm -r run test` — pass, **458 tests total**.
-- Host: **78 tests** in 7 files, including 34 loopback HTTP tests, cancellation with a
+- `pnpm -r run test` — pass, **461 tests total**.
+- Host: **80 tests** in 7 files, including 36 loopback HTTP tests, cancellation with a
   test-only sandbox stub, a real child-process SIGKILL test with a labelled
   `test-only-process` provider, cap enforcement/retry, late-result rejection, journal-level
   crash/restart reconciliation, authorized resume/retry over append-only attempts, a
   three-generation persisted resume chain, duplicate concurrent redrive suppression, a
-  no-write second reconciliation over an already-interrupted attempt, and read-only
-  three-generation attempt inspection that leaves the operational journal byte-identical.
+  no-write second reconciliation over an already-interrupted attempt, read-only
+  three-generation attempt inspection that leaves the operational journal byte-identical,
+  and all-or-nothing Workflow attempt inspection that denies a first- or later-step missing
+  `read_status` grant before any ledger history read and leaves both persisted Task ledgers
+  unchanged after reopen.
 - Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
-  orchestration: 27; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
+  orchestration: 28; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
 
@@ -139,8 +145,8 @@ provider is unavailable; they do not claim container isolation.
 
 ## Next work order
 
-1. Observe CI on the attempt-inspection head `0b01cec` and its docs tip; do not treat local
-   results as CI.
+1. Observe CI on the all-or-nothing hardening head `8cd427a` and its docs tip; do not treat
+   local results as CI.
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.

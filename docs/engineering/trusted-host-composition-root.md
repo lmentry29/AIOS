@@ -147,7 +147,10 @@ vault notes as operational storage.
   and the ledger's terminal-predecessor check both enforce it. Attempt history is available
   read-only at `GET /v1/tasks/:id/attempts` and `GET /v1/workflows/:id/attempts` under exact
   `read_status` grants; it returns the ledger's attempts oldest-first with immediate and
-  full predecessor links, and never appends, transitions, or executes.
+  full predecessor links, and never appends, transitions, or executes. Workflow inspection
+  is all-or-nothing: every declared step Task is authorized before any step is resolved or
+  any history is read, so one missing grant denies the whole request with the existing 403
+  and returns no partial chain.
 - **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; running
   Task executions are also marked `interrupted`; and their `active`/`monitored` Workflows and
   Tasks are transitioned to `suspended`. Interrupted work is never re-executed or completed
@@ -173,7 +176,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
 | GET | `/v1/tasks/:id/attempts` | Requires `read_status`; ordered attempts plus oldest-first predecessor chain; read-only |
-| GET | `/v1/workflows/:id/attempts` | Requires `read_status` on the Workflow and each step Task; per-Task chains in step order |
+| GET | `/v1/workflows/:id/attempts` | Requires `read_status` on the Workflow and each step Task, all-or-nothing before any history read; per-Task chains in step order |
 | POST | `/v1/tasks/:id/cancel` | Requires exact `cancel`; optional bounded `reason`; 202, or 200 if already cancelled |
 | POST | `/v1/workflows/:id/resume` | Requires exact `resume` on the Workflow and each interrupted Task; completed Tasks are skipped |
 | POST | `/v1/tasks/:id/resume` | Requires exact `resume`; only an `interrupted` latest attempt; 200 idempotent when already completed |
@@ -274,8 +277,14 @@ single-process lock.
   chains, plus single-attempt and failed-then-retried histories;
 - the same inspection leaving the operational journal byte-identical (SHA-256), appending no
   attempt, and preserving every attempt state/revision after reopening the persisted ledger;
-- attempt inspection returning the existing 401, 403, and 404 contracts for missing,
-  unauthorized, and unknown callers;
+- attempt inspection returning the existing 401 and 403 contracts on both routes and 404 for
+  a granted-but-unknown Task or Workflow;
+- Workflow attempt inspection denying all-or-nothing when a first or later step Task lacks
+  `read_status`, with no partial payload, no ledger history read, and a byte-identical
+  operational journal across both denials;
+- both persisted Task ledgers unchanged after reopening the host following those denials;
+- a fully authorized multi-Task Workflow returning every step Task's history in declared
+  order, including the unchanged three-generation chain;
 - a cancelled attempt refusing `resume` with 409 while an authorized `retry` appends a
   distinct attempt and preserves the cancelled record;
 - a failed attempt blocking Workflow resume until its Task is explicitly retried, then a
