@@ -236,8 +236,12 @@ Schema regeneration produced no diff.
 - **Locally tested:** sandbox argv/no-shell, env filtering, hashed evidence, non-zero,
   timeout, unavailable provider, cwd escape, verifier independence, unexpected verifier
   exit, executor-result digest binding, host 503/422 behavior, composed HTTP dispatch,
-  authorized/denied cancellation, real child SIGKILL, cap rejection, and journal-level crash
-  reconciliation.
+  authorized/denied cancellation, resume/retry authorization and lifecycle, real child
+  SIGKILL, cap rejection, and journal-level crash reconciliation.
+- **Resume/retry evidence label:** every resume/retry HTTP proof composes the real
+  `LocalCommandExecutor`/`LocalCommandVerifier` around the labelled `stub-container` sandbox.
+  It proves authorization-before-lookup, attempt identity, cap ordering, cancellation/abort
+  handling, and verifier invocation. It is not container-isolation or real-provider evidence.
 - **Not integration tested here:** any real Docker, bubblewrap, or Seatbelt invocation. The
   Docker daemon/tools are unavailable in this workspace. The process test proves the shared
   child-process helper kills a direct child; it is not isolation evidence.

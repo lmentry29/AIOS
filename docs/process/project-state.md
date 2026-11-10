@@ -91,8 +91,9 @@ Local checks at code head `ce876cf` (Node 26.13.0, pnpm 11.11.0):
 
 These are local results, not CI results. The real Docker, bubblewrap, and Seatbelt providers
 could not be integration-tested here: the Docker daemon is inaccessible and the other tools
-are absent. The cancellation and crash tests use clearly labelled test-only process/sandbox
-doubles where a real isolation provider is unavailable; they do not claim container isolation.
+are absent. The cancellation, resume/retry, and crash tests use clearly labelled test-only
+process/sandbox doubles where a real isolation provider is unavailable; they do not claim
+container isolation.
 
 ## Production blockers — not optional
 
