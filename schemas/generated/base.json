@@ -82,6 +82,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 1024,
           "type": "array"
         },
         "lifecycle_state": {
@@ -138,6 +139,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "owner_id": {
@@ -189,6 +191,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "version": {

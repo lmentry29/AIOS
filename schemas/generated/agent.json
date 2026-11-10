@@ -69,6 +69,7 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "audit_trail_ref": {
@@ -81,6 +82,7 @@
           "items": {
             "type": "string"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "created_at": {
@@ -155,6 +157,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 1024,
           "type": "array"
         },
         "lifecycle_state": {
@@ -211,6 +214,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "owner_id": {
@@ -262,6 +266,7 @@
             ],
             "type": "object"
           },
+          "maxItems": 256,
           "type": "array"
         },
         "version": {

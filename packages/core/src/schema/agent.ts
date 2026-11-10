@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalEntity } from './base.js';
+import { CanonicalEntity, MAX_COLLECTION_ITEMS } from './base.js';
 
 // §4.1 Agent — extends base. work_hierarchy_parent omitted: an Agent is
 // not itself a Work Hierarchy member, it acts on Tasks.
@@ -20,9 +20,9 @@ const AgentEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('agent'),
   current_role: AgentRole,
   governing_layer: AgentGoverningLayer,
-  assigned_tasks: z.array(z.string().uuid()).default([]),
+  assigned_tasks: z.array(z.string().uuid()).max(MAX_COLLECTION_ITEMS).default([]),
   // Open vocabulary pending a future Capability Model (§6 item 3)
-  capabilities: z.array(z.string()).default([]),
+  capabilities: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
 });
 export const AgentEntity = AgentEntityShape.refine(
   (a: z.infer<typeof AgentEntityShape>) => a.work_hierarchy_parent === undefined,

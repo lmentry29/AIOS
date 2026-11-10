@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanonicalEntity, WorkHierarchyParent } from './base.js';
+import { CanonicalEntity, MAX_COLLECTION_ITEMS, WorkHierarchyParent } from './base.js';
 
 // §4.2.1 Action — sub-object, NOT a top-level Canonical Entity.
 // No global entity_id requirement (§3.1) applies here by design.
@@ -56,7 +56,7 @@ const TaskEntityShape = CanonicalEntity.extend({
   work_hierarchy_parent: WorkHierarchyParent.extend({
     level: z.literal('objective'),
   }),
-  actions: z.array(Action).default([]),
+  actions: z.array(Action).max(MAX_COLLECTION_ITEMS).default([]),
   assigned_agent: z.string().uuid().optional(),
   assigned_workflow: z.string().uuid().optional(),
   execution: TaskExecutionSpec.optional(),

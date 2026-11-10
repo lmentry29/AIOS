@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+// Explicit collection bounds are a security control, not cosmetic: Zod < 4.6.6
+// accumulated one issue per failing container element, and 4.6.6+ only rejects an
+// oversized collection before parsing elements when the schema declares an upper bound
+// (CVE-2023-54404 / GHSA-mrhx-c7xc-m3w5). Every array that accepts untrusted canonical
+// input must therefore carry a finite .max() on the array itself, before any refinement.
+export const MAX_COLLECTION_ITEMS = 256;
+export const MAX_LIFECYCLE_HISTORY_ITEMS = 1024;
+
 // --- 3.1 Identity ---
 
 export const EntityType = z.enum([
@@ -117,7 +125,7 @@ export const CanonicalEntity = z.object({
   // 3.2 Lifecycle
   lifecycle_state: LifecycleState,
   lifecycle_substate: z.string().optional(),
-  lifecycle_history: z.array(LifecycleHistoryEntry),
+  lifecycle_history: z.array(LifecycleHistoryEntry).max(MAX_LIFECYCLE_HISTORY_ITEMS),
 
   // 3.3 Provenance
   created_at: z.string().datetime(),
@@ -135,7 +143,7 @@ export const CanonicalEntity = z.object({
   // (ADR-0011, Consequence 2). Consumers MUST branch on container_type and MUST
   // NOT assume any entity_id here is resolvable. Authoritative source:
   // docs/engineering/canonical-object-model.md:60.
-  organizational_containers: z.array(OrganizationalContainerRef).default([]),
+  organizational_containers: z.array(OrganizationalContainerRef).max(MAX_COLLECTION_ITEMS).default([]),
 
   // 3.5 Access and audit
   access_policy: z.string().uuid().optional(), // placeholder — unratified governance model (§6 item 1)
@@ -147,6 +155,6 @@ export const CanonicalEntity = z.object({
   owner_type: OwnerType,
 
   // §8 Relationships — base schema, not just Canonical Object
-  relationships: z.array(Relationship).default([]),
+  relationships: z.array(Relationship).max(MAX_COLLECTION_ITEMS).default([]),
 });
 export type CanonicalEntity = z.infer<typeof CanonicalEntity>;

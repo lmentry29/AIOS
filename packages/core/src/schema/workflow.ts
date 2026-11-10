@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { CanonicalEntity } from './base.js';
+import { CanonicalEntity, MAX_COLLECTION_ITEMS } from './base.js';
 
 // §4.3 Workflow — extends base. Sequencing/orchestration wrapper over
 // Tasks; not an Organizational Container (it sequences, doesn't hold/schedule).
 
 const WorkflowEntityShape = CanonicalEntity.extend({
   entity_type: z.literal('workflow'),
-  steps: z.array(z.string().uuid()), // ordered Task entity_ids
+  steps: z.array(z.string().uuid()).max(MAX_COLLECTION_ITEMS), // ordered Task entity_ids
   trigger: z.string().optional(), // left open pending a future Event Model (§6 item 2)
   governing_loop: z.literal('system_execution_loop'),
 

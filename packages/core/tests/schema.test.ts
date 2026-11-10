@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CanonicalEntity,
   LifecycleState,
+  MAX_COLLECTION_ITEMS,
   MemoryObjectEntity,
   TaskEntity,
   WorkHierarchyParent,
@@ -48,6 +49,25 @@ describe('CanonicalEntity (COM §3)', () => {
     const parsed = CanonicalEntity.parse(baseFields());
     expect(parsed.organizational_containers).toEqual([]);
     expect(parsed.relationships).toEqual([]);
+  });
+
+  it('rejects a collection above its explicit bound before element issue amplification', () => {
+    // CVE-2023-54404: unbounded Zod containers accumulate one issue per element.
+    // The .max() must reject the oversized collection itself, so this case stays
+    // bounded even when every element is otherwise valid.
+    const relationships = Array.from({ length: MAX_COLLECTION_ITEMS }, () => ({
+      target_entity_id: crypto.randomUUID(),
+      target_entity_type: 'task' as const,
+      relationship_type: 'depends_on',
+      direction: 'outbound' as const,
+    }));
+    expect(CanonicalEntity.safeParse(baseFields({ relationships })).success).toBe(true);
+    expect(
+      CanonicalEntity.safeParse({
+        ...baseFields(),
+        relationships: [...relationships, relationships[0]],
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects a non-UUID entity_id (§9 — identity is never a human-readable name)', () => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_COLLECTION_ITEMS } from './base.js';
 import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.1 Memory Object — most fully-specified Canonical Object subtype.
@@ -27,8 +28,8 @@ const MemoryObjectEntityShape = CanonicalObjectEntityShape.extend({
   memory_type: MemoryType,
   confidence: z.number().min(0).max(1),
   importance: Importance,
-  evidence: z.array(z.string().uuid()).default([]),
-  source_references: z.array(z.string()).default([]),
+  evidence: z.array(z.string().uuid()).max(MAX_COLLECTION_ITEMS).default([]),
+  source_references: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
   // Immutability note (§5.1, verbatim): once lifecycle_state reaches
   // 'completed', no further 'active' mutation is permitted on this
   // entity_id. Evolution creates a NEW entity_id with incremented

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 type JsonSchema = {
@@ -19,6 +19,17 @@ function generatedSchema(moduleName: string, exportName: string): JsonSchema {
 // property as suspicious JavaScript, although it is a required JSON Schema keyword.
 function conditional(ifSchema: unknown, thenSchema: unknown): Record<string, unknown> {
   return Object.fromEntries([['if', ifSchema], ['then', thenSchema]]);
+}
+
+function collectArraySchemas(node: unknown, found: Array<Record<string, unknown>> = []) {
+  if (Array.isArray(node)) {
+    for (const child of node) collectArraySchemas(child, found);
+  } else if (node && typeof node === 'object') {
+    const record = node as Record<string, unknown>;
+    if (record.type === 'array') found.push(record);
+    for (const child of Object.values(record)) collectArraySchemas(child, found);
+  }
+  return found;
 }
 
 describe('generated JSON Schema lifecycle contracts', () => {
@@ -84,6 +95,26 @@ describe('generated JSON Schema lifecycle contracts', () => {
     }
   });
 
+  it('bounds every generated array schema before element parsing (CVE-2023-54404)', () => {
+    const directory = new URL('../../../schemas/generated/', import.meta.url);
+    let arrayCount = 0;
+    for (const file of readdirSync(directory).filter((name) => name.endsWith('.json'))) {
+      const document = JSON.parse(readFileSync(new URL(file, directory), 'utf8')) as {
+        definitions: Record<string, unknown>;
+      };
+      for (const [definitionName, schema] of Object.entries(document.definitions)) {
+        for (const arraySchema of collectArraySchemas(schema)) {
+          arrayCount += 1;
+          expect(
+            arraySchema.maxItems,
+            `${file}:${definitionName} array lacks an explicit maxItems bound`,
+          ).toBeTypeOf('number');
+        }
+      }
+    }
+    expect(arrayCount).toBeGreaterThan(0);
+  });
+
   it('keeps the executable Task contract strict and bounded', () => {
     const entity = generatedSchema('task', 'TaskEntity') as {
       properties?: Record<string, {
@@ -98,6 +129,7 @@ describe('generated JSON Schema lifecycle contracts', () => {
       maxLength: 256,
       type: 'string',
     });
+    expect(entity.properties?.actions).toMatchObject({ maxItems: 256, type: 'array' });
     // A converter that cannot understand the Zod version must fail generation, not
     // emit an empty or reference-only schema that silently drops every constraint.
     expect(JSON.stringify(entity)).not.toContain('"$ref"');

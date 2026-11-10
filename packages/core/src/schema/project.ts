@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ActorRef } from './base.js';
+import { ActorRef, MAX_COLLECTION_ITEMS, MAX_LIFECYCLE_HISTORY_ITEMS } from './base.js';
 import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './canonical-object.js';
 
 // §5.4 Project — Canonical Object subtype, added by ADR-0011 (amending ADR-0007 and
@@ -40,13 +40,13 @@ import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './cano
  */
 export const ProjectDna = z.object({
   mission: z.string(),
-  core_principles: z.array(z.string()).default([]),
-  target_users: z.array(z.string()).default([]),
+  core_principles: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  target_users: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
   architectural_philosophy: z.string(),
-  quality_expectations: z.array(z.string()).default([]),
-  long_term_objectives: z.array(z.string()).default([]),
-  non_goals: z.array(z.string()).default([]),
-  governance_constraints: z.array(z.string()).default([]),
+  quality_expectations: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  long_term_objectives: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  non_goals: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  governance_constraints: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
 });
 export type ProjectDna = z.infer<typeof ProjectDna>;
 
@@ -156,7 +156,7 @@ const ProjectEntityShape = CanonicalObjectEntityShape.extend({
 
   project_status: ProjectStatus,
   project_phase: ProjectPhase,
-  project_status_history: z.array(ProjectStatusHistoryEntry).default([]),
+  project_status_history: z.array(ProjectStatusHistoryEntry).max(MAX_LIFECYCLE_HISTORY_ITEMS).default([]),
 });
 
 /**
