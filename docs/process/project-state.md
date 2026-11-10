@@ -1,10 +1,11 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-10 locally in the Freebuff cloud worktree. This snapshot records
-local evidence only. The attempt-inspection head `8cd427a` and docs tip `c64ba42` passed the
-`ci`, `conformance`, and `schema-check` workflows. The durable-audit docs tip `e65688e`
-passed those workflows; the runtime-policy head `7103957` is pushed after this snapshot, so
-read its checks from GitHub rather than inferring them from local results.
+Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distinguishes local
+evidence from observed CI. Code head `7103957` and docs commit `0a1ae66` sit on the branch,
+which merged `upstream/main` at `767f30e`; merge head `8c950e6` passed the `ci` (run
+`42887224979`), `conformance` (run `42887225101`), and `schema-check` (run `42887224921`)
+workflows, and PR #1 reported mergeable/clean. This verification update is a docs-only
+commit after that merge head; read `git log --oneline -4` for the exact tip.
 
 ## Repository and active change
 
@@ -14,7 +15,9 @@ read its checks from GitHub rather than inferring them from local results.
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
 - Verified code head: `7103957` (`feat(host): authorize runtime policy publication`)
-- The docs commit that updates this file follows the code head. Read `git log --oneline -4`
+- Docs commit for this pass: `0a1ae66` (`docs(adr): record authorized runtime policy administration`).
+- Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI green and PR mergeable/clean.
+- This verification update is a docs-only commit after the merge head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
   `upstream community/open-source-foundation`.
@@ -131,9 +134,12 @@ Local checks at code head `7103957` (Node 26.13.0, pnpm 11.11.0):
   orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 28; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
+- GitHub Actions at merge head `8c950e6`: `ci`, `conformance`, and `schema-check` all
+  succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`. The final docs-only
+  verification commit has its own checks; do not infer its result from this line.
 
-These are local results, not CI results. The real Docker, bubblewrap, and Seatbelt providers
-could not be integration-tested here: `docker info` cannot reach a daemon, and `bwrap`,
+The command and test results above are local, not CI. The real Docker, bubblewrap, and
+Seatbelt providers could not be integration-tested here: `docker info` cannot reach a daemon, and `bwrap`,
 `podman`, and `sandbox-exec` are absent. The cancellation, multi-generation resume/retry, and
 crash tests use clearly labelled test-only process/sandbox doubles where a real isolation
 provider is unavailable; they do not claim container isolation.
@@ -175,8 +181,9 @@ provider is unavailable; they do not claim container isolation.
 
 ## Next work order
 
-1. Observe CI on the runtime-policy head `7103957` and its docs tip; do not treat local
-   results as CI.
+1. Exercise runtime policy publication in a production-like deployment with a real
+   non-bootstrap operator, independent audit consumer, and restart/recovery drill; local
+   tests are not operational deployment proof.
 2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
    cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.

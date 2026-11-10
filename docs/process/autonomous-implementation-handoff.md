@@ -3,7 +3,8 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publication).
+Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publication and
+CI verification).
 
 ## Repository state
 
@@ -11,9 +12,13 @@ Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publ
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
 - Verified code head: `7103957` (`feat(host): authorize runtime policy publication`)
-- This handoff is the docs commit that follows that code head; read `git log --oneline -4`
-  for the exact tip. Push only `community/open-source-foundation`; do not push `main` and do
-  not merge PR #1.
+- Docs commit for the runtime-policy pass: `0a1ae66`
+  (`docs(adr): record authorized runtime policy administration`).
+- Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
+  PR #1 is mergeable/clean.
+- This handoff is a docs-only verification commit after the merge head; read
+  `git log --oneline -4` for the exact tip. Push only `community/open-source-foundation`;
+  do not push `main` and do not merge PR #1.
 - Prior commits in this session:
   - `7103957` — authorized runtime policy publication with atomic replacement
   - `15ff877` — durable authorization decision audit with request correlation
@@ -42,10 +47,11 @@ Last updated: 2026-11-10 (Freebuff Cloud session, authorized runtime policy publ
 - Docker CLI is present but the daemon is not reachable to this user; `bwrap`, `podman`, and
   `sandbox-exec` are absent. Therefore the Docker/bubblewrap/Seatbelt providers cannot be
   integration-tested here. They fail closed when their probe fails.
-- GitHub Actions passed `ci`, `conformance`, and `schema-check` at `8cd427a` and its docs tip
-  `c64ba42`; the durable-audit docs tip `e65688e` was reported green. The runtime-policy
-  head `7103957` is pushed after this snapshot; observe its checks on GitHub rather than
-  treating local results as CI.
+- GitHub Actions passed `ci` (run `42887224979`), `conformance` (run `42887225101`), and
+  `schema-check` (run `42887224921`) at merge head `8c950e6`; PR #1 is mergeable/clean. Earlier
+  heads `8cd427a`/`c64ba42` and docs tip `e65688e` also passed. The docs-only verification
+  commit after `8c950e6` has its own checks; re-check it rather than treating this line as
+  covering a later tree.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -315,9 +321,9 @@ Operators can audit the full chain without redriving it.
 - 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
   Workflow.
 
-## Verification actually executed at `7103957`
+## Verification actually executed at `7103957` and CI at `8c950e6`
 
-Local at commit time; CI is observed after the push, not asserted here.
+Local at commit time; CI is observed after the push, not asserted from local results.
 
 ```sh
 pnpm -r run build
@@ -347,6 +353,9 @@ All six commands exited 0. Exact test results:
 | **Total** | **503 passed** |
 
 Schema regeneration produced no diff.
+
+GitHub Actions at merge head `8c950e6`: `ci`, `conformance`, and `schema-check` all
+succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 
 ### What each new test pins
 
@@ -576,7 +585,8 @@ Schema regeneration produced no diff.
 
 ## Next concrete work
 
-1. Observe CI on `7103957` and the docs tip; push only
+1. Exercise runtime policy publication in a production-like deployment with a real
+   non-bootstrap operator, independent audit consumer, and restart/recovery drill; push only
    `upstream community/open-source-foundation`.
 2. Test Docker and bubblewrap cancellation on machines where they are available, including
    the explicit container-kill path.
