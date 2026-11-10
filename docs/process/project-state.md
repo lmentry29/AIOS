@@ -1,9 +1,10 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest security code head: `f012df3` (per-run bubblewrap resource
-limits, F-003); its documentation/validation commit follows. The historical heads below remain
-the last CI verification recorded in this file; re-check the new head instead of reusing them.
+evidence from observed CI. Latest security code head: `24d2791` (F-014 Zod 4 closure, F-009
+policy-artifact digest mitigation, F-005 Seatbelt fail-closed regression); its
+documentation/validation commit follows. The historical heads below remain the last CI
+verification recorded in this file; re-check the new head instead of reusing them.
 Code head `4422229` (authorized runtime policy retirement) sits on
 the branch above the previously verified merge head `8c950e6`, which merged `upstream/main`
 at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
@@ -35,6 +36,17 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
   integrity-checked, idempotent restore (`restore-journal`) are implemented under ADR-0025.
   Execution attempts and verifier result digests survive compaction. Archives are
   digest-verified but unsigned and unencrypted; retention is an operator duty.
+- Zod 4.6.7 closes F-014 (GHSA-mrhx-c7xc-m3w5). The schema generator uses native
+  `z.toJSONSchema` with draft-07 input semantics, inline reuse, fail-closed cycles, and
+  recursive `additionalProperties:false`; generated schemas are committed and checked by
+  `schema-check`. The temporary audit exception is removed.
+- Policy lifecycle audit events now carry a canonical SHA-256 of the exact policy, recomputed
+  on registry load; substituted policy content is rejected even when the event hash chain still
+  verifies. This is F-009 tamper evidence, not a signature: external key custody, rotation, and
+  detached-signature verification remain blockers.
+- The deprecated macOS Seatbelt adapter has an executable fail-closed regression for
+  non-macOS hosts; the host never falls back to an unisolated process. Real Seatbelt and Apple
+  Containerization execution remain unverified.
 - Per-run bubblewrap resource limits: every run installs `RLIMIT_AS` 1.25 GiB,
   deadline-aligned `RLIMIT_CPU`, and `RLIMIT_NPROC` 128 with trusted `prlimit` inside the
   namespace (ADR-0028). The wrapper proves exact `/proc/self/limits` and `Seccomp: 2`; missing
@@ -180,6 +192,11 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   orchestration: 30; tools: 9; work-hierarchy: 24; containers: 21; learning: 28; agents: 6.
 - `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
   schemas/generated` — clean.
+- At hardening head `24d2791`: full workspace gate **46/46 tasks**; host **132 passed/17
+  skipped**; core **47**; founder **62**; live bubblewrap **17/17**; resource-limit, quota,
+  and seccomp drills all exit 0; production audit **0 triaged**; secret scan **272 tracked
+  files, no findings**. The 17 skipped host tests are the live suites run separately with
+  `AIOS_BWRAP_DIR` set.
 - GitHub Actions on `aa86a4e`: `ci` (run `42892775891`), `conformance` (run
   `42892776172`), and `schema-check` (run `42892775877`) all succeeded; PR #1 reported
   `mergeable: true`, `mergeable_state: unstable` while those runs were in flight. The

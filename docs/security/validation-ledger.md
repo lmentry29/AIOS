@@ -250,3 +250,60 @@ is not RSS, and CPU limits are per-process. The existing F-007 deny-list still k
 at startup because libuv probes `io_uring_setup`; the drill uses Perl, which does not probe
 io_uring. Docker, gVisor, Seatbelt, and Apple Containerization remain unverified or
 unavailable; the shared kernel remains in scope. See ADR-0028 and F-003.
+
+## 2026-11-10 — Zod advisory closure and blocked-finding mitigations (`24d2791`)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. F-014 was selected as the highest-severity genuinely actionable
+open finding; F-005 needs macOS/Apple hardware and F-009 needs external key custody.
+
+Commands actually run, in this order:
+
+```sh
+pnpm install --lockfile-only
+pnpm install --frozen-lockfile
+pnpm --filter @aios/core run generate:schemas
+pnpm --filter @aios/core test
+pnpm --filter @aios/objects test
+pnpm --filter @aios/founder test
+pnpm --filter @aios/founder typecheck
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+```
+
+Observed results at code head `24d2791`:
+
+- Schema generation wrote 10 files/40 schemas. The committed generated diff is **122 additions,
+  0 deletions**: UUID/date-time `pattern` keywords, safe-integer `maximum`, and record
+  `propertyNames`. It is not a reference-only or empty output, and `additionalProperties:false`
+  remains on every object. `json-schema-contract.test.ts` is 5/5.
+- Core **47 passed**; objects **32 passed**; founder **62 passed**, including the new policy
+  artifact-digest substitution rejection. Host focused execution tests **8 passed**, including
+  the non-macOS Seatbelt fail-closed case. Full workspace gate: **46/46 tasks successful**;
+  host **132 passed, 17 skipped** (the 17 skips are the live suites without `AIOS_BWRAP_DIR`).
+- Real bubblewrap suite with `AIOS_BWRAP_DIR` set: **17/17 passed** (12 boundary/limit, 3
+  seccomp, 2 quota). Resource-limit drill: legitimate Perl exit 0 with
+  `resource_limits_applied:true`; memory bomb exit 1, `Out of memory!`, `timed_out:false`;
+  filter `Seccomp: 2`, profile SHA-256
+  `12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac`.
+- Quota drill: over-cap run stopped/discarded with 0 workspace entries and 0 matching
+  processes; under-cap 65,536 bytes; sequential 65,536 and 32,768 bytes. Seccomp drill: denied
+  run stopped with 0 workspace entries/0 processes; legitimate and next runs exit 0.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)` — the temporary
+  GHSA-mrhx-c7xc-m3w5 exception is gone. `secret-scan: no findings across 272 tracked files`.
+
+What is verified versus not:
+
+- **Verified on this host:** the zod 4.6.7 upgrade, native draft-07 generation, schema
+  constraints, policy-event digest binding, Seatbelt non-macOS fail-closed behavior,
+  bubblewrap boundary/seccomp/quota/resource limits, process cleanup, and verifier binding.
+- **Not verified:** real Seatbelt profile enforcement (no macOS host), Apple Containerization,
+  Docker/rootless cgroup behavior, gVisor, Landlock, aggregate cgroup memory/CPU accounting,
+  a hard filesystem quota, and external policy signing/key custody. F-005 and F-009 remain
+  accepted with the exact blockers recorded in the findings ledger; F-006 remains unverified.

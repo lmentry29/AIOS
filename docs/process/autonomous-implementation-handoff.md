@@ -3,9 +3,10 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, bubblewrap per-run resource limits and CI
-verification). Latest security code head: `f012df3` (F-003); its documentation/validation
-commit follows. Re-check this head rather than older CI lines below.
+Last updated: 2026-11-10 (Freebuff Cloud session, Zod advisory closure and policy-provenance
+mitigation). Latest security code head: `24d2791` (F-014, F-009 mitigation, F-005
+fail-closed regression); its documentation/validation commit follows. Re-check this head
+rather than older CI lines below.
 
 ## Repository state
 
@@ -636,6 +637,34 @@ bomb at exit 1 with `Out of memory!`, `timed_out:false`, while the filter still 
 reserve 1.25 GiB; RLIMIT_AS is not RSS. Node/libuv probes `io_uring_setup` and is killed by the
 F-007 filter at startup, so the drill uses Perl. Docker/gVisor/Seatbelt/Apple Containerization
 remain unverified. See ADR-0028, F-003, and the validation ledger.
+
+## Completed — Zod advisory closure and blocked-finding mitigations (`24d2791`)
+
+F-014 (High, `zod` GHSA-mrhx-c7xc-m3w5) was the highest-severity genuinely actionable open
+finding: F-005 needs unavailable macOS/Apple hardware and F-009 needs external key custody.
+The production packages now use `zod` 4.6.7. The schema generator was moved from the
+Zod-4-incompatible `zod-to-json-schema` to native `z.toJSONSchema` (draft-07, input view,
+inline reuse, fail-closed cycles), while restoring recursive `additionalProperties:false`.
+The generated diff is 122 additions/0 deletions and retains every prior constraint. The
+temporary audit exception is removed; `audit-policy` reports 0 triaged high/critical.
+
+For F-009, every new policy lifecycle event records a canonical SHA-256 of the exact policy;
+startup recomputes it and rejects substituted policy content even when the audit hash chain
+still verifies. This is tamper evidence, not a signature. The blocker is the absence of
+KMS/HSM/Sigstore key custody and signing material; unblock requires an external signing key
+with rotation/audit custody and detached-signature verification drills. For F-005, the host
+now has an executable regression proving the deprecated Seatbelt provider is unavailable off
+macOS and never falls back to bare process execution; real macOS/Apple Containerization
+validation remains blocked on hardware.
+
+Evidence: full gate **46/46 tasks**; host **132 passed/17 skipped**; core **47**, founder
+**62**; live bwrap **17/17**; resource-limit, quota, and seccomp drills all exit 0; secret scan
+**272 tracked files, no findings**. Docker, gVisor, Seatbelt, and Apple Containerization remain
+unverified. See F-005/F-009/F-014, the validation ledger, and the ADR-0009 amendment.
+
+Next action: close F-013 (host session-token rotation/revocation) in the production identity
+path, with a real expiry/revocation regression and the same full-gate/live evidence. Do not
+claim signed policy provenance or macOS isolation until the recorded blockers are cleared.
 
 ## Next concrete work
 

@@ -10,9 +10,20 @@ With the Canonical Object Model ratified (ADR-0007) and TypeScript/Node.js chose
 - **Single private GitHub repository, monorepo.** Nine packages (`@aios/core`, `@aios/objects`, `@aios/work-hierarchy`, `@aios/containers`, `@aios/agents`, `@aios/tools`, `@aios/learning`, `@aios/orchestration`, `@aios/founder`), matching `docs/engineering/runtime-interfaces.md`'s component boundaries and dependency graph exactly — no change to the boundaries, only to naming and physical layout.
 - **Toolchain:** pnpm (package manager, workspace protocol, strict `node_modules` layout), Turborepo (build orchestration, dependency-graph-aware caching), Biome (lint/format), Vitest (test runner, one workspace spanning per-package unit tests plus centralized `tests/integration` and `tests/conformance`), Zod (schema/validation source, with JSON Schema generated from it — see §1.10 below).
 - **Two-tier documentation, enforced by directory:** `docs/adr/` + `docs/architecture/` (the certified corpus — ADR-0001 through ADR-0009, the Specification, Conformance Standard, Appendices, Normative Amendment 001) changes only via a new or amending ADR and is `CODEOWNERS`-gated. `docs/engineering/` (Canonical Object Model, schemas design intent, runtime interfaces, state machines, API contracts, developer reference, implementation roadmap, implementation playbook) is living reference, changed via normal PR review, escalating to a new ADR only if a change reveals `docs/architecture/` is actually wrong. `docs/process/` (changelog, certification report, AI development plan/workflow, repository design spec) is append-mostly status record. `docs/archive/` is frozen historical material.
-- **§1.10 — Generated vs. manual artifacts:** `packages/core/src/schema/*.ts` (Zod definitions) is the single hand-edited source of truth, replacing the previous hand-maintained parallel JSON Schema + TypeScript pair (`docs/archive/object-schemas-superseded.md`) that could silently drift against each other. `schemas/generated/*.json` is generated from it via `zod-to-json-schema`, is git-tracked for PR-visible diffs, and is never hand-edited — enforced by `schema-check.yml` failing the build on any diff between committed and regenerated output.
+- **§1.10 — Generated vs. manual artifacts:** `packages/core/src/schema/*.ts` (Zod definitions) is the single hand-edited source of truth, replacing the previous hand-maintained parallel JSON Schema + TypeScript pair (`docs/archive/object-schemas-superseded.md`) that could silently drift against each other. `schemas/generated/*.json` is generated from it via Zod 4's native `z.toJSONSchema` (amended 2026-11-10), is git-tracked for PR-visible diffs, and is never hand-edited — enforced by `schema-check.yml` failing the build on any diff between committed and regenerated output.
 - **Versioning:** software semver from `0.1.0` via Changesets, explicitly distinct from "AIOS Architecture Version" (ADR-numbered) — the two axes will diverge in practice.
 - **Git workflow:** trunk-based, `main` always buildable (CI-enforced), no long-lived `develop` branch, per-package or per-vertical-slice short-lived branches, Conventional Commits, an AI-attribution trailer (`Implemented-by: Claude` / `Implemented-by: Ollama/<model>`) on AI-authored commits.
+
+## Amendment (2026-11-10) — Zod 4 native JSON Schema conversion
+
+The F-014 security upgrade moved `@aios/core` and `@aios/objects` to `zod` 4.6.7, above the
+GHSA-mrhx-c7xc-m3w5 fix line. `zod-to-json-schema` returns an empty schema for Zod 4 inputs, so
+the generator now calls Zod's native `z.toJSONSchema` with `target: "draft-7"`, `io: "input"`,
+`reused: "inline"`, and `cycles: "throw"`. It also restores `additionalProperties: false`
+recursively and fails generation when a schema cannot be represented. The §1.10 architecture
+decision is unchanged: Zod remains the single hand-edited source of truth, generated JSON is
+git-tracked and never hand-edited, and `schema-check` continues to reject drift. This
+amendment records only the converter and its compatibility constraints.
 
 ## Rationale
 - The dependency graph in `docs/engineering/runtime-interfaces.md` §4 already exists conceptually; Turborepo and pnpm workspaces make it operationally real rather than requiring a new design.
