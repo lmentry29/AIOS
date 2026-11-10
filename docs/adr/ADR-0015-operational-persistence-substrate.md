@@ -1,11 +1,11 @@
 # ADR-0015 — Operational Persistence Substrate
 
 ## Status
-**Accepted** (2026-11-10). This ADR does not amend ADR-0014. It concerns operational
-Task/Workflow/Artifact/run state only, which ADR-0014 explicitly leaves as a separate
-architectural question. Acceptance is based on the implemented journal and its tested
-recovery, tamper-detection, idempotency, and lease behavior; it is not a claim that
-compaction or migrations exist.
+**Accepted** (2026-11-10; extended by ADR-0021). This ADR does not amend ADR-0014. It
+concerns operational Task/Workflow/Artifact/run/execution state only, which ADR-0014
+explicitly leaves as a separate architectural question. Acceptance is based on the
+implemented journal and its tested recovery, tamper-detection, idempotency, lease, and
+execution-lifecycle behavior; it is not a claim that compaction or migrations exist.
 
 ## Context
 
@@ -45,6 +45,10 @@ Use a **hash-chained, fsync'd append-only journal** per host, implemented in
 - Dispatch runs are journaled with caller-supplied idempotency keys and time-bounded leases.
   Startup recovery marks runs from a previous boot `interrupted` and the host suspends their
   Workflows and active Tasks rather than completing them.
+- Per-Task executions are journaled separately (ADR-0021) as `running`, `completed`, `failed`,
+  `cancelled`, or `interrupted`. Terminal execution records are immutable. Startup recovery
+  marks `running` executions `interrupted`, suspends affected Workflows/Tasks, and never
+  re-executes them.
 
 ### Substrates considered
 
@@ -72,5 +76,7 @@ orchestration, the host API, or tests' semantics.
   corrupting state. A versioned migration path is required before the first breaking change.
 - Backup/restore is file-level: stop the host, copy the owner-only directory, restart. This is
   documented and testable, but not yet automated.
-- Interrupted runs are recoverable as evidence, not silently retried. Operators must create a
-  new Workflow (or a future resume operation) after reviewing the interrupted run.
+- Interrupted runs and executions are recoverable as evidence, not silently retried.
+  Operators must create a new Workflow (or a future resume operation) after reviewing the
+  interrupted work. Cancellation is terminal for an execution; there is no resume operation
+  yet.

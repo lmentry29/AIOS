@@ -67,13 +67,32 @@ first local slice and explicitly rejects a subprocess as a security boundary.
 - Local execution is unavailable on hosts without Docker, bubblewrap, or Seatbelt; that is
   visible in `/health` and is a supported state, not a bug.
 - Docker requires a pre-pulled image; the host never pulls one implicitly.
-- Bubblewrap/Landlock/seccomp hardening, cancellation, retry/backoff, and resource
-  accounting beyond the provider limits remain follow-up work.
+- Bubblewrap/Landlock/seccomp hardening, retry/backoff, and resource accounting beyond the
+  provider limits remain follow-up work. Cancellation, bounded concurrency, and restart
+  reconciliation of Task executions are implemented under ADR-0021.
 - A signed verifier decision is not yet implemented. The current trust anchor is the
   host-configured verifier principal plus an actual independent command; a future ADR must
   add key distribution/rotation before claiming cryptographic verifier provenance.
 - Coordination (`coordinate()`) is not implemented by the local adapter. It fails rather
   than pretending that one command coordinated multiple Agents.
+
+## Amendment (2026-11-10) — execution lifecycle
+
+ADR-0021 extends this ADR without weakening its isolation or verifier trust model. It adds:
+
+- a per-Task durable execution ledger, separate from dispatch runs;
+- an exact `cancel` authorization action and `POST /v1/tasks/:taskId/cancel`;
+- `AbortSignal` propagation into every provider so cancellation kills the child (Docker also
+  kills its named container explicitly);
+- a strict `execution.max_concurrent_tasks` cap (1–32, default 1) with deterministic 429
+  rejection before lifecycle writes; and
+- startup reconciliation that marks running executions `interrupted` and suspends affected
+  Workflows/Tasks exactly once.
+
+A cancelled execution still cannot be marked complete by a late executor result, and the
+verifier is skipped when cancellation is observed before verification starts. The production
+sandbox providers remain unverified on this host; the test-only process provider and sandbox
+stub are explicitly non-isolating.
 
 ## Tests / evidence
 
@@ -84,4 +103,6 @@ construction via a fake CLI (flags/argv only; not real isolation). `config.test.
 same-agent/verifier identities, unsafe images, and unsupported providers.
 `http-host.test.ts` proves dispatch remains 503 and lifecycle state unchanged when no
 adapters are configured, and dispatches through the real executor/verifier pair with a
-clearly labelled test-only sandbox.
+clearly labelled test-only sandbox. It also covers authorized/denied cancellation, skipped
+verification, cap rejection, and crash/restart reconciliation; see ADR-0021 for the exact
+property-to-test mapping.

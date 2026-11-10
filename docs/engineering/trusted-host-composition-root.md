@@ -62,7 +62,8 @@ field fails startup instead of being silently ignored. A partial example (no sec
     "provider": "docker",
     "image": "node:22-alpine",
     "default_timeout_ms": 60000,
-    "max_output_bytes": 65536
+    "max_output_bytes": 65536,
+    "max_concurrent_tasks": 1
   }
 }
 ```
@@ -70,7 +71,10 @@ field fails startup instead of being silently ignored. A partial example (no sec
 The `execution` block is optional. `agent_id` and `verifier_id` must be distinct UUIDs;
 `provider` is `auto`, `bubblewrap`, `seatbelt`, or `docker`; Docker requires a local image
 and never pulls one implicitly. The host checks the provider before advertising dispatch and
-fails closed to 503 if it is unavailable.
+fails closed to 503 if it is unavailable. `max_concurrent_tasks` is optional, must be an
+integer from 1 to 32, and defaults to 1. A dispatch beyond the cap is rejected with 429
+`execution_capacity_exceeded` before any lifecycle write; it is not queued and it does not
+start a sandbox invocation.
 
 `obsidian` is optional and, when present, must be `http://127.0.0.1:<port>` or
 `http://[::1]:<port>` with no credentials, path, query, or fragment. The Obsidian++ password
@@ -78,8 +82,8 @@ is read from `AIOS_OBSIDIAN_PASSWORD` (minimum 32 bytes) and never from this fil
 
 Rejected configurations include: non-loopback bind addresses, relative policy paths,
 duplicate resource UUIDs, duplicate session identifiers or token digests, a non-human
-bootstrap principal, a bootstrap principal with no session, and a group/world-readable
-config file.
+bootstrap principal, a bootstrap principal with no session, nonsensical or out-of-range
+execution limits, and a group/world-readable config file.
 
 ## Identity
 
@@ -95,8 +99,8 @@ Caller-supplied actor strings are never treated as authentication, per ADR-0013.
 
 ## Durable operational state (ADR-0015)
 
-Tasks, Workflows, Artifacts, and dispatch runs are stored in an owner-only directory as a
-single `operational.jsonl` journal. It is deliberately separate from the Obsidian vault:
+Tasks, Workflows, Artifacts, dispatch runs, and per-Task execution records are stored in an
+owner-only directory as a single `operational.jsonl` journal. It is deliberately separate from the Obsidian vault:
 ADR-0014 remains the Founder Intelligence substrate, and this host never reads or writes
 vault notes as operational storage.
 
@@ -116,10 +120,21 @@ vault notes as operational storage.
   `Idempotency-Key` header. A completed run is replayed for the same key; a second key (or a
   second caller) while a lease is live receives `409 dispatch_conflict`. Leases are renewed
   while dispatch runs and expire if the worker disappears.
-- **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; their
-  `active`/`monitored` Workflows and active Tasks are transitioned to `suspended`. Interrupted
-  work is never completed by recovery, and `/health` reports how many Workflows were
-  recovered.
+- **Execution lifecycle.** A separate per-Task execution record is journaled before the
+  sandbox starts and driven to exactly one terminal state: `completed`, `failed`, `cancelled`,
+  or `interrupted`. Terminal records are immutable. Evidence is bounded and hashed; raw
+  output and exception messages are not copied into the journal. A late executor result
+  cannot overwrite a cancellation.
+- **Cancellation.** `POST /v1/tasks/:taskId/cancel` requires an exact `cancel` grant. The
+  terminal cancellation record is committed before the active sandbox is aborted. The local
+  executor sends `SIGKILL`; Docker additionally kills its uniquely named container. The
+  verifier is skipped when cancellation is observed before verification starts. An active
+  Task becomes `suspended`; a queued Task remains `created`, and a later dispatch is rejected.
+- **Recovery.** At startup, runs left by a previous boot are marked `interrupted`; running
+  Task executions are also marked `interrupted`; and their `active`/`monitored` Workflows and
+  Tasks are transitioned to `suspended`. Interrupted work is never re-executed or completed
+  by recovery. A second startup sees terminal records and is a no-op. `/health` reports how
+  many Workflows and executions were recovered.
 
 Known limitations, recorded rather than hidden: no journal compaction or snapshotting yet
 (the journal fails closed at 64 MiB), no schema-migration framework, backup/restore is a
@@ -137,6 +152,7 @@ Loopback only, no CORS headers, `no-store` responses.
 | GET | `/v1/workflows?limit=` | Lists only Workflows on which the session has `read_status` |
 | GET | `/v1/tasks/:id` | Requires `read_status` on the Task |
 | GET | `/v1/workflows/:id` | Requires `read_status` on the Workflow |
+| POST | `/v1/tasks/:id/cancel` | Requires exact `cancel`; optional bounded `reason`; 202, or 200 if already cancelled |
 | GET | `/v1/tasks/:taskId/evidence/:evidenceId` | Kernel enforces evidence linkage and `read_evidence` |
 | POST | `/v1/intake` | `{ kind: "task" \| "workflow", entity }`; provenance must match the session |
 | POST | `/v1/workflows/:id/dispatch` | Requires `Idempotency-Key`; replays a completed key, 409 while another lease is live, 503 without adapters |
@@ -153,7 +169,8 @@ Requests carrying a non-loopback `Host` header are rejected (DNS rebinding), as 
 carrying any `Origin` header (no browser cross-origin client exists yet, so there is no CORS
 surface to get wrong). JSON bodies require `application/json`, are bounded by
 `request_body_limit_bytes` (256 KiB default), and are rejected with 413 rather than buffered
-without limit.
+without limit. The cancel route accepts an empty body; when a reason is supplied it is
+bounded and represented in the journal by a SHA-256 digest, not the caller's text.
 
 ## Policy provisioning
 
@@ -212,8 +229,13 @@ single-process lock.
 - human-only governance and bootstrap-only audit reads;
 - media-type, JSON, and body-limit enforcement;
 - policy-lock release and hash-chain re-verification after shutdown;
-- restart recovery of Tasks/Workflows from the operational journal;
-- interrupted dispatch recovered as `interrupted`, with its Workflow and Task `suspended`;
+- authorized cancellation of an executing Task, with the sandbox stub aborted, the verifier
+  skipped, and a terminal cancelled execution plus cancelled run recorded;
+- queued cancellation and denied cancellation, with no execution or ledger write on denial;
+- concurrent dispatch rejected with 429 before lifecycle writes, then retried successfully;
+- restart recovery of Tasks/Workflows and running executions from the operational journal;
+- interrupted dispatch/execution recovered as `interrupted`, with its Workflow and Task
+  `suspended`, and a second startup making no further changes;
 - idempotent replay of a completed dispatch and rejection of a conflicting one;
 - missing `Idempotency-Key`, expired-lease reclaim, tamper detection, and torn-tail recovery
   (`tests/persistence.test.ts`).
@@ -223,8 +245,9 @@ single-process lock.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
   host process. Learning records remain in-memory. Backup/restore is a documented file copy,
-  not an automated procedure. Dispatch is idempotent and leased, but there is no retry backoff
-  or automatic resume of interrupted work.
+  not an automated procedure. Dispatch is idempotent and leased, and cancellation is
+  terminal per execution, but there is no retry backoff or automatic resume of interrupted
+  work.
 - **Execution and verification.** The fixed `local.exec` path exists for Docker,
   bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured

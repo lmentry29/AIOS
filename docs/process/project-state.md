@@ -10,7 +10,7 @@ local evidence only; no GitHub Actions run has been observed for the current cod
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `2d68052` (`fix(host): keep Docker workspaces usable and action evidence honest`)
+- Verified code head: `d414cbe` (`feat(host): make Task execution cancellable, bounded, and recoverable`)
 - The docs commit that updates this file follows the code head. Read `git log --oneline -4`
   for the actual tip.
 - Do not push `main`. The implementation branch may be pushed to
@@ -30,12 +30,13 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/agents` | Agent lifecycle/conformance runner; not a general tool-executing agent runtime |
 | `@aios/tools` | Plugin lifecycle management; general adapter invocation remains deferred |
 | `@aios/learning` | Knowledge records and evolution stages; in-memory |
-| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
-| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, recovery-to-suspended |
+| `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with the exact `cancel` action, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
+| `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks, evidence artifacts, status/evidence reads, cancellation preflight/checks; execution is injected |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger, authorized cancellation, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
-broker, no signed verifier provenance, and no live external-provider verification.
+broker, no signed verifier provenance, no resume/retry operation, and no live
+external-provider verification.
 
 ## Architecture decisions
 
@@ -46,8 +47,8 @@ broker, no signed verifier provenance, and no live external-provider verificatio
   persistence substrate; no parallel Founder database; read-and-propose by default;
   permanent Memory requires explicit human review/authorization.
 - ADR-0015 — **Accepted (2026-11-10)**: hash-chained, fsync'd append-only operational
-  journal for Task/Workflow/Artifact/run state, with idempotency, leases, tamper detection,
-  and recovery-to-suspended. No compaction or migration framework yet.
+  journal for Task/Workflow/Artifact/run/execution state, with idempotency, leases, tamper
+  detection, and recovery-to-suspended. No compaction or migration framework yet.
 - ADR-0016 — **Accepted (2026-11-10)**: `packages/*` are the platform domain; `apps/host`
   is the trusted local application; UI is an untrusted future client. The host rejects every
   `Origin` until a session/CSRF/cookie ADR exists.
@@ -60,63 +61,73 @@ broker, no signed verifier provenance, and no live external-provider verificatio
   verifier command.
 - ADR-0020 — **Accepted (2026-11-10)**: `@aios/*` remain private; distribution is an
   application artifact under named release profiles. No npm publication.
+- ADR-0021 — **Accepted (2026-11-10)**: exact authorized `cancel`; durable per-Task
+  execution ledger; process termination via `AbortSignal`/`SIGKILL`; strict
+  `execution.max_concurrent_tasks` (1–32, default 1) with deterministic 429 rejection; startup
+  reconciliation of interrupted executions without re-execution or duplicate terminal effects.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
 
 ## Validation evidence
 
-Local checks at code head `2d68052` (Node 26.13.0, pnpm 11.11.0):
+Local checks at code head `d414cbe` (Node 26.13.0, pnpm 11.11.0):
 
 - `pnpm -r run build` — pass.
 - `pnpm -r run typecheck` — pass.
-- `pnpm -r run lint` — pass (the only issue found was an unused verifier type import, fixed
-  before the final host check).
-- `pnpm -r run test` — pass.
-- Host: **54 tests** in 6 files, including 17 loopback HTTP tests, per-resource Task/
-  Workflow list filtering, a composed executor/verifier dispatch test, and a fake-Docker
-  CLI test of the isolation flags and argv preservation.
-- Core: **46 tests**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
-  orchestration: 26; other package suites pass.
-- Generated `schemas/generated/task.json` includes the execution/verification definitions.
+- `pnpm -r run lint` — pass.
+- `pnpm -r run test` — pass, **440 tests total**.
+- Host: **61 tests** in 7 files, including 21 loopback HTTP tests, cancellation with a
+  test-only sandbox stub, a real child-process SIGKILL test with a labelled
+  `test-only-process` provider, cap enforcement/retry, late-result rejection, and
+  journal-level crash/restart reconciliation.
+- Core: **46**; conformance: **107**; integration: **43**; objects: 32; founder: 50;
+  orchestration: 26; tools: 9; work-hierarchy: 24; containers: 21; learning: 15; agents: 6.
+- `pnpm --filter @aios/core run generate:schemas` — pass; `git diff --exit-code
+  schemas/generated` — clean.
 
 These are local results, not CI results. The real Docker, bubblewrap, and Seatbelt providers
 could not be integration-tested here: the Docker daemon is inaccessible and the other tools
-are absent. The adapter tests use a clearly labelled test-only sandbox that isolates nothing.
+are absent. The cancellation and crash tests use clearly labelled test-only process/sandbox
+doubles where a real isolation provider is unavailable; they do not claim container isolation.
 
 ## Production blockers — not optional
 
 1. **Execution isolation proof.** Docker/bubblewrap/Seatbelt implementations need testing on
-   hosts where they actually run, including mount permissions, network denial, PID/memory
-   limits, and hostile commands. Bubblewrap has no cgroup accounting or seccomp profile and
-   is trusted-local only.
+   hosts where they actually run, including cancellation/container-kill behavior, mount
+   permissions, network denial, PID/memory limits, and hostile commands. Bubblewrap has no
+   cgroup accounting or seccomp profile and is trusted-local only.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
    a compromised host process.
-3. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
+3. **Resume/retry semantics.** Cancellation is terminal per execution and the cap rejects
+   rather than queues. There is no resume, automatic retry, or backoff.
+4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
    infrastructure inventory, or secret broker exists.
-4. **Identity/policy lifecycle.** Bearer sessions and a durable policy registry exist, but
+5. **Identity/policy lifecycle.** Bearer sessions and a durable policy registry exist, but
    there is no user-facing login, policy recovery/rotation procedure, or independent audit
    sink. Policy administration is an offline human CLI.
-5. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
+6. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
    per-note authorization, retrieval/context assembly, contradiction detection, and reviewed
    memory writes remain open. Do not bulk-migrate or modify the vault.
-6. **Live connectors.** Gmail/Notion/Obsidian++ need OAuth/token lifecycle, scopes, health,
+7. **Live connectors.** Gmail/Notion/Obsidian++ need OAuth/token lifecycle, scopes, health,
    pagination, rate limits, retries, and live integration tests.
-7. **UI.** No UI exists. The host rejects all browser origins by design (ADR-0016).
-8. **Orchestration depth.** No dependencies, scheduler, parallelism, cancellation, approval
-   gates, or automatic resume of suspended work.
-9. **Operations.** No journal compaction/migrations, automated backup/restore drill,
-   metrics/tracing/alerting, threat model, incident runbook, or SLOs.
-10. **Release.** No installer, signed update channel, or supported npm install path.
+8. **UI.** No UI exists. The host rejects all browser origins by design (ADR-0016).
+9. **Orchestration depth.** No dependencies, scheduler, parallelism, approval gates, or
+   automatic resume of suspended work.
+10. **Operations.** No journal compaction/migrations, automated backup/restore drill,
+    metrics/tracing/alerting, threat model, incident runbook, or SLOs.
+11. **Release.** No installer, signed update channel, or supported npm install path.
 
 ## Next work order
 
 1. Push the branch and observe CI on the exact commit; do not treat local results as CI.
-2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results.
+2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
+   cancellation and the explicit Docker container kill.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.
-4. Source/review the Mission field model before adding any Mission API/schema.
-5. Build a secret broker before any provider credential is introduced.
-6. Keep PR #1 draft; do not merge or push `main`.
+4. Design and review resume/retry semantics before weakening terminal cancellation.
+5. Source/review the Mission field model before adding any Mission API/schema.
+6. Build a secret broker before any provider credential is introduced.
+7. Keep PR #1 draft; do not merge or push `main`.
 
 ## Source-of-truth rules
 
