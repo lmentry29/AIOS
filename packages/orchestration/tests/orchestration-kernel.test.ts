@@ -9,6 +9,7 @@ import {
   type AuthorizationPort,
   type AuthorizationRequest,
   type TaskExecutionObservation,
+  type TaskVerificationDecision,
 } from '../src/index.js';
 
 function task() {
@@ -84,6 +85,7 @@ function harness(overrides: {
       accepted: overrides.verified ?? true,
       reason: overrides.verified === false ? 'test verifier rejection' : 'test verifier accepted',
       evidence: overrides.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+      verifier_id: verifierId,
     })),
   };
   const kernel = new OrchestrationKernel(tasks, {
@@ -414,5 +416,52 @@ describe('OrchestrationKernel', () => {
     await expect(kernel.getWorkflowAttempts(randomUUID(), 'human:founder')).rejects.toThrow(
       /denied by authorization policy/,
     );
+  });
+
+  it('rejects a verification decision attributed to a different verifier', async () => {
+    const h = harness();
+    const impostorId = randomUUID();
+    const verify = vi.fn(async () => ({
+      accepted: true,
+      reason: 'impostor verifier accepted',
+      evidence: ['verifier:impostor'],
+      verifier_id: impostorId,
+    }));
+    const kernel = new OrchestrationKernel(h.tasks, {
+      authorization: h.authorization,
+      execution: h.execution,
+      verification: { verifier_id: h.verifierId, verify },
+      resolveAgent: async () => h.agentId,
+    });
+    const t = h.tasks.createTask(task());
+    const wf = workflow([t.entity_id]);
+    await kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier identity/);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
+  });
+
+  it('rejects a verification decision with no verifier identity', async () => {
+    const h = harness();
+    const unattributed = {
+      accepted: true,
+      reason: 'unattributed verifier accepted',
+      evidence: ['verifier:unattributed'],
+    } as unknown as TaskVerificationDecision;
+    const verify = vi.fn(async () => unattributed);
+    const kernel = new OrchestrationKernel(h.tasks, {
+      authorization: h.authorization,
+      execution: h.execution,
+      verification: { verifier_id: h.verifierId, verify },
+      resolveAgent: async () => h.agentId,
+    });
+    const t = h.tasks.createTask(task());
+    const wf = workflow([t.entity_id]);
+    await kernel.intake({ kind: 'workflow', workflow: wf }, 'human:founder');
+
+    await expect(kernel.dispatch(wf, 'human:founder')).rejects.toThrow(/verifier identity/);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(h.tasks.getTask(t.entity_id)?.lifecycle_state).toBe('suspended');
   });
 });

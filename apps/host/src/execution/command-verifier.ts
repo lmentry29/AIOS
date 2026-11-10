@@ -71,6 +71,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     return {
       accepted,
       reason,
+      verifier_id: this.verifier_id,
       evidence: [
         `verifier:${this.verifier_id}`,
         `task:${request.task.entity_id}`,

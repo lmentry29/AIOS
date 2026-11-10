@@ -95,6 +95,7 @@ function harness(options: {
         accepted: options.verified ?? true,
         reason: options.verified === false ? 'test verifier rejection' : 'test verifier accepted',
         evidence: options.verified === false ? [] : ['verifier:acceptance-criteria-checked'],
+        verifier_id: verifierId,
       }),
     },
     resolveAgent: async () => randomUUID(),
@@ -170,6 +171,7 @@ describe('OrchestrationKernel', () => {
     const tasks = new TaskStore();
     const current = tasks.createTask(task());
     const wf = workflow([current.entity_id]);
+    const verifierId = randomUUID();
     const kernel = new OrchestrationKernel(tasks, {
       authorization: { authorize: async () => true },
       execution: {
@@ -178,11 +180,11 @@ describe('OrchestrationKernel', () => {
         coordinate: async () => ({ summary: 'done', evidence: ['executor:result'] }),
       },
       verification: {
-        verifier_id: randomUUID(),
+        verifier_id: verifierId,
         verify: async (request) => {
           expect(() => { (request.task as { name: string }).name = 'tampered'; }).toThrow();
           expect(() => { (request.execution_result as { summary: string }).summary = 'forged'; }).toThrow();
-          return { accepted: true, reason: 'verified', evidence: ['verifier:checked'] };
+          return { accepted: true, reason: 'verified', evidence: ['verifier:checked'], verifier_id: verifierId };
         },
       },
       resolveAgent: async () => randomUUID(),

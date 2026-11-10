@@ -121,6 +121,7 @@ describe('founder authorization → orchestration integration', () => {
           accepted: execution_result.evidence.includes(`task:${task.entity_id}:executed`),
           reason: 'Integration verifier checked the executor evidence against the Task ID.',
           evidence: [`verified-task:${task.entity_id}`],
+          verifier_id: VERIFIER_ID,
         }),
       },
       resolveAgent: async () => AGENT_ID,

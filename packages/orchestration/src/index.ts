@@ -135,6 +135,8 @@ export interface TaskVerificationDecision {
   accepted: boolean;
   evidence: string[];
   reason: string;
+  /** The verifier principal that produced this decision; must match the configured verifier. */
+  verifier_id: string;
 }
 
 /** Independent verifier; must not simply trust the executor's self-reported outcome. */
@@ -1023,13 +1025,17 @@ export class OrchestrationKernel {
     if (!evidence) throw new OrchestrationError(`Execution evidence "${evidenceId}" was not found.`);
     const task = this.tasks.getTask(taskId);
     if (!task) throw new OrchestrationError(`Task "${taskId}" was not found.`);
-    let evidenceTaskId: unknown;
+    let record: Record<string, unknown>;
     try {
-      evidenceTaskId = JSON.parse(evidence.description ?? '{}').task_id;
+      const parsed: unknown = JSON.parse(evidence.description ?? '{}');
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      record = parsed as Record<string, unknown>;
     } catch {
       throw new OrchestrationError('Execution evidence has an invalid task reference.');
     }
-    if (evidenceTaskId !== taskId || task.audit_trail_ref !== evidenceId) {
+    if (record.task_id !== taskId || task.audit_trail_ref !== evidenceId) {
       throw new OrchestrationError('Execution evidence is not linked to the requested Task.');
     }
     if (!(await this.options.authorization.authorize({
@@ -1038,6 +1044,18 @@ export class OrchestrationKernel {
       resource_id: task.entity_id,
     }))) {
       throw new OrchestrationError('Execution evidence read denied by authorization policy.');
+    }
+    // Evidence is only authoritative when it records an accepted decision attributed to the
+    // verifier this host currently trusts. A missing or swapped identity fails closed rather
+    // than letting a stale or misattributed record pass as verified.
+    if (record.verifier_accepted !== true) {
+      throw new OrchestrationError('Execution evidence is not an accepted verification record.');
+    }
+    if (typeof record.verifier_id !== 'string'
+      || record.verifier_id !== this.options.verification.verifier_id) {
+      throw new OrchestrationError(
+        'Execution evidence verifier identity is missing or does not match the configured verifier.',
+      );
     }
     return evidence;
   }
@@ -1170,6 +1188,14 @@ export class OrchestrationKernel {
       || verification.evidence.length === 0
       || verification.evidence.some((item) => typeof item !== 'string' || !item.trim())) {
       throw new OrchestrationError(`Task "${task.entity_id}" was not completed: independent verification rejected or supplied no evidence.`);
+    }
+    // The decision must name the verifier that actually produced it, and that identity must
+    // be the host-configured verifier. A missing or substituted identity is not verification.
+    if (typeof verification.verifier_id !== 'string'
+      || verification.verifier_id !== verifierId) {
+      throw new OrchestrationError(
+        `Task "${task.entity_id}" was not completed: the verification decision verifier identity is missing or does not match the configured verifier.`,
+      );
     }
     return { result: snapshot, decision: verification, verifier_id: verifierId };
   }

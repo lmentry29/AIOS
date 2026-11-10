@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AccessAction, AccessPolicy } from '@aios/founder';
 import { FilePolicyRegistry, PolicyAdministrationService } from '@aios/founder';
 import type { AgentExecutionPort, TaskVerificationPort } from '@aios/orchestration';
+import { ArtifactEntity } from '@aios/core';
 import type { TaskEntity, WorkflowEntity } from '@aios/core';
 import { loadHostConfig } from '../src/config.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
@@ -73,6 +74,7 @@ const verification: TaskVerificationPort = {
     accepted: execution_result.evidence.includes(`task:${task.entity_id}:executed`),
     reason: 'Independent verifier matched the executor evidence to the Task identifier.',
     evidence: [`verified-task:${task.entity_id}`],
+    verifier_id: VERIFIER_ID,
   }),
 };
 
@@ -94,6 +96,7 @@ async function startHost(options: {
   policy?: AccessPolicy;
   withAdapters?: boolean;
   withLocalAdapters?: boolean;
+  verification?: TaskVerificationPort;
   directory?: string;
   maxConcurrentTasks?: number;
 } = {}): Promise<Harness> {
@@ -144,6 +147,7 @@ async function startHost(options: {
     ...(localAdapters === undefined
       ? {}
       : { ...localAdapters, resolveAgent: async () => AGENT_ID }),
+    ...(options.verification === undefined ? {} : { verification: options.verification }),
   });
   const server = createHostServer(runtime);
   const address = await server.listen();
@@ -432,6 +436,115 @@ describe('trusted host HTTP surface', () => {
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'dispatch', decision: 'allow' }));
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'read_evidence', decision: 'allow' }));
     expect(records).toContainEqual(expect.objectContaining({ actor_id: FOUNDER, action: 'read_status', decision: 'allow' }));
+  });
+
+  it('binds persisted verification evidence to the configured verifier across a reopen', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-verifier-binding-'));
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'verified'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+      directory,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    expect((await dispatch(harness, workflow.entity_id)).status).toBe(200);
+
+    const storedTask = harness.runtime.taskStore.getTask(task.entity_id);
+    const evidencePath = `/v1/tasks/${task.entity_id}/evidence/${storedTask?.audit_trail_ref}`;
+    const accepted = await call(harness, 'GET', evidencePath, { token: FOUNDER_TOKEN });
+    expect(accepted.status).toBe(200);
+    const artifact = accepted.body?.evidence as Record<string, unknown>;
+    const description = JSON.parse(String(artifact.description)) as Record<string, unknown>;
+    expect(description.verifier_id).toBe(VERIFIER_ID);
+    expect(description.verifier_accepted).toBe(true);
+
+    // Reopen with another verifier configured: the old record must not read as verified.
+    await harness.server.close();
+    harness.runtime.close();
+    const swapped = await startHost({
+      directory,
+      verification: {
+        verifier_id: randomUUID(),
+        verify: async () => { throw new Error('A read must never invoke the verifier.'); },
+      },
+    });
+    const rejected = await call(swapped, 'GET', evidencePath, { token: FOUNDER_TOKEN });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body?.error).toBe('orchestration_rejected');
+    expect(String(rejected.body?.message)).toMatch(/verifier identity/);
+
+    // Reopening with the original verifier restores the same durable record unchanged.
+    await swapped.server.close();
+    swapped.runtime.close();
+    const rematched = await startHost({ directory, withAdapters: true });
+    const reread = await call(rematched, 'GET', evidencePath, { token: FOUNDER_TOKEN });
+    expect(reread.status).toBe(200);
+    const rereadArtifact = reread.body?.evidence as Record<string, unknown>;
+    expect(rereadArtifact.entity_id).toBe(storedTask?.audit_trail_ref);
+    expect(rereadArtifact.description).toBe(artifact.description);
+  });
+
+  it('rejects persisted evidence with no verifier identity and records no completion', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-unattributed-evidence-'));
+    const task = makeTask();
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, randomUUID()),
+      directory,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+
+    const now = new Date().toISOString();
+    const forged = harness.runtime.artifactStore.create(ArtifactEntity.parse({
+      entity_id: randomUUID(),
+      entity_type: 'canonical_object',
+      entity_subtype: 'artifact',
+      artifact_kind: 'test_report',
+      name: 'Unattributed execution evidence',
+      description: JSON.stringify({
+        task_id: task.entity_id,
+        agent_ids: [AGENT_ID],
+        summary: 'forged',
+        evidence: ['forged'],
+        verifier_accepted: true,
+        verifier_reason: 'forged',
+        verifier_evidence: ['forged'],
+        recorded_at: now,
+      }),
+      lifecycle_state: 'created',
+      lifecycle_history: [],
+      created_at: now,
+      created_by: AGENT_ID,
+      modified_at: now,
+      version: 1,
+      organizational_containers: [],
+      owner_id: AGENT_ID,
+      owner_type: 'agent',
+      relationships: [],
+    }));
+    harness.runtime.artifactStore.transitionLifecycle(forged.entity_id, 'validated', AGENT_ID);
+    harness.runtime.artifactStore.transitionLifecycle(forged.entity_id, 'active', AGENT_ID);
+    harness.runtime.artifactStore.transitionLifecycle(forged.entity_id, 'completed', AGENT_ID);
+    harness.runtime.taskStore.updateTask(task.entity_id, { audit_trail_ref: forged.entity_id });
+
+    await harness.server.close();
+    harness.runtime.close();
+    const reopened = await startHost({ directory, withAdapters: true });
+    const read = await call(
+      reopened,
+      'GET',
+      `/v1/tasks/${task.entity_id}/evidence/${forged.entity_id}`,
+      { token: FOUNDER_TOKEN },
+    );
+    expect(read.status).toBe(409);
+    expect(read.body?.error).toBe('orchestration_rejected');
+    expect(String(read.body?.message)).toMatch(/verifier identity/);
+    expect(reopened.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('created');
+    expect(reopened.runtime.taskStore.getTask(task.entity_id)?.audit_trail_ref).toBe(forged.entity_id);
   });
 
   it('dispatches through the real fixed executor and independent verifier adapters', async () => {
