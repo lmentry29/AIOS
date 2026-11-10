@@ -24,7 +24,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The suite is skipped without a real binary, so install it and point the test at it.
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      - run: pnpm --filter @aios/host run build
+      # Package entrypoints resolve to dist/, so build the workspace before the host.
+      - run: pnpm turbo build
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts
 
   supply-chain:
