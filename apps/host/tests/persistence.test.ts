@@ -331,4 +331,49 @@ describe('durable execution attempts', () => {
     first.close();
     expect(() => new DurableOperationalStore({ directory })).toThrow(/non-contiguous/);
   });
+
+  it('reconciles an already-interrupted resumed attempt once and writes nothing on a second pass', () => {
+    const directory = stateDirectory();
+    const task = makeTask();
+    const first = new DurableOperationalStore({ directory });
+    const initial = first.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID });
+    first.executions.reconcile();
+    const resumed = first.executions.resume({
+      task_id: task.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: initial.execution_id,
+    });
+    first.close();
+
+    const journalPath = join(directory, 'operational.jsonl');
+    const second = new DurableOperationalStore({ directory });
+    expect(second.executions.getForTask(task.entity_id)).toMatchObject({
+      execution_id: resumed.execution_id,
+      attempt: 2,
+      attempt_kind: 'resume',
+      state: 'running',
+    });
+    expect(second.executions.reconcile().map((record) => record.execution_id))
+      .toEqual([resumed.execution_id]);
+    expect(second.executions.listForTask(task.entity_id)).toHaveLength(2);
+    expect(second.executions.get(initial.execution_id)).toMatchObject({
+      state: 'interrupted',
+      revision: 2,
+    });
+
+    // A second reconciliation over the same durable state appends no journal bytes.
+    const bytesAfterReconciliation = readFileSync(journalPath).byteLength;
+    expect(second.executions.reconcile()).toEqual([]);
+    expect(readFileSync(journalPath).byteLength).toBe(bytesAfterReconciliation);
+    second.close();
+
+    const third = new DurableOperationalStore({ directory });
+    expect(third.executions.listForTask(task.entity_id)
+      .map((record) => [record.attempt, record.attempt_kind, record.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'interrupted'],
+    ]);
+    expect(third.executions.reconcile()).toEqual([]);
+    third.close();
+  });
 });

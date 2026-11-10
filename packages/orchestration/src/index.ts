@@ -242,6 +242,12 @@ export class ExecutionAttemptConflictError extends OrchestrationError {
 export class OrchestrationKernel {
   private readonly workflows: EntityRepositoryPort<WorkflowEntity>;
   private readonly evidence: EntityRepositoryPort<ArtifactEntity>;
+  /**
+   * In-process claims held only for the duration of one authorized resume/retry. A duplicate
+   * request is rejected before any lifecycle or attempt write; the durable ledger independent-
+   * ly refuses a successor whose predecessor is not terminal.
+   */
+  private readonly redrivesInFlight = new Set<string>();
 
   constructor(
     private readonly tasks: TaskRepositoryPort,
@@ -251,6 +257,22 @@ export class OrchestrationKernel {
   ) {
     this.workflows = workflowStore ?? new ObjectStore<WorkflowEntity>(WorkflowSchema);
     this.evidence = evidenceStore ?? new ObjectStore<ArtifactEntity>(ArtifactSchema);
+  }
+
+  private claimRedrives(resourceIds: readonly string[]): void {
+    const unique = [...new Set(resourceIds)];
+    for (const id of unique) {
+      if (this.redrivesInFlight.has(id)) {
+        throw new ExecutionAttemptConflictError(
+          'A resume or retry is already in progress for this Workflow or Task; no second attempt was appended.',
+        );
+      }
+    }
+    for (const id of unique) this.redrivesInFlight.add(id);
+  }
+
+  private releaseRedrives(resourceIds: readonly string[]): void {
+    for (const id of resourceIds) this.redrivesInFlight.delete(id);
   }
 
   async intake(request: WorkIntakeRequest, actorId: string): Promise<TaskEntity | WorkflowEntity> {
@@ -418,14 +440,20 @@ export class OrchestrationKernel {
     }
 
     const plan = await this.buildWorkflowResumePlan(stored, actorId);
-    if (plan.some((item) => item.mode !== 'skip')
-      && this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
-      // Same non-blocking, deterministic rejection as dispatch: before any lifecycle write.
-      throw new ExecutionCapacityError();
-    }
-
-    this.workflows.transitionLifecycle(stored.entity_id, 'active', actorId);
+    const claimed = [
+      stored.entity_id,
+      ...plan.filter((item) => item.mode !== 'skip').map((item) => item.task.entity_id),
+    ];
+    this.claimRedrives(claimed);
     try {
+      if (plan.some((item) => item.mode !== 'skip')
+        && this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
+        // Same non-blocking, deterministic rejection as dispatch: before any lifecycle write.
+        throw new ExecutionCapacityError();
+      }
+
+      this.workflows.transitionLifecycle(stored.entity_id, 'active', actorId);
+      try {
       const attempts: TaskAttemptSummary[] = [];
       for (const item of plan) {
         if (item.mode === 'skip') continue;
@@ -491,6 +519,9 @@ export class OrchestrationKernel {
         this.workflows.transitionLifecycle(stored.entity_id, 'suspended', actorId);
       }
       throw error;
+      }
+    } finally {
+      this.releaseRedrives(claimed);
     }
   }
 
@@ -582,17 +613,20 @@ export class OrchestrationKernel {
       }
     }
 
-    const assigned = stored.assigned_agent;
-    const observedAgent = isEntityIdentifier(latest.agent_id) ? latest.agent_id : undefined;
-    const agentId = assigned ?? observedAgent ?? await this.options.resolveAgent(stored);
-    await this.assertAgentExecutable(agentId, stored);
+    const claimed = [stored.entity_id];
+    this.claimRedrives(claimed);
+    try {
+      const assigned = stored.assigned_agent;
+      const observedAgent = isEntityIdentifier(latest.agent_id) ? latest.agent_id : undefined;
+      const agentId = assigned ?? observedAgent ?? await this.options.resolveAgent(stored);
+      await this.assertAgentExecutable(agentId, stored);
 
-    // Same cap policy as dispatch: reject before the Task lifecycle changes.
-    if (this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
-      throw new ExecutionCapacityError();
-    }
+      // Same cap policy as dispatch: reject before the Task lifecycle changes.
+      if (this.options.execution.hasCapacity && !this.options.execution.hasCapacity()) {
+        throw new ExecutionCapacityError();
+      }
 
-    let task = this.tasks.updateTask(stored.entity_id, { assigned_agent: agentId });
+      let task = this.tasks.updateTask(stored.entity_id, { assigned_agent: agentId });
     if (task.lifecycle_state === 'created') {
       task = this.tasks.transitionTaskLifecycle(task.entity_id, 'validated', agentId);
     }
@@ -636,6 +670,9 @@ export class OrchestrationKernel {
         this.tasks.transitionTaskLifecycle(current.entity_id, 'suspended', agentId);
       }
       throw error;
+      }
+    } finally {
+      this.releaseRedrives(claimed);
     }
   }
 

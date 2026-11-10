@@ -372,8 +372,21 @@ export class ExecutionLedger {
       if (attempts.length !== 0 || record.previous_execution_id !== undefined) {
         throw new JournalError('Operational journal contains an initial execution attempt with a predecessor.');
       }
-    } else if (previousId === undefined || record.previous_execution_id !== previousId) {
-      throw new JournalError('Operational journal contains a resumed or retried attempt with a mismatched predecessor.');
+    } else {
+      if (previousId === undefined || record.previous_execution_id !== previousId) {
+        throw new JournalError('Operational journal contains a resumed or retried attempt with a mismatched predecessor.');
+      }
+      const previous = this.records.get(previousId);
+      if (!previous || previous.state === 'running') {
+        throw new JournalError('Operational journal appended a successor before its predecessor became terminal.');
+      }
+      if (record.attempt_kind === 'resume' && previous.state !== 'interrupted') {
+        throw new JournalError('Operational journal resumes an attempt that is not interrupted.');
+      }
+      if (record.attempt_kind === 'retry'
+        && previous.state !== 'failed' && previous.state !== 'cancelled' && previous.state !== 'completed') {
+        throw new JournalError('Operational journal retries an attempt that is not failed, cancelled, or completed.');
+      }
     }
     this.records.set(record.execution_id, record);
     this.byTask.set(record.task_id, [...attempts, record.execution_id]);

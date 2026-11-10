@@ -1131,7 +1131,7 @@ describe('trusted host HTTP surface', () => {
     expect(harness.sandbox?.calls).toHaveLength(0);
   });
 
-  it('enforces the concurrency cap on resumed dispatch before any lifecycle or attempt write', async () => {
+  it('enforces the concurrency cap on a later-generation resume before any lifecycle or attempt write', async () => {
     const firstTask = makeTask({
       execution: { kind: 'local_command', argv: ['/bin/echo', 'first'] },
       verification: { kind: 'local_command', argv: ['/bin/true'] },
@@ -1170,7 +1170,22 @@ describe('trusted host HTTP surface', () => {
       agent_id: AGENT_ID,
     });
     harness.runtime.executions.reconcile();
-    expect(harness.runtime.executions.getForTask(firstTask.entity_id)?.state).toBe('interrupted');
+    // Generation 2 was itself interrupted by a second crash before the cap is tested.
+    const secondGeneration = harness.runtime.executions.resume({
+      task_id: firstTask.entity_id,
+      workflow_id: firstWorkflow.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: interrupted.execution_id,
+    });
+    harness.runtime.executions.reconcile();
+    expect(harness.runtime.executions.getForTask(firstTask.entity_id)).toMatchObject({
+      execution_id: secondGeneration.execution_id,
+      state: 'interrupted',
+      attempt: 2,
+      attempt_kind: 'resume',
+      previous_execution_id: interrupted.execution_id,
+    });
+    const secondGenerationRevision = secondGeneration.revision + 1;
 
     const held = harness.sandbox?.holdNextRun();
     const active = dispatch(harness, secondWorkflow.entity_id);
@@ -1181,10 +1196,12 @@ describe('trusted host HTTP surface', () => {
     expect(rejected.body?.error).toBe('execution_capacity_exceeded');
     expect(harness.runtime.workflowStore.get(firstWorkflow.entity_id)?.lifecycle_state).toBe('suspended');
     expect(harness.runtime.taskStore.getTask(firstTask.entity_id)?.lifecycle_state).toBe('suspended');
-    expect(harness.runtime.executions.listForTask(firstTask.entity_id)).toHaveLength(1);
+    expect(harness.runtime.executions.listForTask(firstTask.entity_id)).toHaveLength(2);
     expect(harness.runtime.executions.getForTask(firstTask.entity_id)).toMatchObject({
-      execution_id: interrupted.execution_id,
+      execution_id: secondGeneration.execution_id,
       state: 'interrupted',
+      attempt: 2,
+      revision: secondGenerationRevision,
     });
     expect(harness.sandbox?.calls).toHaveLength(1);
 
@@ -1195,9 +1212,25 @@ describe('trusted host HTTP surface', () => {
     expect(resumed.status).toBe(200);
     expect(resumed.body).toMatchObject({ resumed: true, lifecycle_state: 'completed' });
     const attempts = harness.runtime.executions.listForTask(firstTask.entity_id);
-    expect(attempts).toHaveLength(2);
-    expect(attempts[0]).toMatchObject({ state: 'interrupted', attempt: 1 });
-    expect(attempts[1]).toMatchObject({ state: 'completed', attempt: 2, attempt_kind: 'resume' });
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0]).toMatchObject({
+      execution_id: interrupted.execution_id,
+      state: 'interrupted',
+      attempt: 1,
+    });
+    expect(attempts[1]).toMatchObject({
+      execution_id: secondGeneration.execution_id,
+      state: 'interrupted',
+      attempt: 2,
+      attempt_kind: 'resume',
+      revision: secondGenerationRevision,
+    });
+    expect(attempts[2]).toMatchObject({
+      state: 'completed',
+      attempt: 3,
+      attempt_kind: 'resume',
+      previous_execution_id: secondGeneration.execution_id,
+    });
   });
 
   it('cancels a resumed attempt, kills its sandbox, and cannot be overwritten by a late result', async () => {
@@ -1257,5 +1290,260 @@ describe('trusted host HTTP surface', () => {
     const refused = await resumeTaskRequest(harness, task.entity_id);
     expect(refused.status).toBe(409);
     expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
+
+    // An explicit retry appends generation 3 and leaves generations 1 and 2 byte-for-byte
+    // unchanged in the durable history.
+    const retried = await retryTaskRequest(harness, task.entity_id);
+    expect(retried.status).toBe(200);
+    expect(retried.body).toMatchObject({
+      task_id: task.entity_id,
+      lifecycle_state: 'completed',
+      retried: true,
+    });
+    expect(retried.body?.execution).toMatchObject({
+      attempt: 3,
+      attempt_kind: 'retry',
+      state: 'completed',
+    });
+    const afterRetry = harness.runtime.executions.listForTask(task.entity_id);
+    expect(afterRetry).toHaveLength(3);
+    expect(afterRetry.map((record) => [record.attempt, record.attempt_kind, record.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'cancelled'],
+      [3, 'retry', 'completed'],
+    ]);
+    expect(afterRetry[0]).toEqual(attempts[0]);
+    expect(afterRetry[1]).toEqual(attempts[1]);
+    expect(afterRetry[1]?.previous_execution_id).toBe(interrupted.execution_id);
+    expect(afterRetry[2]?.previous_execution_id).toBe(attempts[1]?.execution_id);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('completed');
+    expect(harness.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+
+    // The Workflow resume now skips the completed Task and finishes without another run.
+    const workflowResumed = await resumeWorkflowRequest(harness, workflow.entity_id);
+    expect(workflowResumed.status).toBe(200);
+    expect(workflowResumed.body).toMatchObject({
+      resumed: true,
+      lifecycle_state: 'completed',
+      attempts: [],
+    });
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(3);
+    expect(harness.sandbox?.calls).toHaveLength(3);
+  });
+
+  it('resumes a persisted three-generation chain across crashes without mutating predecessors', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-multigen-'));
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'third generation'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const ownedTask = { ...task, assigned_workflow: workflow.entity_id } as TaskEntity;
+
+    const first = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+      directory,
+    });
+    expect((await intake(first, 'task', ownedTask)).status).toBe(201);
+    expect((await intake(first, 'workflow', workflow)).status).toBe(201);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'validated', FOUNDER);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, 'active', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'validated', FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, 'active', FOUNDER);
+    const attempt1 = first.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    await first.server.close();
+    first.runtime.close();
+
+    // First restart: reconciliation interrupts generation 1. Generation 2 is started through
+    // the same persisted resume operation the kernel uses, then the host crashes again.
+    const second = await startHost({ directory, withLocalAdapters: true });
+    expect(second.runtime.executions.getForTask(task.entity_id)).toMatchObject({
+      execution_id: attempt1.execution_id,
+      state: 'interrupted',
+      attempt: 1,
+      attempt_kind: 'initial',
+    });
+    const attempt2 = second.runtime.executions.resume({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+      previous_execution_id: attempt1.execution_id,
+    });
+    expect(attempt2).toMatchObject({
+      state: 'running',
+      attempt: 2,
+      attempt_kind: 'resume',
+      previous_execution_id: attempt1.execution_id,
+    });
+    second.runtime.executions.reconcile();
+    const beforeThirdStart = second.runtime.executions.listForTask(task.entity_id);
+    expect(beforeThirdStart.map((record) => [record.attempt, record.attempt_kind, record.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'interrupted'],
+    ]);
+    await second.server.close();
+    second.runtime.close();
+
+    // Second restart over an already-interrupted latest attempt: reconciliation creates no
+    // new attempt and cannot rewrite either predecessor.
+    const third = await startHost({ directory, withLocalAdapters: true });
+    expect(third.runtime.recoveredExecutions).toEqual([]);
+    expect(third.runtime.executions.listForTask(task.entity_id)).toEqual(beforeThirdStart);
+    expect(third.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('suspended');
+    expect(third.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe('suspended');
+
+    // The authorized Workflow resume drives generation 3 to completion.
+    const resumed = await resumeWorkflowRequest(third, workflow.entity_id);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({ resumed: true, lifecycle_state: 'completed' });
+    const summaries = resumed.body?.attempts as Array<Record<string, unknown>>;
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      task_id: task.entity_id,
+      attempt: 3,
+      attempt_kind: 'resume',
+      state: 'completed',
+    });
+
+    const attempts = third.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(3);
+    expect(attempts.map((record) => [record.attempt, record.attempt_kind, record.state])).toEqual([
+      [1, 'initial', 'interrupted'],
+      [2, 'resume', 'interrupted'],
+      [3, 'resume', 'completed'],
+    ]);
+    expect(attempts[1]?.previous_execution_id).toBe(attempt1.execution_id);
+    expect(attempts[2]?.previous_execution_id).toBe(attempt2.execution_id);
+    expect(attempts[0]).toEqual(beforeThirdStart[0]);
+    expect(attempts[1]).toEqual(beforeThirdStart[1]);
+    expect(third.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('completed');
+    expect(third.sandbox?.calls).toHaveLength(2);
+  });
+
+  it('returns one typed conflict for a concurrent duplicate Workflow resume', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'duplicate workflow resume'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', { ...task, assigned_workflow: workflow.entity_id } as TaskEntity)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    suspendTask(harness, task.entity_id);
+    suspendWorkflow(harness, workflow.entity_id);
+    const interrupted = harness.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+
+    const held = harness.sandbox?.holdNextRun();
+    const first = resumeWorkflowRequest(harness, workflow.entity_id);
+    await held?.started;
+    const duplicate = await resumeWorkflowRequest(harness, workflow.entity_id);
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body?.error).toBe('execution_conflict');
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
+    expect(harness.sandbox?.calls).toHaveLength(1);
+
+    held?.release();
+    expect((await first).status).toBe(200);
+    const attempts = harness.runtime.executions.listForTask(task.entity_id);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({ execution_id: interrupted.execution_id, attempt: 1, state: 'interrupted' });
+    expect(attempts[1]).toMatchObject({ attempt: 2, attempt_kind: 'resume', state: 'completed' });
+
+    const repeated = await resumeWorkflowRequest(harness, workflow.entity_id);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body).toMatchObject({ resumed: false, lifecycle_state: 'completed' });
+    expect(harness.runtime.executions.listForTask(task.entity_id)).toHaveLength(2);
+  });
+
+  it('returns one typed conflict for concurrent duplicate Task resume and Task retry', async () => {
+    const resumeTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'duplicate task resume'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const retryTask = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'duplicate task retry'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const resumeWorkflow = makeWorkflow([resumeTask.entity_id]);
+    const retryWorkflow = makeWorkflow([retryTask.entity_id]);
+    const resumePolicy = makePolicy(resumeTask.entity_id, resumeWorkflow.entity_id);
+    const retryPolicy = makePolicy(retryTask.entity_id, retryWorkflow.entity_id);
+    const policy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [...resumePolicy.rules, ...retryPolicy.rules],
+    };
+    const harness = await startHost({ policy, withLocalAdapters: true });
+    expect((await intake(harness, 'task', {
+      ...resumeTask,
+      assigned_workflow: resumeWorkflow.entity_id,
+    } as TaskEntity)).status).toBe(201);
+    expect((await intake(harness, 'workflow', resumeWorkflow)).status).toBe(201);
+    expect((await intake(harness, 'task', retryTask)).status).toBe(201);
+
+    suspendTask(harness, resumeTask.entity_id);
+    suspendWorkflow(harness, resumeWorkflow.entity_id);
+    const interrupted = harness.runtime.executions.start({
+      task_id: resumeTask.entity_id,
+      workflow_id: resumeWorkflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    harness.runtime.executions.reconcile();
+
+    const resumeHeld = harness.sandbox?.holdNextRun();
+    const firstResume = resumeTaskRequest(harness, resumeTask.entity_id);
+    await resumeHeld?.started;
+    const duplicateResume = await resumeTaskRequest(harness, resumeTask.entity_id);
+    expect(duplicateResume.status).toBe(409);
+    expect(duplicateResume.body?.error).toBe('execution_conflict');
+    expect(harness.runtime.executions.listForTask(resumeTask.entity_id)).toHaveLength(2);
+    expect(harness.sandbox?.calls).toHaveLength(1);
+    resumeHeld?.release();
+    expect((await firstResume).status).toBe(200);
+    expect(harness.runtime.executions.listForTask(resumeTask.entity_id)).toHaveLength(2);
+    expect(harness.runtime.executions.getForTask(resumeTask.entity_id)).toMatchObject({
+      attempt: 2,
+      attempt_kind: 'resume',
+      state: 'completed',
+      previous_execution_id: interrupted.execution_id,
+    });
+
+    // A queued Task is cancelled before it ever runs, then retried concurrently.
+    expect((await call(harness, 'POST', `/v1/tasks/${retryTask.entity_id}/cancel`, {
+      token: FOUNDER_TOKEN,
+      body: { reason: 'cancel before the duplicate retry' },
+    })).status).toBe(202);
+    expect(harness.runtime.executions.listForTask(retryTask.entity_id)).toHaveLength(1);
+    const retryHeld = harness.sandbox?.holdNextRun();
+    const firstRetry = retryTaskRequest(harness, retryTask.entity_id);
+    await retryHeld?.started;
+    const duplicateRetry = await retryTaskRequest(harness, retryTask.entity_id);
+    expect(duplicateRetry.status).toBe(409);
+    expect(duplicateRetry.body?.error).toBe('execution_conflict');
+    expect(harness.runtime.executions.listForTask(retryTask.entity_id)).toHaveLength(2);
+    expect(harness.sandbox?.calls).toHaveLength(3);
+    retryHeld?.release();
+    expect((await firstRetry).status).toBe(200);
+    const retryAttempts = harness.runtime.executions.listForTask(retryTask.entity_id);
+    expect(retryAttempts).toHaveLength(2);
+    expect(retryAttempts[1]).toMatchObject({ attempt: 2, attempt_kind: 'retry', state: 'completed' });
+
+    const repeatedRetry = await retryTaskRequest(harness, retryTask.entity_id);
+    expect(repeatedRetry.status).toBe(200);
+    expect(repeatedRetry.body).toMatchObject({ retried: false, lifecycle_state: 'completed' });
+    expect(harness.runtime.executions.listForTask(retryTask.entity_id)).toHaveLength(2);
   });
 });
