@@ -168,3 +168,10 @@ per-invocation nonce; replayed, cross-Task, legacy, malformed, duplicated or tam
 evidence fails closed before the verification command runs. An unbound verifier can run a
 command for diagnostics but cannot accept. This applies to every provider and does not
 change platform isolation claims.
+
+## Portable evidence bundles (2026-11-11)
+
+Bundle export/verification is host-level audit functionality and does not change any provider
+isolation row. Offline verification was exercised on Linux CI; no macOS or rootless-Docker
+measurement of bundle export/verification is claimed. An absent/revoked/expired key or any
+chain, signature, binding or replay failure denies; there is no fallback to the embedded key.

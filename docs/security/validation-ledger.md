@@ -1248,3 +1248,24 @@ provisioned and are not claimed.
   46/46 tasks, 0 cached; host 218 passed / 17 skipped; integration 43; conformance 107.
 - Coverage: `apps/host/tests/evidence-binding.test.ts` (9 tests) plus the existing verifier
   binding, journal recovery, seccomp and HTTP tests. Legacy attempt evidence is rejected.
+
+## Portable evidence bundles (2026-11-11)
+
+- New `apps/host/src/execution/evidence-bundle.ts`: strict versioned export, source and
+  domain-separated entry hash chains, projection-to-journal binding, Ed25519 signature and
+  offline verification with external trust root and optional expected head.
+- New `tools/security/evidence-bundle.mjs`: separate-process `export`, `verify`, `keygen` and
+  `trust-root` commands; verification uses no store, network or shared mutable state.
+- `apps/host/tests/evidence-bundle.test.ts` — 15 tests: untampered accept, round-trip,
+  duplicate keys, unknown version, edited, deleted, reordered and truncated entries, spliced
+  Task, forged signature, digest-only edit, absent/revoked/expired keys, rotated-key replay,
+  forged accepted decision, missing execution, post-hoc ledger mutation and a real subprocess
+  CLI accept/reject (exit 0 and exit 5).
+- Separate-process demonstration: untampered bundle accepted (exit 0, head
+  `c4733edf…`), tampered copy rejected `BUNDLE_DIGEST` (exit 5), stale checkpoint rejected
+  `REPLAY` (exit 10).
+- Full uncached gate: 46/46 tasks, 0 cached; host 233 passed / 17 skipped; integration 43;
+  conformance 107; orchestration 30.
+- Remaining: external audit custody/trusted timestamp, production trust-root/key, Sigstore
+  identity, SLSA/in-toto conformance, macOS/rootless-Docker measurement. No standard level is
+  claimed.

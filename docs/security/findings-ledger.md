@@ -63,3 +63,17 @@ byte-identical result could be replayed across retries. Acceptance now requires 
 attempt, canonical bounded plain-data snapshots, strict evidence parsing, an attempt-specific
 digest and a per-invocation nonce that must not appear in a prior attempt. Executor Task
 environments can no longer inject verifier identity or signing/provider configuration.
+
+## F-023 — audit evidence could not be verified outside the host
+
+**Status:** fixed for portable export and offline verification; external custody remains open.
+
+The journal and verifier evidence were only authoritative inside the host process. A bundle
+export now preserves the source hash chain, adds a domain-separated entry chain, binds Task,
+Artifact and execution projections to signed journal records, and signs the canonical payload
+with Ed25519 under an external trust root. The separate-process verifier rejects edited,
+deleted, reordered, spliced, replayed, truncated, forged, unknown-version, absent/revoked/
+expired-key and post-hoc-mutated cases with distinct failure codes; a completed Task must have
+an accepted verifier Artifact and a completed latest attempt. Replay detection requires an
+externally supplied head checkpoint. No external audit custody, trusted timestamp,
+Fulcio/Rekor identity, SLSA or in-toto conformance is claimed.

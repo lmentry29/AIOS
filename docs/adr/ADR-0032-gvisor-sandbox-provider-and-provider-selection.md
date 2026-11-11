@@ -370,3 +370,16 @@ lines are parsed strictly, duplicate keys are rejected, and an unbound verifier 
 deny. Task environments cannot inject verifier identity or signing/provider configuration.
 This closes the optional-ledger, non-canonical-digest and result-replay gaps; cross-process
 attestation and external audit custody remain open.
+
+## Amendment — portable offline evidence bundles (2026-11-11)
+
+The durable journal, Task/execution projections and verifier evidence Artifacts can now be
+exported as a versioned, bounded, domain-separated hash-chain bundle signed with Ed25519. An
+offline verifier in a separate process requires an external trust root and fails closed on
+strict-parse, signature, digest, chain, Task-binding, execution-binding, key-lifecycle and
+replay failures. Verifier projections are recomputed from signed journal records; a completed
+Task requires accepted verifier evidence and a completed latest attempt. Replay requires an
+external head checkpoint. Key rotation uses overlapping trust-root validity; revocation and
+absence deny. The full format, exit codes and residual gaps are in
+`docs/security/evidence-bundle.md`. External audit custody, Fulcio/Rekor identity, SLSA and
+in-toto conformance, and macOS/rootless-Docker measurement remain open and unclaimed.

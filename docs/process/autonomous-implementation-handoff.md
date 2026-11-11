@@ -1033,3 +1033,15 @@ Reserved `AIOS_*` task environment names are filtered in `command-executor.ts`. 
 `tests/evidence-binding.test.ts`. Legacy attempts fail closed; re-run before verifying.
 Still open: cross-process attestation/audit custody, production trust root, Sigstore/SLSA,
 macOS and rootless-Docker measurements.
+
+## Portable evidence bundles — 2026-11-11
+
+`evidence-bundle.ts` exports a strict, versioned, signed snapshot of the journal, Task/Artifact
+projections and execution attempts. `tools/security/evidence-bundle.mjs verify` runs in a
+separate process with only the bundle and an external trust root; it does not open the store
+or network. Edited, deleted, reordered, spliced, replayed, truncated, forged, unknown-version,
+absent/revoked/expired-key and post-hoc-mutated cases fail closed with distinct codes.
+Completed Tasks require accepted verifier Artifacts and a completed latest execution. Replay
+detection requires `--expect-head` from an external checkpoint. Docs: `docs/security/
+evidence-bundle.md`. Still open: external audit custody/trusted timestamp, production key
+custody, Sigstore identity, SLSA/in-toto conformance, macOS/rootless-Docker measurement.

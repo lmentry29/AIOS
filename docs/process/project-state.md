@@ -482,3 +482,10 @@ Execution evidence (2026-11-11) is now attempt-bound canonical plain data with s
 parsing, per-invocation nonce replay rejection and mandatory durable-ledger acceptance. Local
 gate and focused tests pass. Open: cross-process evidence attestation, production trust-root
 provisioning, Sigstore/SLSA identity, macOS and rootless-Docker measurement.
+
+Portable evidence bundles (2026-11-11) now let an external process verify the signed journal,
+Task/Artifact bindings, verifier decisions and execution attempts offline. Tampering, splicing,
+truncation, replay, forged signatures and key absence/revocation/expiry fail closed with a
+documented exit code. Replay needs an external head checkpoint; production key custody,
+external audit custody/trusted timestamps, Sigstore identity, SLSA/in-toto conformance and
+macOS/rootless-Docker measurement remain open.
