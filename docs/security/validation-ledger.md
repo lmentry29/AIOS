@@ -411,3 +411,63 @@ What is verified versus not:
   hard disk quotas, and external policy signing remain unverified. The host allowlist and
   256 KiB default request-body cap remain defense in depth, not substitutes for the schema
   bound.
+
+## 2026-11-11 — Durable host session lifecycle (F-013 closure)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. This pass tested the production identity path, not a test shim:
+configuration parsing, the durable operational journal, HTTP authorization, route bindings,
+restart recovery, compaction, and the live sandbox/security suites were all exercised.
+
+Commands actually run, in this order:
+
+```sh
+pnpm --filter @aios/host typecheck
+pnpm --filter @aios/host exec vitest run tests/session-lifecycle.test.ts tests/identity.test.ts \
+  tests/persistence.test.ts tests/journal-recovery.test.ts
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/collection-bound-drill.mjs
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+```
+
+Observed results at the F-013 implementation commit:
+
+- Focused host typecheck passed. `session-lifecycle.test.ts` **6 passed**, `identity.test.ts`
+  **9 passed**, `persistence.test.ts` **13 passed**, `journal-recovery.test.ts` **5 passed**.
+  The lifecycle cases cover controlled-clock expiry, rotation-then-replay, revocation-then-
+  replay, cross-task/run/evidence binding, rotation with an in-flight authorized run, restart
+  recovery, compaction, and refusal to reintroduce a session removed from configuration.
+- Full workspace gate: **46/46 tasks successful**; host **148 passed, 17 skipped** (the 17
+  live cases are skipped without `AIOS_BWRAP_DIR`); host includes `http-host.test.ts` **57
+  passed** and `identity.test.ts` **9 passed**; core **51 passed**.
+- Live bubblewrap suite with `AIOS_BWRAP_DIR`: **17/17 passed** (12 boundary/limit, 3 seccomp,
+  2 quota). Resource-limit drill: legitimate Perl exit 0 with `resource_limits_applied:true`;
+  memory bomb exit 1, `Out of memory!`, `timed_out:false`; filter `Seccomp: 2`, profile
+  SHA-256 `12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac`.
+- Quota drill: over-cap run stopped/discarded with 0 workspace entries and 0 matching
+  processes; under-cap 65,536 bytes; sequential 65,536 and 32,768 bytes. Seccomp drill:
+  denied run stopped with 0 workspace entries/processes; legitimate and next runs exit 0.
+  Collection drill: 1,000,000 invalid Actions rejected before entry parsing under a 64 MiB
+  heap (`issue_count:1`, 17 ms); 100,000 environment keys rejected in 140 ms.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)`; `secret-scan: no
+  findings across 273 tracked files`.
+
+What is verified versus not:
+
+- **Verified:** expired, unknown, malformed, rotated-away, revoked, and cross-scope tokens are
+  denied in the real HTTP authorization path with distinguishable reasons; rotation and
+  revocation state is journaled before acknowledgement and reconstructed after restart and
+  compaction; rotation cannot broaden scope; an already-authorized in-flight run completes;
+  evidence scope is checked against the recomputed digest. Existing bubblewrap/seccomp/quota/
+  resource and independent-verifier controls were re-run unchanged.
+- **Not verified:** login/MFA, token-theft detection, rate limiting, TLS on loopback,
+  multi-process or multi-host session replication, detached journal signatures, real
+  Seatbelt/Apple Containerization, Docker/gVisor, Landlock, aggregate cgroups, hard disk
+  quotas, and external policy signing. These remain recorded residuals, not silently
+  downgraded controls.

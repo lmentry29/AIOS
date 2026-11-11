@@ -20,9 +20,15 @@ export interface HostSessionEntry {
   token_sha256: string;
   /** Optional human-readable device label. */
   label?: string;
-  /** Optional ISO-8601 expiry; expired sessions never authenticate. */
-  expires_at?: string;
+  /** Required ISO-8601 expiry; a session must have a bounded lifetime. */
+  expires_at: string;
 }
+
+/**
+ * Absolute ceiling on a provisioned or rotated session lifetime. Short-lived grants are
+ * narrower; an unexpiring or multi-year bearer digest is not accepted.
+ */
+export const MAX_SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface HostConfig {
   schema_version: 1;
@@ -299,7 +305,7 @@ function parseObsidian(raw: unknown): HostConfig['obsidian'] {
   return { base_url: `${parsed.protocol}//${parsed.host}` };
 }
 
-function parseSessions(raw: unknown): HostSessionEntry[] {
+function parseSessions(raw: unknown, now: number): HostSessionEntry[] {
   if (!Array.isArray(raw) || raw.length === 0) fail('sessions', 'must contain at least one session');
   if (raw.length > MAX_SESSIONS) fail('sessions', `must contain at most ${MAX_SESSIONS} sessions`);
   const sessionIds = new Set<string>();
@@ -323,18 +329,21 @@ function parseSessions(raw: unknown): HostSessionEntry[] {
     tokenHashes.add(tokenHash);
     let label: string | undefined;
     if (entry.label !== undefined) label = requireString(entry.label, `${path}.label`, 120);
-    let expiresAt: string | undefined;
-    if (entry.expires_at !== undefined) {
-      const value = requireString(entry.expires_at, `${path}.expires_at`, 40);
-      if (!Number.isFinite(Date.parse(value))) fail(`${path}.expires_at`, 'must be an ISO-8601 timestamp');
-      expiresAt = value;
+    const expiresAt = requireString(entry.expires_at, `${path}.expires_at`, 40);
+    const expiry = Date.parse(expiresAt);
+    if (!Number.isFinite(expiry)) fail(`${path}.expires_at`, 'must be an ISO-8601 timestamp');
+    // A past generation-1 expiry is allowed: the durable journal may hold a later rotated
+    // generation whose token is still valid. The expired seed itself never authenticates,
+    // so accepting it at startup does not revive it.
+    if (expiry > now + MAX_SESSION_LIFETIME_MS) {
+      fail(`${path}.expires_at`, `must be within ${MAX_SESSION_LIFETIME_MS} milliseconds`);
     }
     sessions.push({
       session_id: sessionId,
       principal_id: entry.principal_id as string,
       token_sha256: tokenHash,
       ...(label === undefined ? {} : { label }),
-      ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+      expires_at: expiresAt,
     });
   });
   return sessions;
@@ -344,7 +353,7 @@ function parseSessions(raw: unknown): HostSessionEntry[] {
  * Validates an already-parsed configuration document. Exported so tests can exercise every
  * rejection path without touching the filesystem.
  */
-export function parseHostConfig(raw: unknown): HostConfig {
+export function parseHostConfig(raw: unknown, now: number = Date.now()): HostConfig {
   if (!isRecord(raw)) fail('document', 'must be a JSON object');
   assertKnownKeys(raw, TOP_LEVEL_KEYS, 'document');
   if (raw.schema_version !== 1) fail('schema_version', 'must be 1');
@@ -397,7 +406,7 @@ export function parseHostConfig(raw: unknown): HostConfig {
   }
   const bootstrapPrincipalId = raw.bootstrap_principal_id;
 
-  const sessions = parseSessions(raw.sessions);
+  const sessions = parseSessions(raw.sessions, now);
   if (!sessions.some((session) => session.principal_id === bootstrapPrincipalId)) {
     fail('sessions', 'must include at least one session for bootstrap_principal_id');
   }

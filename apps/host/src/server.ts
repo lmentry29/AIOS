@@ -11,7 +11,14 @@ import {
 import type { HostConfig } from './config.js';
 import { HostExecutionError, HostHttpError, HostUnavailableError } from './errors.js';
 import type { AuthenticatedSession } from './identity.js';
-import { isHumanPrincipal } from './identity.js';
+import {
+  isHumanPrincipal,
+  parseSessionScope,
+  SessionConflictError,
+  SessionDeniedError,
+  SessionScopeError,
+  type SessionBinding,
+} from './identity.js';
 import { parseRuntimePolicyPublication, parseRuntimePolicyRevocation } from './policy-admin.js';
 import { ExecutionConflictError } from './persistence/execution-ledger.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
@@ -43,6 +50,10 @@ interface Route {
   pattern: RegExp;
   allow: string[];
   public?: boolean;
+  /** Self-service session routes may use a scoped token without a resource binding. */
+  selfService?: boolean;
+  /** Resource binding checked before route lookup or mutation. */
+  binding?: (params: RegExpExecArray, url: URL, req: IncomingMessage) => SessionBinding | undefined;
   handle: RouteHandler;
 }
 
@@ -52,6 +63,13 @@ function jsonBody(value: unknown): Record<string, unknown> {
     throw new HostHttpError(400, 'invalid_body', 'The request body must be a JSON object.');
   }
   return value as Record<string, unknown>;
+}
+
+function hasRequestBody(req: IncomingMessage): boolean {
+  const declaredLength = req.headers['content-length'];
+  return req.headers['content-type'] !== undefined
+    || req.headers['transfer-encoding'] !== undefined
+    || (typeof declaredLength === 'string' && Number(declaredLength) > 0);
 }
 
 function requireStringField(body: Record<string, unknown>, field: string, maxLength: number): string {
@@ -119,9 +137,18 @@ function dispatchFailureCode(error: unknown): string {
   return 'dispatch_failed';
 }
 
-function mapError(error: unknown): { status: number; code: string; message: string } {
+function mapError(error: unknown): { status: number; code: string; message: string; reason?: string } {
   if (error instanceof HostHttpError) {
     return { status: error.status, code: error.code, message: error.message };
+  }
+  if (error instanceof SessionDeniedError) {
+    return { status: 401, code: 'unauthenticated', message: 'Authentication failed.', reason: error.reason };
+  }
+  if (error instanceof SessionScopeError) {
+    return { status: 400, code: 'invalid_scope', message: error.message };
+  }
+  if (error instanceof SessionConflictError) {
+    return { status: 409, code: 'session_conflict', message: error.message };
   }
   if (error instanceof HostUnavailableError) {
     return { status: 503, code: 'adapter_unavailable', message: error.message };
@@ -158,14 +185,19 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   return { status: 500, code: 'internal_error', message: 'The request could not be completed.' };
 }
 
-function logFailure(requestId: string, path: string, mapped: { status: number; code: string }): void {
+function logFailure(requestId: string, path: string, mapped: { status: number; code: string; reason?: string }): void {
   process.stderr.write(`${JSON.stringify({
     event: 'request_failed',
     request_id: requestId,
     path,
     status: mapped.status,
     code: mapped.code,
+    ...(mapped.reason === undefined ? {} : { reason: mapped.reason }),
   })}\n`);
+}
+
+function evidenceSha256(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 /**
@@ -285,22 +317,30 @@ export class HostHttpServer {
 
       let session: AuthenticatedSession | undefined;
       if (!route.public) {
-        session = this.runtime.identity.authenticate(req.headers.authorization);
-        if (!session) {
+        const binding = route.binding?.(match, url, req);
+        const authenticated = this.runtime.identity.authenticate(
+          req.headers.authorization,
+          Date.now(),
+          binding,
+          { allowUnboundScope: route.selfService === true },
+        );
+        if (!authenticated.ok) {
           process.stderr.write(`${JSON.stringify({
             event: 'authentication_failed',
             request_id: requestId,
             path: url.pathname,
+            reason: authenticated.reason,
           })}\n`);
           this.send(
             res,
             401,
-            { error: 'unauthenticated', request_id: requestId },
+            { error: 'unauthenticated', reason: authenticated.reason, request_id: requestId },
             requestId,
             { 'www-authenticate': 'Bearer' },
           );
           return;
         }
+        session = authenticated.session;
       }
 
       const context: RequestContext = {
@@ -311,6 +351,8 @@ export class HostHttpServer {
           session_id: 'public',
           principal_id: 'public',
           label: 'public',
+          generation: 0,
+          expires_at: '1970-01-01T00:00:00.000Z',
         },
         readJson: async () => {
           const parsed = await readJsonBody(req, this.runtime.config.request_body_limit_bytes);
@@ -327,7 +369,12 @@ export class HostHttpServer {
       this.send(
         res,
         mapped.status,
-        { error: mapped.code, message: mapped.message, request_id: requestId },
+        {
+          error: mapped.code,
+          message: mapped.message,
+          request_id: requestId,
+          ...(mapped.reason === undefined ? {} : { reason: mapped.reason }),
+        },
         requestId,
       );
     }
@@ -452,15 +499,57 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/session$/,
       allow: ['GET'],
+      selfService: true,
       handle: async ({ session }) => ({
         status: 200,
         body: {
           principal_id: session.principal_id,
           session_id: session.session_id,
           label: session.label,
+          generation: session.generation,
+          expires_at: session.expires_at,
+          ...(session.scope === undefined ? {} : { scope: session.scope }),
           human: isHumanPrincipal(session.principal_id),
         },
       }),
+    },
+    {
+      pattern: /^\/v1\/session\/rotate$/,
+      allow: ['POST'],
+      selfService: true,
+      handle: async ({ runtime: host, req, readJson }) => {
+        const body = hasRequestBody(req) ? jsonBody(await readJson()) : {};
+        if (Object.keys(body).some((key) => key !== 'scope')) {
+          throw new HostHttpError(400, 'invalid_body', 'Session rotation accepts only an optional "scope" field.');
+        }
+        const scope = body.scope === undefined ? undefined : parseSessionScope(body.scope);
+        const rotated = host.identity.rotate(req.headers.authorization, scope);
+        return { status: 200, body: rotated };
+      },
+    },
+    {
+      pattern: /^\/v1\/session\/revoke$/,
+      allow: ['POST'],
+      selfService: true,
+      handle: async ({ runtime: host, req, readJson }) => {
+        const body = hasRequestBody(req) ? jsonBody(await readJson()) : {};
+        if (Object.keys(body).length > 0) {
+          throw new HostHttpError(400, 'invalid_body', 'Session revocation does not accept a body.');
+        }
+        return { status: 200, body: host.identity.revoke(req.headers.authorization) };
+      },
+    },
+    {
+      pattern: /^\/v1\/runs\/([^/]+)$/,
+      allow: ['GET'],
+      binding: (params) => ({ run_id: params[1] ?? '' }),
+      handle: async ({ runtime: host, session }, params) => {
+        const runId = uuidParam(params[1], 'runId');
+        const run = host.runs.get(runId);
+        if (!run) throw new HostHttpError(404, 'not_found', 'Dispatch run was not found.');
+        await requireAllowed(host, session, 'read_status', run.workflow_id);
+        return { status: 200, body: { run } };
+      },
     },
     {
       pattern: /^\/v1\/policies$/,
@@ -564,6 +653,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)$/,
       allow: ['GET'],
+      binding: (params) => ({ task_id: params[1] ?? '' }),
       handle: async ({ runtime: host, session }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         await requireAllowed(host, session, 'read_status', taskId);
@@ -585,6 +675,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)\/attempts$/,
       allow: ['GET'],
+      binding: (params) => ({ task_id: params[1] ?? '' }),
       handle: async ({ runtime: host, session }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         // Authorization precedes existence lookup, matching every other read route.
@@ -608,6 +699,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)\/cancel$/,
       allow: ['POST'],
+      binding: (params) => ({ task_id: params[1] ?? '' }),
       handle: async ({ runtime: host, session, req, readJson }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         // Authorize the exact cancel action before revealing whether the Task exists.
@@ -710,6 +802,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)\/resume$/,
       allow: ['POST'],
+      binding: (params) => ({ task_id: params[1] ?? '' }),
       handle: async ({ runtime: host, session }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         if (!host.executionConfigured || !host.verificationConfigured) {
@@ -725,6 +818,7 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)\/retry$/,
       allow: ['POST'],
+      binding: (params) => ({ task_id: params[1] ?? '' }),
       handle: async ({ runtime: host, session }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         if (!host.executionConfigured || !host.verificationConfigured) {
@@ -740,6 +834,13 @@ function buildRoutes(runtime: HostRuntime): Route[] {
     {
       pattern: /^\/v1\/tasks\/([^/]+)\/evidence\/([^/]+)$/,
       allow: ['GET'],
+      binding: (params, _url, req) => {
+        const digest = req.headers['x-aios-evidence-sha256'];
+        return {
+          task_id: params[1] ?? '',
+          ...(typeof digest === 'string' ? { evidence_sha256: digest } : {}),
+        };
+      },
       handle: async ({ runtime: host, session }, params) => {
         const taskId = uuidParam(params[1], 'taskId');
         const evidenceId = uuidParam(params[2], 'evidenceId');
@@ -748,7 +849,11 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           taskId,
           session.principal_id,
         );
-        return { status: 200, body: { evidence } };
+        // A token scoped to an evidence digest may reach only the exact artifact it names.
+        // The header is a lookup hint; this recomputation is the authority.
+        const digest = evidenceSha256(evidence);
+        host.identity.assertBinding(session, { task_id: taskId, evidence_sha256: digest });
+        return { status: 200, body: { evidence, evidence_sha256: digest } };
       },
     },
     {

@@ -216,12 +216,16 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       auditStore,
     );
     const boundary = new SharedAuthorizationBoundary(authorization);
-    const identity = new TrustedIdentityService(config.sessions);
 
     operational = new DurableOperationalStore({
       directory: config.operational_store.directory,
       leaseMs: config.dispatch_lease_ms,
+      sessions: config.sessions,
     });
+    // The durable session authority must exist before identity is composed: a rotated or
+    // revoked token from a previous process is denied at startup, not merely overwritten by
+    // the configuration's generation-1 digest.
+    const identity = new TrustedIdentityService(operational.sessions);
     learningStore = new DurableLearningStore({ directory: config.operational_store.directory });
     const recovered = reconcileInterruptedWork(operational);
     const recoveredWorkflows = recovered.workflows;

@@ -17,6 +17,7 @@ import {
   GMAIL_RESOURCE_ID,
   NOTION_RESOURCE_ID,
   VAULT_RESOURCE_ID,
+  sessionExpiresAt,
 } from './fixtures.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -38,6 +39,7 @@ function setup(): { directory: string; configPath: string; policyPath: string; r
       session_id: randomUUID(),
       principal_id: FOUNDER,
       token_sha256: 'b'.repeat(64),
+      expires_at: sessionExpiresAt(),
     }],
   }), { mode: 0o600 });
   return { directory, configPath, policyPath, resourceId };

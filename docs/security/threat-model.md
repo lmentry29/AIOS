@@ -13,14 +13,18 @@ Founder Intelligence vault's own access controls.
 | Authorization policy and audit (`policies.json`, `authorization-audit.jsonl`) | Decides every protected action; the audit is the non-repudiation record. |
 | Operational journal (`operational.jsonl`) | Authority for Task/Workflow/execution recovery. |
 | Run workspaces | Contain untrusted agent output and possibly imported repository content. |
-| Host session digests and configuration | Authenticate local callers; a leaked token is a full impersonation of that principal. |
+| Host session digests, lifecycle state, and configuration | Authenticate local callers; a leaked token is a full impersonation of that principal until expiry or revocation. |
 | Secrets in the host environment (connector credentials) | Must never cross into a sandbox or an evidence record. |
 | Obsidian vault | Founder Intelligence; read/propose only, never a sandbox workspace. |
 
 ## Trust boundaries
 
-1. **Caller → host HTTP.** Authenticated by bearer token digest; identity comes from the host
-   session table, never from a request field. Every `Origin` is rejected; there is no UI.
+1. **Caller → host HTTP.** Authenticated by bearer token digest against durable session state;
+   identity comes from the host session table, never from a request field. Sessions have a
+   mandatory bounded expiry. Rotation retires the old digest, revocation is terminal, and a
+   task/run/evidence-scoped token is checked against the actual route binding. Expired,
+   rotated-away, revoked, replayed, and cross-scope tokens fail closed with structured 401
+   reasons (ADR-0029). Every `Origin` is rejected; there is no UI.
 2. **Host → authorization service.** Exact-match, resource-attached, default-deny; denial and
    allow are both audited, and an audit append failure denies.
 3. **Host → sandbox provider.** The task supplies an argv, never a shell string or a provider
@@ -77,7 +81,10 @@ Founder Intelligence vault's own access controls.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor
   signed; an attacker who can rewrite the archive and its digest can forge history. Retention
   and custody remain operator responsibilities (ADR-0025).
-- **Identity lifecycle.** No login, key rotation, detached policy signature, or external audit
-  custody (recorded in ADR-0023/ADR-0024).
+- **Identity lifecycle.** Host session tokens now have bounded expiry, rotation, revocation, and
+  task/run/evidence scope binding (ADR-0029). There is still no login, MFA, token-theft
+  detection, rate limiting, or TLS on the loopback listener, and no detached policy signature or
+  external audit custody (recorded in ADR-0023/ADR-0024). A rotation response is one-time; a
+  lost token cannot be recovered from the journal. Retired digests are terminal and retained.
 - **Observability is not audit.** Structured logs help diagnosis; only the append-only audit
   store is treated as an authorization record.

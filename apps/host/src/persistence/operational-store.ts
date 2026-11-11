@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactEntity, CanonicalEntity, LifecycleState, TaskEntity, WorkflowEntity } from '@aios/core';
+import type { HostSessionEntry } from '../config.js';
 import { ArtifactEntity as ArtifactSchema, TaskEntity as TaskSchema, WorkflowEntity as WorkflowSchema } from '@aios/core';
 import { ObjectStore, type EntityPatch } from '@aios/objects';
 import type { TaskRepositoryPort } from '@aios/orchestration';
 import { ExecutionLedger } from './execution-ledger.js';
 import { AppendOnlyJournal, JournalError } from './journal.js';
+import { DurableSessionStore, type SessionSnapshot } from './session-store.js';
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,200}$/;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
@@ -365,6 +367,8 @@ export interface DurableStoreOptions {
   directory: string;
   leaseMs?: number;
   maxJournalBytes?: number;
+  /** Provisioned sessions used as generation 1; durable rotations/revocations override them. */
+  sessions?: readonly HostSessionEntry[];
 }
 
 /** Snapshot record written by compaction; replayed through the same validated restores. */
@@ -374,6 +378,8 @@ export interface OperationalSnapshot {
   artifacts: unknown[];
   runs: unknown[];
   executions: unknown[];
+  /** Added after F-013; old snapshots remain readable and leave configured sessions intact. */
+  session_state?: SessionSnapshot;
 }
 
 /**
@@ -395,6 +401,8 @@ export class DurableOperationalStore {
   readonly runs: DurableRunCoordinator;
   /** Per-Task sandbox execution lifecycle, used for cancellation and crash reconciliation. */
   readonly executions: ExecutionLedger;
+  /** Durable session generations, revocation, expiry, and scope authority. */
+  readonly sessions: DurableSessionStore;
 
   constructor(options: DurableStoreOptions) {
     if (!isRecord(options as unknown) || typeof options.directory !== 'string' || options.directory.length === 0) {
@@ -410,6 +418,7 @@ export class DurableOperationalStore {
     this.artifacts = new DurableCollection<ArtifactEntity>(this.journal, 'artifacts', ArtifactSchema);
     this.runs = new DurableRunCoordinator(this.journal, leaseMs);
     this.executions = new ExecutionLedger(this.journal);
+    this.sessions = new DurableSessionStore(this.journal, options.sessions ?? []);
 
     for (const record of this.journal.read()) {
       if (record.kind === 'entity') {
@@ -425,6 +434,10 @@ export class DurableOperationalStore {
         this.runs.restore(record.payload);
       } else if (record.kind === 'execution') {
         this.executions.restore(record.payload);
+      } else if (record.kind === 'session_rotated') {
+        this.sessions.restoreRotation(record.payload);
+      } else if (record.kind === 'session_revoked') {
+        this.sessions.restoreRevocation(record.payload);
       } else if (record.kind === 'journal_snapshot') {
         if (!isRecord(record.payload)) {
           throw new JournalError('Operational journal contains a malformed compaction snapshot.');
@@ -440,6 +453,7 @@ export class DurableOperationalStore {
         for (const entity of snapshot.artifacts as unknown[]) this.artifacts.restore(entity);
         for (const run of snapshot.runs as unknown[]) this.runs.restore(run);
         for (const execution of snapshot.executions as unknown[]) this.executions.restore(execution);
+        if (snapshot.session_state !== undefined) this.sessions.restoreSnapshot(snapshot.session_state);
       } else {
         throw new JournalError(`Operational journal contains an unknown record kind "${record.kind}".`);
       }
@@ -460,6 +474,7 @@ export class DurableOperationalStore {
       artifacts: this.artifacts.list(),
       runs: this.runs.list(),
       executions: this.executions.list(),
+      session_state: this.sessions.state.snapshot(),
     };
     return this.journal.compactWithSnapshot('journal_snapshot', snapshot, archivePath);
   }

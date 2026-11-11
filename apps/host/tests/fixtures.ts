@@ -15,6 +15,11 @@ export const FOUNDER_TOKEN = 'founder-token-0123456789abcdef';
 export const OPERATOR_TOKEN = 'operator-token-abcdef0123456789';
 export const AGENT_TOKEN = 'agent-token-fedcba9876543210';
 
+/** A bounded, future session expiry for tests that start a real host. */
+export function sessionExpiresAt(offsetMs = 7 * 24 * 60 * 60 * 1000): string {
+  return new Date(Date.now() + offsetMs).toISOString();
+}
+
 function base(createdBy: string) {
   const now = new Date().toISOString();
   return {

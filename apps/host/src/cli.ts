@@ -140,7 +140,10 @@ async function main(): Promise<void> {
     }
     const config = loadHostConfig(parsed.values.config);
     // Must run with the host stopped: the journal holds a single-process lock.
-    const store = new DurableOperationalStore({ directory: config.operational_store.directory });
+    const store = new DurableOperationalStore({
+      directory: config.operational_store.directory,
+      sessions: config.sessions,
+    });
     try {
       const result = store.compact(parsed.values.archive);
       process.stdout.write(`${JSON.stringify({ event: 'journal_compacted', ...result })}\n`);

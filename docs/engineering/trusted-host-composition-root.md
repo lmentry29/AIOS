@@ -53,7 +53,8 @@ field fails startup instead of being silently ignored. A partial example (no sec
       "session_id": "00000000-0000-4000-8000-000000000005",
       "principal_id": "human:founder",
       "token_sha256": "<sha256 hex of a token you generate locally>",
-      "label": "founder laptop"
+      "label": "founder laptop",
+      "expires_at": "2026-12-11T00:00:00.000Z"
     }
   ],
   "execution": {
@@ -86,9 +87,10 @@ start a sandbox invocation.
 is read from `AIOS_OBSIDIAN_PASSWORD` (minimum 32 bytes) and never from this file.
 
 Rejected configurations include: non-loopback bind addresses, relative policy paths,
-duplicate resource UUIDs, duplicate session identifiers or token digests, a non-human
-bootstrap principal, a bootstrap principal with no session, nonsensical or out-of-range
-execution limits, and a group/world-readable config file.
+duplicate resource UUIDs, duplicate session identifiers or token digests, a missing or
+malformed `expires_at`, a lifetime beyond 30 days, a non-human bootstrap principal, a
+bootstrap principal with no session, nonsensical or out-of-range execution limits, and a
+group/world-readable config file.
 
 `bootstrap_principal_id` is the principal allowed to read the authorization audit; it is not
 a policy-administration bypass. Runtime publication requires an exact `administer_policy`
@@ -97,10 +99,26 @@ resource that references the version, and the offline CLIs remain the bootstrap 
 
 ## Identity
 
-`TrustedIdentityService` verifies `Authorization: Bearer <token>` against pre-provisioned
-SHA-256 digests. It compares every entry with `timingSafeEqual` and does not exit early, so
-timing does not disclose which session matched. Missing, malformed, oversized, wrong, and
-expired credentials all return the same unauthenticated result.
+`TrustedIdentityService` authenticates `Authorization: Bearer <token>` through
+`DurableSessionStore` (ADR-0029). Configuration provisions each session's initial digest and
+mandatory `expires_at`; the store persists the active generation, scope, and terminal retired
+digests in the operational journal. It compares token digests with `timingSafeEqual` without
+an early exit, so timing does not disclose which session matched. Missing, malformed,
+oversized, unknown, expired, rotated-away, revoked, and scope-mismatched credentials are all
+denied; HTTP 401 bodies and structured logs carry a stable reason such as `expired_token`,
+`rotated_token`, `revoked_token`, `task_scope_mismatch`, `run_scope_mismatch`, or
+`evidence_scope_mismatch`. There is no fallback to an unscoped or static identity.
+
+`POST /v1/session/rotate` issues a new 32-byte random token, retires the presented digest with
+reason `rotated`, and cannot broaden the existing task/run/evidence scope. The new token is
+returned once and is stored only as a digest; work already authorized before the rotation is
+not retroactively cancelled. `POST /v1/session/revoke` retires the presented digest with
+reason `revoked`; replaying the token or the journal event cannot restore it. Both decisions
+are journaled before acknowledgement and survive restart and checkpoint compaction. A session
+removed from configuration cannot be resurrected by an older snapshot; startup fails closed.
+A task/run/evidence-scoped token is checked in the real HTTP path before route logic, and a
+bound token cannot authorize a different task, run, or recomputed evidence digest. The
+run-scoped read route is `GET /v1/runs/:runId`.
 
 The authenticated session is the only source of an actor identifier. Request bodies may not
 name their own actor: `/v1/intake` requires `created_by` and `owner_id` to equal the session

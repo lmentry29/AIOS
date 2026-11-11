@@ -31,6 +31,7 @@ import {
   makePolicy,
   makeTask,
   makeWorkflow,
+  sessionExpiresAt,
 } from './fixtures.js';
 import { StubSandbox, makeExecutionConfig } from './sandbox-fixture.js';
 
@@ -102,6 +103,8 @@ async function startHost(options: {
   verification?: TaskVerificationPort;
   directory?: string;
   maxConcurrentTasks?: number;
+  /** Offset from now for all seeded sessions; negative values seed an expired session. */
+  sessionExpiryOffsetMs?: number;
 } = {}): Promise<Harness> {
   const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'aios-host-http-'));
   const policyPath = join(directory, 'policy-state.json');
@@ -122,9 +125,9 @@ async function startHost(options: {
     resources: { vault: VAULT_RESOURCE_ID, gmail: GMAIL_RESOURCE_ID, notion: NOTION_RESOURCE_ID },
     bootstrap_principal_id: FOUNDER,
     sessions: [
-      { session_id: randomUUID(), principal_id: FOUNDER, token_sha256: sha256(FOUNDER_TOKEN), label: 'founder laptop' },
-      { session_id: randomUUID(), principal_id: OPERATOR, token_sha256: sha256(OPERATOR_TOKEN), label: 'policy operator' },
-      { session_id: randomUUID(), principal_id: AGENT_ID, token_sha256: sha256(AGENT_TOKEN), label: 'agent worker' },
+      { session_id: randomUUID(), principal_id: FOUNDER, token_sha256: sha256(FOUNDER_TOKEN), label: 'founder laptop', expires_at: sessionExpiresAt(options.sessionExpiryOffsetMs) },
+      { session_id: randomUUID(), principal_id: OPERATOR, token_sha256: sha256(OPERATOR_TOKEN), label: 'policy operator', expires_at: sessionExpiresAt(options.sessionExpiryOffsetMs) },
+      { session_id: randomUUID(), principal_id: AGENT_ID, token_sha256: sha256(AGENT_TOKEN), label: 'agent worker', expires_at: sessionExpiresAt(options.sessionExpiryOffsetMs) },
     ],
     ...(localExecutionConfig === undefined ? {} : { execution: localExecutionConfig }),
   }), { mode: 0o600 });
@@ -236,6 +239,21 @@ function dispatch(harness: Harness, workflowId: string, idempotencyKey = randomU
   });
 }
 
+function rotateSession(
+  harness: Harness,
+  token: string,
+  scope?: Record<string, string>,
+) {
+  return call(harness, 'POST', '/v1/session/rotate', {
+    token,
+    body: scope === undefined ? {} : { scope },
+  });
+}
+
+function revokeSession(harness: Harness, token: string) {
+  return call(harness, 'POST', '/v1/session/revoke', { token, body: {} });
+}
+
 function resumeWorkflowRequest(harness: Harness, workflowId: string) {
   return call(harness, 'POST', `/v1/workflows/${workflowId}/resume`, { token: FOUNDER_TOKEN });
 }
@@ -330,20 +348,209 @@ describe('trusted host HTTP surface', () => {
     expect(session.body).toMatchObject({ principal_id: FOUNDER, human: true, label: 'founder laptop' });
   });
 
-  it('rejects every unauthenticated or malformed credential identically', async () => {
+  it('rejects every invalid credential shape with a structured reason', async () => {
     const harness = await startHost();
-    for (const options of [
-      {},
-      { token: 'wrong-token-0123456789abcdef' },
-      { headers: { authorization: `Basic ${FOUNDER_TOKEN}` } },
-      { headers: { authorization: `Bearer ${FOUNDER_TOKEN} extra` } },
-    ]) {
+    const cases: Array<[Parameters<typeof call>[3], string]> = [
+      [{}, 'missing_credential'],
+      [{ token: 'wrong-token-0123456789abcdef' }, 'unknown_token'],
+      [{ headers: { authorization: `Basic ${FOUNDER_TOKEN}` } }, 'malformed_credential'],
+      [{ headers: { authorization: `Bearer ${FOUNDER_TOKEN} extra` } }, 'malformed_credential'],
+    ];
+    for (const [options, reason] of cases) {
       const response = await call(harness, 'GET', '/v1/session', options);
       expect(response.status).toBe(401);
       expect(response.body?.error).toBe('unauthenticated');
+      expect(response.body?.reason).toBe(reason);
       expect(response.headers.get('www-authenticate')).toBe('Bearer');
       expect(JSON.stringify(response.body)).not.toContain(FOUNDER_TOKEN);
     }
+  });
+
+  it('denies an expired session over HTTP with an expired_token reason', async () => {
+    const harness = await startHost({ sessionExpiryOffsetMs: -60_000 });
+    const response = await call(harness, 'GET', '/v1/session', { token: FOUNDER_TOKEN });
+    expect(response.status).toBe(401);
+    expect(response.body?.error).toBe('unauthenticated');
+    expect(response.body?.reason).toBe('expired_token');
+  });
+
+  it('rotates, revokes, and restores the denial across a host restart', async () => {
+    const harness = await startHost();
+    const rotated = await rotateSession(harness, FOUNDER_TOKEN);
+    expect(rotated.status).toBe(200);
+    const rotatedToken = rotated.body?.token;
+    expect(typeof rotatedToken).toBe('string');
+    expect(rotated.body?.generation).toBe(2);
+
+    const retired = await call(harness, 'GET', '/v1/session', { token: FOUNDER_TOKEN });
+    expect(retired.status).toBe(401);
+    expect(retired.body?.reason).toBe('rotated_token');
+    const current = await call(harness, 'GET', '/v1/session', { token: rotatedToken as string });
+    expect(current.status).toBe(200);
+    expect(current.body?.generation).toBe(2);
+
+    const revoked = await revokeSession(harness, rotatedToken as string);
+    expect(revoked.status).toBe(200);
+    const replay = await call(harness, 'GET', '/v1/session', { token: rotatedToken as string });
+    expect(replay.status).toBe(401);
+    expect(replay.body?.reason).toBe('revoked_token');
+
+    await harness.server.close();
+    harness.runtime.close();
+    const restarted = createHostRuntime({ config: loadHostConfig(harness.configPath) });
+    const server = createHostServer(restarted);
+    const address = await server.listen();
+    cleanups.push(async () => {
+      await server.close();
+      restarted.close();
+    });
+    const afterRestart = await call(
+      { ...harness, baseUrl: `http://${address.host}:${address.port}` },
+      'GET',
+      '/v1/session',
+      { token: rotatedToken as string },
+    );
+    expect(afterRestart.status).toBe(401);
+    expect(afterRestart.body?.reason).toBe('revoked_token');
+  });
+
+  it('rejects a task-scoped token on a different task before lookup', async () => {
+    const task = makeTask();
+    const other = makeTask();
+    const workflow = makeWorkflow([task.entity_id]);
+    const policy = makePolicy(task.entity_id, workflow.entity_id);
+    const founderRule = policy.rules[0];
+    if (!founderRule) throw new Error('fixture policy has no rule');
+    policy.rules[0] = {
+      ...founderRule,
+      resource_ids: [...founderRule.resource_ids, other.entity_id],
+    };
+    const harness = await startHost({ policy });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'task', other)).status).toBe(201);
+
+    const rotated = await rotateSession(harness, FOUNDER_TOKEN, { task_id: task.entity_id });
+    expect(rotated.status).toBe(200);
+    const token = rotated.body?.token as string;
+    const allowed = await call(harness, 'GET', `/v1/tasks/${task.entity_id}`, { token });
+    expect(allowed.status).toBe(200);
+    const denied = await call(harness, 'GET', `/v1/tasks/${other.entity_id}`, { token });
+    expect(denied.status).toBe(401);
+    expect(denied.body?.reason).toBe('task_scope_mismatch');
+  });
+
+  it('binds an evidence token to the exact task and artifact digest', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'evidence'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const policy = makePolicy(task.entity_id, workflow.entity_id);
+    policy.rules.push({
+      effect: 'allow',
+      subject_ids: [OPERATOR],
+      actions: ['read_evidence'],
+      resource_ids: [task.entity_id],
+    });
+    const harness = await startHost({ policy, withAdapters: true });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    expect((await dispatch(harness, workflow.entity_id)).status).toBe(200);
+
+    const evidenceId = harness.runtime.taskStore.getTask(task.entity_id)?.audit_trail_ref;
+    if (!evidenceId) throw new Error('dispatch did not create evidence');
+    const read = await call(harness, 'GET', `/v1/tasks/${task.entity_id}/evidence/${evidenceId}`, {
+      token: FOUNDER_TOKEN,
+    });
+    expect(read.status).toBe(200);
+    const digest = read.body?.evidence_sha256 as string;
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+
+    const scoped = await rotateSession(harness, FOUNDER_TOKEN, {
+      task_id: task.entity_id,
+      evidence_sha256: digest,
+    });
+    const scopedToken = scoped.body?.token as string;
+    const exact = await call(harness, 'GET', `/v1/tasks/${task.entity_id}/evidence/${evidenceId}`, {
+      token: scopedToken,
+      headers: { 'x-aios-evidence-sha256': digest },
+    });
+    expect(exact.status).toBe(200);
+
+    const wrongDigest = 'b'.repeat(64);
+    const wrong = await rotateSession(harness, OPERATOR_TOKEN, {
+      task_id: task.entity_id,
+      evidence_sha256: wrongDigest,
+    });
+    const wrongToken = wrong.body?.token as string;
+    const denied = await call(harness, 'GET', `/v1/tasks/${task.entity_id}/evidence/${evidenceId}`, {
+      token: wrongToken,
+      headers: { 'x-aios-evidence-sha256': wrongDigest },
+    });
+    expect(denied.status).toBe(401);
+    expect(denied.body?.reason).toBe('evidence_scope_mismatch');
+  });
+
+  it('binds a run-scoped token to one dispatch run', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'run scope'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const policy = makePolicy(task.entity_id, workflow.entity_id);
+    policy.rules.push({
+      effect: 'allow',
+      subject_ids: [OPERATOR],
+      actions: ['read_status'],
+      resource_ids: [workflow.entity_id],
+    });
+    const harness = await startHost({ policy, withAdapters: true });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    const dispatched = await dispatch(harness, workflow.entity_id);
+    expect(dispatched.status).toBe(200);
+    const runId = dispatched.body?.run_id as string;
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const rotated = await rotateSession(harness, OPERATOR_TOKEN, { run_id: runId });
+    const token = rotated.body?.token as string;
+    const allowed = await call(harness, 'GET', `/v1/runs/${runId}`, { token });
+    expect(allowed.status).toBe(200);
+    const denied = await call(harness, 'GET', `/v1/runs/${randomUUID()}`, { token });
+    expect(denied.status).toBe(401);
+    expect(denied.body?.reason).toBe('run_scope_mismatch');
+  });
+
+  it('leaves already-authorized in-flight work unaffected by rotation', async () => {
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'in flight'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    const held = harness.sandbox?.holdNextRun();
+    if (!held) throw new Error('sandbox hold was not available');
+    const running = dispatch(harness, workflow.entity_id);
+    await held.started;
+
+    const rotated = await rotateSession(harness, FOUNDER_TOKEN);
+    expect(rotated.status).toBe(200);
+    const newToken = rotated.body?.token as string;
+    const oldTokenDenied = await call(harness, 'GET', '/v1/session', { token: FOUNDER_TOKEN });
+    expect(oldTokenDenied.status).toBe(401);
+    expect(oldTokenDenied.body?.reason).toBe('rotated_token');
+
+    held.release();
+    const completed = await running;
+    expect(completed.status).toBe(200);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe('completed');
+    const current = await call(harness, 'GET', `/v1/workflows/${workflow.entity_id}`, { token: newToken });
+    expect(current.status).toBe(200);
   });
 
   it('blocks DNS-rebinding host headers and browser cross-origin requests', async () => {

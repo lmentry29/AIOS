@@ -11,6 +11,7 @@ import {
   GMAIL_RESOURCE_ID,
   NOTION_RESOURCE_ID,
   VAULT_RESOURCE_ID,
+  sessionExpiresAt,
 } from './fixtures.js';
 
 const TOKEN_HASH = createHash('sha256').update('founder-token-0123456789abcdef').digest('hex');
@@ -35,6 +36,7 @@ function validConfig(overrides: Record<string, unknown> = {}): Record<string, un
         principal_id: FOUNDER,
         token_sha256: TOKEN_HASH,
         label: 'founder laptop',
+        expires_at: sessionExpiresAt(),
       },
     ],
     ...overrides,
@@ -157,6 +159,7 @@ describe('host configuration', () => {
       session_id: randomUUID(),
       principal_id: FOUNDER,
       token_sha256: TOKEN_HASH,
+      expires_at: sessionExpiresAt(),
     };
     expect(() => parseHostConfig(validConfig({ sessions: [session, { ...session, session_id: randomUUID() }] })))
       .toThrow(/duplicates another session/);
@@ -200,6 +203,26 @@ describe('host configuration', () => {
       expires_at: 'tomorrow-ish',
     }];
     expect(() => parseHostConfig(validConfig({ sessions }))).toThrow(/ISO-8601/);
+  });
+
+  it('requires every session to expire inside the bounded thirty-day lifetime', () => {
+    const now = Date.parse('2026-11-11T00:00:00.000Z');
+    const base = {
+      session_id: randomUUID(),
+      principal_id: FOUNDER,
+      token_sha256: TOKEN_HASH,
+    };
+    expect(() => parseHostConfig(validConfig({ sessions: [base] }), now)).toThrow(/expires_at/);
+    expect(() => parseHostConfig({
+      ...validConfig({
+        sessions: [{ ...base, expires_at: new Date(now + 31 * 24 * 60 * 60 * 1000).toISOString() }],
+      }),
+    }, now)).toThrow(/milliseconds/);
+    // A past seed expiry is accepted so a later rotated generation can outlive it; the
+    // seed itself is rejected by authentication once expired.
+    expect(parseHostConfig(validConfig({
+      sessions: [{ ...base, expires_at: new Date(now - 1).toISOString() }],
+    }), now).sessions[0]?.expires_at).toBe(new Date(now - 1).toISOString());
   });
 
   it('loads a 0600 regular file and refuses a readable-by-others file', () => {
