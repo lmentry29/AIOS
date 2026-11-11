@@ -7,6 +7,7 @@ import {
   OrchestrationKernel,
   type AgentExecutionPort,
   type AuthorizationPort,
+  type TaskExecutionObservation,
 } from '../src/index.js';
 
 const FOUNDER = 'human:founder';
@@ -194,6 +195,63 @@ describe('OrchestrationKernel', () => {
 
     expect(tasks.getTask(current.entity_id)?.name).toBe(current.name);
     expect(tasks.getTask(current.entity_id)?.lifecycle_state).toBe('completed');
+  });
+
+  it('binds signed verifier provenance to the durable attempt at verification and read time', async () => {
+    const tasks = new TaskStore();
+    const current = tasks.createTask(task());
+    const wf = workflow([current.entity_id]);
+    const verifierId = randomUUID();
+    const agentId = randomUUID();
+    const executionId = randomUUID();
+    const seen: Array<Record<string, unknown>> = [];
+    const observation: TaskExecutionObservation = {
+      execution_id: executionId,
+      task_id: current.entity_id,
+      agent_id: agentId,
+      state: 'completed',
+      attempt: 1,
+      attempt_kind: 'initial',
+    };
+    const kernel = new OrchestrationKernel(tasks, {
+      authorization: { authorize: async () => true },
+      execution: {
+        validateAgent: async () => true,
+        executeTask: async () => ({ summary: 'done', evidence: ['executor:result'] }),
+        coordinate: async () => ({ summary: 'done', evidence: ['executor:result'] }),
+      },
+      verification: {
+        verifier_id: verifierId,
+        verify: async () => ({
+          accepted: true,
+          reason: 'verified',
+          evidence: ['verifier:checked'],
+          verifier_id: verifierId,
+        }),
+        verifyProvenance: async (record) => {
+          seen.push(record);
+          return record.expected_execution_id === executionId && record.expected_attempt === 1;
+        },
+      },
+      executionState: {
+        latest: async (taskId) => (taskId === current.entity_id ? observation : undefined),
+        history: async () => [observation],
+      },
+      resolveAgent: async () => agentId,
+    });
+    await kernel.intake({ kind: 'workflow', workflow: wf }, FOUNDER);
+    await kernel.dispatch(wf, FOUNDER);
+
+    expect(tasks.getTask(current.entity_id)?.lifecycle_state).toBe('completed');
+    const evidenceId = tasks.getTask(current.entity_id)?.audit_trail_ref;
+    if (!evidenceId) throw new Error('dispatch did not create evidence');
+    const evidence = await kernel.getExecutionEvidence(evidenceId, current.entity_id, FOUNDER);
+    const description = JSON.parse(evidence.description ?? '{}') as Record<string, unknown>;
+    expect(description.execution_id).toBe(executionId);
+    expect(description.attempt).toBe(1);
+    expect(seen).toHaveLength(2);
+    expect(seen.every((record) => record.expected_execution_id === executionId)).toBe(true);
+    expect(seen.every((record) => record.expected_attempt === 1)).toBe(true);
   });
 
   it('denies execution evidence reads after authorization is revoked', async () => {

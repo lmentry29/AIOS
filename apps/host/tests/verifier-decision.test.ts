@@ -121,6 +121,62 @@ describe("signed verifier decisions", () => {
     ).toThrow(VerifierDecisionError);
   });
 
+  it("rejects a signed decision replayed against another execution attempt", () => {
+    const fixture = keyFixture();
+    const decision = body();
+    const provenance = fixture.signer.sign(decision);
+    const expected = {
+      task_id: decision.task_id,
+      verifier_id: decision.verifier_id,
+      accepted: decision.accepted,
+      reason: decision.reason,
+      evidence: decision.evidence,
+    };
+    expect(() => fixture.signer.verify(provenance, {
+      ...expected,
+      execution_id: decision.execution_id,
+      attempt: decision.attempt,
+    })).not.toThrow();
+    expect(() => fixture.signer.verify(provenance, {
+      ...expected,
+      execution_id: "44444444-4444-4444-8444-444444444444",
+    })).toThrow(/different execution attempt/);
+    expect(() => fixture.signer.verify(provenance, {
+      ...expected,
+      attempt: 2,
+    })).toThrow(/different attempt number/);
+
+    const record = {
+      task_id: decision.task_id,
+      verifier_id: decision.verifier_id,
+      verifier_accepted: decision.accepted,
+      verifier_reason: decision.reason,
+      verifier_evidence: decision.evidence,
+      verifier_provenance: provenance,
+      execution_id: decision.execution_id,
+      attempt: decision.attempt,
+    };
+    expect(() => fixture.signer.verifyRecord(record)).not.toThrow();
+    expect(() => fixture.signer.verifyRecord({
+      ...record,
+      execution_id: undefined,
+      expected_execution_id: "44444444-4444-4444-8444-444444444444",
+    })).toThrow(/different execution attempt/);
+    expect(() => fixture.signer.verifyRecord({
+      ...record,
+      expected_execution_id: "44444444-4444-4444-8444-444444444444",
+    })).toThrow(/does not match the durable attempt/);
+    expect(() => fixture.signer.verifyRecord({
+      ...record,
+      execution_id: "44444444-4444-4444-8444-444444444444",
+      expected_execution_id: decision.execution_id,
+    })).toThrow(/does not match the durable attempt/);
+    expect(() => fixture.signer.verifyRecord({
+      ...record,
+      execution_id: "44444444-4444-4444-8444-444444444444",
+    })).toThrow(/different execution attempt/);
+  });
+
   it("refuses an unknown or revoked key and a private key that is not owner-only", () => {
     const fixture = keyFixture();
     const generated = generateSigningKey();

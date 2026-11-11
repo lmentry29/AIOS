@@ -145,6 +145,7 @@ function verifyPayload(
   provenance: PolicyProvenance,
   payload: Record<string, unknown>,
   now: Date,
+  requireCurrentKeyValidity = false,
 ): PolicyProvenanceVerification {
   let key: TrustedKey;
   try {
@@ -158,6 +159,15 @@ function verifyPayload(
   if (signedAt > now.getTime() + MAX_FUTURE_SKEW_MS) return failure('malformed');
   if (signedAt < Date.parse(key.not_before)) return failure('key_not_yet_valid');
   if (signedAt > Date.parse(key.not_after)) return failure('key_expired');
+  // A policy is a current authorization input, not historical evidence. A signature that
+  // was valid when minted must not keep a retired/expired key deciding after its window
+  // closes. Historical decisions still verify at signed_at (see verifyDecision).
+  if (requireCurrentKeyValidity) {
+    const current = now.getTime();
+    if (!Number.isFinite(current)) return failure('malformed');
+    if (current < Date.parse(key.not_before)) return failure('key_not_yet_valid');
+    if (current > Date.parse(key.not_after)) return failure('key_expired');
+  }
   const serialized = canonicalJson(payload);
   if (sha256(serialized) !== provenance.payload_sha256) return failure('payload_mismatch');
   let valid = false;
@@ -294,6 +304,7 @@ export class PolicyProvenanceAuthority implements PolicyProvenancePort {
         provenance,
         policyPayload(policy, provenance),
         this.now(),
+        true,
       );
     } catch {
       return failure('verification_error');

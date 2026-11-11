@@ -94,11 +94,23 @@ Founder Intelligence vault's own access controls.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor
   signed; an attacker who can rewrite the archive and its digest can forge history. Retention
   and custody remain operator responsibilities (ADR-0025).
-- **Identity lifecycle.** Host session tokens now have bounded expiry, rotation, revocation, and
-  task/run/evidence scope binding (ADR-0029). Policies and authorization decisions now carry
-  detached local signatures verified against the pinned trust root (ADR-0034), but there is
-  still no login, MFA, token-theft detection, rate limiting, or TLS on the loopback listener,
-  and production policy-key custody plus external audit custody remain open. A rotation response is one-time; a
-  lost token cannot be recovered from the journal. Retired digests are terminal and retained.
+- **Authorization-audit rollback.** `authorization-audit.jsonl` has a SHA-256 sequence chain
+  and every record has detached provenance, but the chain is unkeyed and has no local
+  monotonic checkpoint. A same-UID attacker who rewrites the file and recomputes the chain
+  can remove a suffix, reorder/insert signed records, or roll back to an earlier consistent
+  prefix. The host detects ordinary edits and out-of-sequence records; it cannot detect a
+  rewritten valid prefix. External audit custody or a monotonic witness is required and is
+  recorded as blocked (F-030, CL-006).
+- **Identity and provenance lifecycle.** Host session tokens now have bounded expiry,
+  rotation, revocation, and task/run/evidence scope binding (ADR-0029). Policies and
+  authorization decisions carry detached local signatures verified against the pinned trust
+  root (ADR-0034); policy verification requires the key to be currently valid, while
+  historical decisions verify at signed time. Verifier decisions are bound to the durable
+  execution attempt (ADR-0033 implementation). The host refuses to compose the policy key as
+  a verifier key, but the trust root has no per-key purpose field, so a purpose-bound root is
+  blocked. There is still no login, MFA, token-theft detection, rate limiting, or TLS on the
+  loopback listener; production key custody, external audit custody, and revocation-time
+  history semantics remain open. A rotation response is one-time; a lost token cannot be
+  recovered from the journal. Retired digests are terminal and retained.
 - **Observability is not audit.** Structured logs help diagnosis; only the append-only audit
   store is treated as an authorization record.

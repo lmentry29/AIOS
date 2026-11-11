@@ -18,6 +18,7 @@ import {
 } from '@aios/orchestration';
 import { SharedAuthorizationBoundary } from './authorization.js';
 import type { HostConfig } from './config.js';
+import { loadTrustRoot } from './execution/artifact-signing.js';
 import { PolicyProvenanceAuthority } from './policy-provenance.js';
 import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
@@ -196,8 +197,36 @@ function resolveAgentUnlessConfigured(
  * - The vault/Gmail/Notion readers are composed against the shared evaluator but are only
  *   live once the local Obsidian++ service and credentials exist.
  */
+/**
+ * Refuses to compose the host when the policy signer is also trusted as a verifier key.
+ *
+ * The trust-root schema has no purpose field (ADR-0033/0034), so the strongest local
+ * separation available without a new trust-root format is to require distinct key ids and
+ * to reject a verifier root that contains the configured policy signing key. Key custody
+ * and a purpose-bound production root remain operator decisions, not claims of this check.
+ */
+export function assertSeparatePolicyAndVerifierKeys(
+  config: Pick<HostConfig, 'policy_provenance' | 'execution'>,
+): void {
+  const execution = config.execution;
+  if (execution?.verifier_key_id === undefined
+    || execution.verifier_trust_root_file === undefined) return;
+  if (execution.verifier_key_id === config.policy_provenance.key_id) {
+    throw new Error(
+      'The policy signing key id must not be the configured verifier signing key id.',
+    );
+  }
+  const verifierRoot = loadTrustRoot(execution.verifier_trust_root_file);
+  if (verifierRoot.keys.some((key) => key.key_id === config.policy_provenance.key_id)) {
+    throw new Error(
+      'The configured policy signing key must not be present in the verifier trust root.',
+    );
+  }
+}
+
 export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   const { config } = options;
+  assertSeparatePolicyAndVerifierKeys(config);
 
   if (options.obsidianPassword !== undefined && Buffer.byteLength(options.obsidianPassword) < 32) {
     throw new Error('Obsidian++ local password must contain at least 32 bytes.');

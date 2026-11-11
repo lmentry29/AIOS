@@ -1,8 +1,8 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Current security branch base: `db2f5b3` (signed provenance fixes);
-the trust-root lifecycle and local-provenance pass is recorded at the end of this file. The historical heads below
+evidence from observed CI. Current security branch base: `20760f5` (signed policy and authorization-decision provenance);
+the whole-provenance red-team pass is recorded at the end of this file. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
 the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
@@ -18,7 +18,7 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Active implementation branch: `security/openjarvis-defensive-integration`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Current security branch base: `db2f5b3` (`fix(security): close provenance verification gaps`); the trust-root lifecycle and local provenance pass is recorded at the end of this file.
+- Current security branch base: `20760f5` (`feat(security): sign policy bundles and authorization decisions`); the whole-provenance red-team pass is recorded at the end of this file.
 - Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic CI rootfs manifest, fail-closed tamper/missing-pin probes, and provenance evidence).
 - Pinned-input code commit: `103b521` (`feat(security): pin gVisor rootfs build inputs`; base digest, Debian snapshot, exact packages, input guard, independent image build, and drift regressions).
 - Prior security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors, drill/CI integration, and Docker engine metadata).
@@ -581,5 +581,33 @@ schema confusion, key-id substitution, wrong trust root, revoked/expired keys, o
 rotation, unsigned policies, and decision tampering. `http-host.test.ts` (59) adds a
 kernel-intake test that injects an unsigned policy directly into the registry and receives
 `orchestration_rejected` with `policy_provenance_missing` before the Task exists. At this
-head: full host suite **276 passed / 17 skipped** across 28 passing files; focused policy
-provenance **9/9**; forced uncached workspace gate **46/46 tasks, 0 cached**, exit 0.
+head: full host suite **279 passed / 17 skipped** across 28 passing files; focused policy
+provenance **11/11**; forced uncached workspace gate **46/46 tasks, 0 cached**, exit 0.
+
+## Whole-provenance red-team pass (2026-11-11)
+
+The verifier, policy, authorization-decision and audit links were attacked as one system.
+Three reachable defects were fixed fail-closed and guarded by mutation-proven tests:
+
+- F-027: policy verification now requires the signing key to be currently valid, not merely
+  valid at `signed_at`; historical decisions still verify at signed time.
+- F-028: the kernel reads the latest completed durable attempt, supplies its execution id and
+  attempt to verifier provenance verification before persistence and on every evidence read,
+  and rejects a signed decision from another attempt. The evidence record cannot override
+  that expectation.
+- F-029: host composition rejects the policy signing key as the verifier signing key or as a
+  key in the verifier trust root. A purpose-bound trust-root schema remains blocked.
+
+F-030 is **blocked, not fixed**: the authorization-audit SHA-256 chain detects ordinary edits
+and out-of-sequence records, but a same-UID attacker who rewrites the file and recomputes the
+chain can truncate, reorder or roll back a consistent prefix. There is no local monotonic
+checkpoint or external audit witness; `--expect-head` covers the operational evidence bundle,
+not `authorization-audit.jsonl`. Production key custody, remote attestation, a purpose-bound
+trust root, live connectors, macOS/rootless-Docker measurement and UI/scheduler/approval work
+remain blocked as classified in `docs/process/completion-ledger.md`.
+
+Evidence at this pass: focused policy provenance 11/11; verifier-decision 4/4;
+orchestration 31/31; founder 95/95; host 279 passed / 17 skipped; forced uncached workspace
+gate 46/46 tasks, 0 cached, exit 0; secret scan and `git diff --check` clean. Mutation probes
+for F-027, F-028 and F-029 each went red for the intended assertion when the guard was removed,
+then green after restore; the kernel-binding probe rebuilt `@aios/orchestration` on both sides.

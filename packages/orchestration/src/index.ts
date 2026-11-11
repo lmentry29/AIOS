@@ -123,6 +123,9 @@ export interface VerifiedExecution {
   result: TaskExecutionResult;
   decision: TaskVerificationDecision;
   verifier_id: string;
+  /** Durable attempt the signed decision was verified against, when the kernel has a ledger. */
+  execution_id?: string;
+  attempt?: number;
 }
 
 export interface TaskVerificationRequest {
@@ -418,7 +421,7 @@ export class OrchestrationKernel {
         await this.assertNotCancelled(task.entity_id);
         const verified = await this.verifyResult(result, task, [item.agentId]);
         await this.assertNotCancelled(task.entity_id);
-        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.verifier_id, verified.result, verified.decision);
+        const evidenceId = this.persistExecutionEvidence(task, [item.agentId], verified.verifier_id, verified.result, verified.decision, verified);
         await this.assertNotCancelled(task.entity_id);
         this.tasks.updateTask(task.entity_id, {
           audit_trail_ref: evidenceId,
@@ -523,6 +526,7 @@ export class OrchestrationKernel {
           verified.verifier_id,
           verified.result,
           verified.decision,
+          verified,
         );
         await this.assertNotCancelled(task.entity_id);
         this.tasks.updateTask(task.entity_id, {
@@ -689,6 +693,7 @@ export class OrchestrationKernel {
         verified.verifier_id,
         verified.result,
         verified.decision,
+        verified,
       );
       await this.assertNotCancelled(task.entity_id);
       this.tasks.updateTask(task.entity_id, {
@@ -917,9 +922,11 @@ export class OrchestrationKernel {
       await this.assertNotCancelled(active.entity_id);
       const result = await this.options.execution.coordinate(uniqueAgents, active);
       await this.assertNotCancelled(active.entity_id);
-      const verified = await this.verifyResult(result, active, uniqueAgents);
+      // Coordination has no durable execution attempt to bind: its independent verifier
+      // decision covers the Task and result, not an executor generation.
+      const verified = await this.verifyResult(result, active, uniqueAgents, false);
       await this.assertNotCancelled(active.entity_id);
-      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.verifier_id, verified.result, verified.decision);
+      const evidenceId = this.persistExecutionEvidence(active, uniqueAgents, verified.verifier_id, verified.result, verified.decision, verified);
       await this.assertNotCancelled(active.entity_id);
       this.tasks.updateTask(active.entity_id, {
         audit_trail_ref: evidenceId,
@@ -1074,10 +1081,20 @@ export class OrchestrationKernel {
         'Execution evidence verifier identity is missing or does not match the configured verifier.',
       );
     }
+    const observed = await this.expectedExecution(task.entity_id);
     if (this.options.verification.verifyProvenance !== undefined) {
+      const expectedRecord: Record<string, unknown> = {
+        ...record,
+        ...(observed === undefined
+          ? {}
+          : {
+              expected_execution_id: observed.execution_id,
+              expected_attempt: observed.attempt,
+            }),
+      };
       let provenanceValid = false;
       try {
-        provenanceValid = await this.options.verification.verifyProvenance(record);
+        provenanceValid = await this.options.verification.verifyProvenance(expectedRecord);
       } catch {
         provenanceValid = false;
       }
@@ -1102,6 +1119,7 @@ export class OrchestrationKernel {
     verifierId: string,
     result: TaskExecutionResult,
     verification: TaskVerificationDecision,
+    execution?: Pick<VerifiedExecution, 'execution_id' | 'attempt'>,
   ): string {
     const primaryAgentId = agentIds[0];
     if (!primaryAgentId) throw new OrchestrationError('Execution evidence requires at least one Agent.');
@@ -1121,6 +1139,8 @@ export class OrchestrationKernel {
         verifier_accepted: verification.accepted,
         verifier_reason: verification.reason,
         verifier_evidence: verification.evidence,
+        ...(execution?.execution_id === undefined ? {} : { execution_id: execution.execution_id }),
+        ...(execution?.attempt === undefined ? {} : { attempt: execution.attempt }),
         ...(verification.provenance === undefined
           ? {}
           : { verifier_provenance: verification.provenance }),
@@ -1147,6 +1167,7 @@ export class OrchestrationKernel {
     result: TaskExecutionResult,
     task: TaskEntity,
     allowedExecutors: string[],
+    bindAttempt = true,
   ): Promise<VerifiedExecution> {
     if (!result || typeof result !== 'object'
       || typeof result.summary !== 'string'
@@ -1230,6 +1251,7 @@ export class OrchestrationKernel {
         `Task "${task.entity_id}" was not completed: the verification decision verifier identity is missing or does not match the configured verifier.`,
       );
     }
+    const observed = bindAttempt ? await this.expectedExecution(task.entity_id) : undefined;
     if (this.options.verification.verifyProvenance !== undefined) {
       const record: Record<string, unknown> = {
         task_id: task.entity_id,
@@ -1237,6 +1259,12 @@ export class OrchestrationKernel {
         verifier_accepted: verification.accepted,
         verifier_reason: verification.reason,
         verifier_evidence: verification.evidence,
+        ...(observed === undefined
+          ? {}
+          : {
+              expected_execution_id: observed.execution_id,
+              expected_attempt: observed.attempt,
+            }),
         ...(verification.provenance === undefined
           ? {}
           : { verifier_provenance: verification.provenance }),
@@ -1253,6 +1281,31 @@ export class OrchestrationKernel {
         );
       }
     }
-    return { result: snapshot, decision: verification, verifier_id: verifierId };
+    return {
+      result: snapshot,
+      decision: verification,
+      verifier_id: verifierId,
+      ...(observed === undefined
+        ? {}
+        : { execution_id: observed.execution_id, attempt: observed.attempt }),
+    };
+  }
+
+  /**
+   * Returns the durable attempt a decision must be bound to. When the host supplies an
+   * execution-state port, a missing or non-completed latest attempt is a verification
+   * failure rather than an invitation to skip the binding check.
+   */
+  private async expectedExecution(taskId: string): Promise<TaskExecutionObservation | undefined> {
+    if (this.options.executionState === undefined) return undefined;
+    const observed = await this.options.executionState.latest(taskId);
+    if (observed === undefined
+      || observed.task_id !== taskId
+      || observed.state !== 'completed') {
+      throw new OrchestrationError(
+        `Task "${taskId}" has no completed durable execution attempt to verify against.`,
+      );
+    }
+    return observed;
   }
 }

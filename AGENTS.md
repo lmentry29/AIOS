@@ -50,10 +50,13 @@ passing build.
    resource unattached and denying. The offline `publish-policy` and `revoke-policy` CLIs
    remain the out-of-band bootstrap paths. `administer_policy` may be
    granted only to human subjects; it is never implied by another action, ownership, or
-   the bootstrap identity. Neither action is implied by the other. This is still not a
-   production security boundary: there is no detached policy signature, external audit
-   custody, or policy recovery/key-rotation procedure. Do not change authorization semantics without an amending
-   ADR.
+   the bootstrap identity. Neither action is implied by the other. Policy bundles and
+   decisions now carry detached Ed25519 provenance (ADR-0034), verified before rule
+   matching and re-verified on audit reads; verifier decisions are bound to the durable
+   execution attempt, and the host refuses to compose the policy signing key as a verifier
+   key. This is still not a production security boundary: production key custody, external
+   audit custody/monotonic checkpoints, and a purpose-bound trust-root key-role schema are
+   absent. Do not change authorization semantics without an amending ADR.
 7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
    ADR-0012 is Proposed and establishes capability mediation as the intended
    requester-facing principle, but its replacement runtime contract and Capability

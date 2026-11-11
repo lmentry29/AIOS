@@ -17,6 +17,7 @@ import {
   type TrustRoot,
 } from '../src/execution/artifact-signing.js';
 import { PolicyProvenanceAuthority } from '../src/policy-provenance.js';
+import { assertSeparatePolicyAndVerifierKeys } from '../src/runtime.js';
 import { createPolicyAuthority } from './policy-provenance-fixture.js';
 
 function policy(): AccessPolicy {
@@ -150,6 +151,42 @@ describe('policy bundle provenance', () => {
       trust_root_file: fixture.config.trust_root_file,
     });
     expect((await expired.verifyPolicy(signed)).reason).toBe('key_expired');
+  });
+
+  it('rejects a policy after its signing key expires even when it was signed in-window', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-current-expiry-'));
+    const signedAt = new Date('2026-11-11T00:00:00.000Z');
+    const expiresAt = new Date(signedAt.getTime() + 60_000);
+    const fixture = createPolicyAuthority(directory, {
+      now: signedAt,
+      notAfter: expiresAt,
+    });
+    const signed = await fixture.authority.signPolicy(policy());
+    expect((await fixture.authority.verifyPolicy(signed)).valid).toBe(true);
+
+    const afterExpiry = PolicyProvenanceAuthority.verificationOnly({
+      trust_root_file: fixture.config.trust_root_file,
+      now: () => new Date(expiresAt.getTime() + 1),
+    });
+    expect((await afterExpiry.verifyPolicy(signed)).reason).toBe('key_expired');
+  });
+
+  it('refuses to compose the policy key as a verifier key or in the verifier root', () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-role-')));
+    expect(() => assertSeparatePolicyAndVerifierKeys({
+      policy_provenance: fixture.config,
+      execution: {
+        verifier_key_id: fixture.config.key_id,
+        verifier_trust_root_file: fixture.config.trust_root_file,
+      },
+    } as never)).toThrow(/must not be the configured verifier/);
+    expect(() => assertSeparatePolicyAndVerifierKeys({
+      policy_provenance: fixture.config,
+      execution: {
+        verifier_key_id: '0'.repeat(64),
+        verifier_trust_root_file: fixture.config.trust_root_file,
+      },
+    } as never)).toThrow(/must not be present in the verifier trust root/);
   });
 
   it('keeps old-key decisions verifiable after a replacement key is added', async () => {

@@ -72,6 +72,14 @@ export interface VerifierDecisionExpectation {
   accepted: boolean;
   reason: string;
   evidence: string[];
+  /**
+   * Durable-attempt binding. The kernel supplies these from its execution ledger so an old
+   * signed decision cannot be replayed for a later attempt of the same Task. `undefined`
+   * means the caller did not supply an expectation; `null` requires a null signed field.
+   */
+  execution_id?: string | null;
+  attempt?: number | null;
+  bound_result_sha256?: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -405,6 +413,23 @@ export class VerifierDecisionSigner {
         "The signed verifier decision evidence does not match the record.",
       );
     }
+    if (expected.execution_id !== undefined
+      && payload.decision.execution_id !== expected.execution_id) {
+      throw new VerifierDecisionError(
+        "The signed verifier decision belongs to a different execution attempt.",
+      );
+    }
+    if (expected.attempt !== undefined && payload.decision.attempt !== expected.attempt) {
+      throw new VerifierDecisionError(
+        "The signed verifier decision has a different attempt number.",
+      );
+    }
+    if (expected.bound_result_sha256 !== undefined
+      && payload.decision.bound_result_sha256 !== expected.bound_result_sha256) {
+      throw new VerifierDecisionError(
+        "The signed verifier decision is bound to a different execution result.",
+      );
+    }
   }
 
   /** Verifies the persisted evidence artifact shape without trusting any field beside the signature. */
@@ -416,13 +441,57 @@ export class VerifierDecisionSigner {
     if (!Array.isArray(evidence) || evidence.some((entry) => typeof entry !== "string")) {
       throw new VerifierDecisionError("The evidence record has malformed verifier evidence.");
     }
-    this.verify(provenance, {
+    const expected: VerifierDecisionExpectation = {
       task_id: requireString(record.task_id, "evidence task_id", 200),
       verifier_id: requireString(record.verifier_id, "evidence verifier_id", 200),
       accepted: record.verifier_accepted === true,
       reason: requireString(record.verifier_reason, "evidence verifier_reason", MAX_REASON),
       evidence: evidence as string[],
-    });
+    };
+    // The kernel supplies expected_* from the durable ledger at read time. Those fields take
+    // precedence over the record's own copy, which an artifact writer could edit even though
+    // it cannot mint a new signature.
+    const expectedExecutionId = "expected_execution_id" in record
+      ? record.expected_execution_id
+      : record.execution_id;
+    if (expectedExecutionId !== undefined) {
+      expected.execution_id = expectedExecutionId === null
+        ? null
+        : requireString(expectedExecutionId, "evidence expected_execution_id", 200);
+    }
+    const expectedAttempt = "expected_attempt" in record ? record.expected_attempt : record.attempt;
+    if (expectedAttempt !== undefined) {
+      if (expectedAttempt === null) {
+        expected.attempt = null;
+      } else if (Number.isSafeInteger(expectedAttempt) && (expectedAttempt as number) > 0) {
+        expected.attempt = expectedAttempt as number;
+      } else {
+        throw new VerifierDecisionError("The evidence record has a malformed expected attempt.");
+      }
+    }
+    if (expected.execution_id !== undefined && record.execution_id !== undefined
+      && record.execution_id !== expected.execution_id) {
+      throw new VerifierDecisionError(
+        "The evidence record execution id does not match the durable attempt.",
+      );
+    }
+    if (expected.attempt !== undefined && record.attempt !== undefined
+      && record.attempt !== expected.attempt) {
+      throw new VerifierDecisionError(
+        "The evidence record attempt does not match the durable attempt.",
+      );
+    }
+    if ("bound_result_sha256" in record) {
+      expected.bound_result_sha256 = record.bound_result_sha256 === null
+        ? null
+        : requireString(record.bound_result_sha256, "evidence bound_result_sha256", 64);
+      if (expected.bound_result_sha256 !== null && !SHA256_HEX.test(expected.bound_result_sha256)) {
+        throw new VerifierDecisionError(
+          "The evidence record has a malformed bound result digest.",
+        );
+      }
+    }
+    this.verify(provenance, expected);
   }
 }
 

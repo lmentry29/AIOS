@@ -3,12 +3,11 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, pinned gVisor build inputs and independent-
-image rootfs reproduction after the measured Docker/gVisor matrix). Latest measured security
-code head: `378e7d6` (pinned base/snapshot/packages, independent no-cache rebuild comparison,
-and path-level mismatch diagnostics), following `ef02f27`, `103b521`, `54344f1`,
-`40438a5`, `29eb496`, `550d0e5`, `27ab654`, and `b067501`; its documentation checkpoint follows. Re-check this head rather than
-older CI lines below. F-009's digest mitigation, F-005's fail-closed regression, the bounded
+Last updated: 2026-11-11 (Freebuff Cloud session, whole-provenance red-team pass). Latest
+security code head: `20760f5` (`feat(security): sign policy bundles and authorization
+decisions`), following the trust-root lifecycle and local-provenance commits. The forced
+uncached gate, host/orchestration suites, mutation probes and the blocked audit-rollback
+boundary are recorded below. Re-check this head rather than older CI lines. F-009's digest mitigation, F-005's fail-closed regression, the bounded
 canonical collections, and the live bubblewrap controls remain in place from
 `24d2791`/`43e2dd6`.
 
@@ -1077,3 +1076,30 @@ with `orchestration_rejected`. Configuration is all-or-none
 accidental durable-evidence edit path but not a compromised host, remote attestation,
 production key custody, or external audit custody. Tests: `verifier-decision.test.ts` and
 the signed-evidence path in `http-host.test.ts`; the repository trust root remains empty.
+
+## Whole-provenance red-team pass — 2026-11-11
+
+The verifier, policy, authorization-decision and audit links were attacked together. F-027
+now rejects a policy whose signing key has expired since `signed_at`; policy content is a
+current authorization input, while historical decisions still verify at their signing time.
+F-028 now binds the detached verifier decision to the kernel's durable execution id and
+attempt before persistence and on every evidence read; the old signed body already carried
+those fields, but the expectation did not. F-029 now refuses to compose the policy signing
+key as the verifier signing key or to leave it in the verifier trust root. Each fix has a
+focused test and a mutation probe: guard removed -> test red for the intended reason; guard
+restored -> test green.
+
+F-030 remains **blocked**: `authorization-audit.jsonl` has an unkeyed SHA-256 chain and no
+local monotonic checkpoint. An attacker who can rewrite the file and recompute the chain can
+truncate, reorder or roll back a consistent prefix. Ordinary edits and out-of-sequence
+records are detected, and every record is signature-verified on read, but local-only code
+cannot establish monotonicity against a same-UID writer. External audit custody or a
+monotonic witness is the owner action. The operational evidence bundle's `--expect-head` is
+not a substitute for the authorization journal.
+
+Measured locally: focused policy provenance 11/11; verifier-decision 4/4; orchestration
+31/31; founder 95/95; host 279 passed / 17 skipped; forced uncached workspace gate 46/46
+tasks, 0 cached; secret scan and `git diff --check` clean. The purpose-bound trust-root
+schema, production key custody, remote attestation, revocation-time history semantics, live
+connectors, macOS/rootless-Docker measurement, UI/CSRF, scheduler/approval and release work
+remain blocked in `docs/process/completion-ledger.md`, each with an owner.

@@ -24,10 +24,11 @@ result merely because its JSON looks familiar. Acceptance requires all of the fo
    actual exit status can authorize acceptance.
 8. When verifier signing is configured, the decision also carries a detached Ed25519
    provenance envelope. The signed body covers the Task, attempt identity/digest, verifier
-   identity, acceptance, reason, and complete verifier evidence. The kernel verifies it
-   before persistence; evidence reads verify it again and fail closed on mutation. The
-   private key is owner-only and loaded at startup; this is local tamper evidence, not
-   remote attestation.
+   identity, acceptance, reason, and complete verifier evidence. The kernel reads the
+   latest completed durable attempt and checks the signed `execution_id`/`attempt` against
+   it before persistence, and again on every evidence read. The record's own metadata cannot
+   override this expectation. The private key is owner-only and loaded at startup; this is
+   local tamper evidence, not remote attestation.
 
 ## Defects found and fixed
 
@@ -48,6 +49,12 @@ result merely because its JSON looks familiar. Acceptance requires all of the fo
   `AIOS_TRUST_ROOT`, `AIOS_SIGNING_*`, `AIOS_GVISOR_*` or `AIOS_ARTIFACT_*` variables.
   `AIOS_VERIFIER_ID`, trust-root, signing, gVisor and artifact configuration names are now
   filtered from Task environments; only host code sets them.
+- **Signed decision replay across attempts.** The signature covered the execution id and
+  attempt, but the verifier expectation and kernel only compared Task/verifier/result fields.
+  A signed decision from attempt 1 could therefore be replayed on attempt 2. The kernel now
+  supplies the durable `expected_execution_id`/`expected_attempt` on verification and read;
+  the signer rejects a mismatch and the evidence record cannot override the expectation
+  (F-028).
 
 ## Coverage
 
@@ -59,16 +66,21 @@ replay, legacy evidence, post-hoc removal and duplication of the bound digest, u
 verifiers, and reserved-environment filtering. Replay and cross-Task cases assert the
 verification command is not run when binding fails.
 
-Measured locally: full uncached gate 46/46 tasks, 0 cached; host 266 passed / 17 skipped;
-integration 43; conformance 107. Signed-decision focused tests: 61/61. No existing test or
-check was weakened.
+Measured locally after the whole-chain pass: full uncached gate 46/46 tasks, 0 cached; host
+279 passed / 17 skipped across 28 passing files; orchestration 31/31; founder 95/95;
+integration 43; conformance 107. The new verifier replay test is in
+`verifier-decision.test.ts` (4 tests), and the kernel expectation test is in
+`orchestration.test.ts` (12 tests). No existing test or check was weakened.
 
 ## Remaining open
 
 - The ledger and verification decision remain host-process state; detached signing makes
   persisted decisions tamper-evident but a compromised host can still sign. There is no
-  cross-process attestation or external audit custody. The operational journal is
-  hash-chained (ADR-0015) but not independently witnessed.
+  cross-process attestation or external audit custody. The operational and authorization
+  journals are hash-chained (ADR-0015) but not independently witnessed; an attacker who can
+  rewrite a consistent prefix cannot be detected without a monotonic checkpoint (F-030).
+- The trust root has no per-key purpose field. Host composition now requires distinct policy
+  and verifier keys, but a purpose-bound root remains an architecture decision (F-029).
 - Production gVisor/verifier trust-root/key provisioning is blocked on an operator-held
   secret; the repository trust root is intentionally empty.
 - Sigstore/Fulcio/Rekor identity and SLSA provenance are not implemented or claimed.

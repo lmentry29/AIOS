@@ -1374,3 +1374,41 @@ provisioned and are not claimed.
   production rotation/revocation ceremony, external audit custody, trusted timestamps,
   rollback/monotonic-checkpoint protection, remote attestation, and recovery from private-key
   compromise. This is local tamper evidence, not a remote trust service.
+
+## Whole-provenance red-team pass (2026-11-11)
+
+- Scope: verifier decisions, policy bundles, authorization decisions and the signed audit
+  trail attacked as one system, including cross-subject/schema reuse, key-role confusion,
+  execution-attempt replay, expired policy keys, unknown/revoked/rotated keys, and audit
+  insertion/reordering/truncation/rollback.
+- F-027 fixed: `verifyPayload` now checks the policy key window against the current clock when
+  verifying a policy; historical decisions still verify at `signed_at`.
+- F-028 fixed: the kernel reads the latest completed durable attempt and supplies
+  `expected_execution_id`/`expected_attempt` to `verifyProvenance` before persistence and on
+  evidence reads. `VerifierDecisionSigner` compares those fields to the signed body; the
+  persisted record's own fields cannot override them. The evidence artifact records the
+  durable execution id and attempt.
+- F-029 fixed for host composition: `assertSeparatePolicyAndVerifierKeys` rejects the policy
+  signing key as the verifier signing key and rejects the policy key in the verifier trust
+  root. The trust-root schema still has no per-key purpose; production purpose-bound roots,
+  custody and rotation ceremony remain blocked.
+- F-030 blocked, not fixed: the authorization-audit hash chain detects ordinary edits and
+  out-of-sequence records, but a same-UID attacker who rewrites the file and recomputes the
+  unkeyed chain can truncate, reorder or roll back a consistent prefix. No local monotonic
+  checkpoint or external audit witness exists; `evidence-bundle --expect-head` covers the
+  operational journal export, not `authorization-audit.jsonl`.
+- Mutation probes: F-027 guard removed -> focused test **1 failed / 10 skipped**, exit 1;
+  restored -> **11/11**, exit 0. F-028 verifier expectation removed -> **1 failed / 3
+  skipped**, exit 1; restored -> **4/4**, exit 0. F-028 kernel expectation fields removed ->
+  `@aios/orchestration` rebuilt, **1 failed / 11 skipped**, exit 1; restored/rebuilt ->
+  **31/31**, exit 0. F-029 key-id check disabled -> **1 failed / 10 skipped**, exit 1;
+  restored -> **11/11**, exit 0.
+- Exact suites: focused policy provenance **11/11**; verifier-decision **4/4**;
+  `@aios/orchestration` **31/31**; `@aios/founder` **95/95**; `@aios/host` **279 passed / 17
+  skipped** across 28 passing files and 3 skipped files.
+- Full forced uncached workspace gate:
+  `turbo run lint typecheck build test --force --cache-dir="$PWD/.turbo/cache"` -> **46/46
+  successful, 0 cached**, exit 0. Secret scan: clean across 335 tracked files. `git diff
+  --check`: exit 0.
+- No push, merge, tag, publish or deploy was performed. The branch remains
+  `security/openjarvis-defensive-integration`; PR #1 remains open/draft/unmerged.
