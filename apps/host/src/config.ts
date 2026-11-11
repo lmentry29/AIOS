@@ -109,6 +109,15 @@ export interface HostExecutionConfig {
    * limit is rejected before execution with HTTP 429; it is not silently fanned out.
    */
   max_concurrent_tasks: number;
+  /**
+   * Optional detached decision signing (ADR-0033). All three fields are required together.
+   * The private key is loaded once at startup and remains only in memory; the trust root is
+   * the same strict Ed25519 root used for gVisor provenance. This does not protect against a
+   * compromised host process and is not remote attestation.
+   */
+  verifier_signing_key_file?: string;
+  verifier_trust_root_file?: string;
+  verifier_key_id?: string;
 }
 
 const DEFAULT_BODY_LIMIT = 256 * 1024;
@@ -205,6 +214,9 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     'max_output_bytes',
     'workspace_max_bytes',
     'max_concurrent_tasks',
+    'verifier_signing_key_file',
+    'verifier_trust_root_file',
+    'verifier_key_id',
   ]), 'execution');
 
   const workspaceDirectory = requireString(
@@ -288,6 +300,44 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     maxConcurrentTasks = value;
   }
 
+  let verifierSigningKeyFile: string | undefined;
+  if (raw.verifier_signing_key_file !== undefined) {
+    verifierSigningKeyFile = requireString(
+      raw.verifier_signing_key_file,
+      'execution.verifier_signing_key_file',
+      4096,
+    );
+    if (!isAbsolute(verifierSigningKeyFile)) {
+      fail('execution.verifier_signing_key_file', 'must be an absolute path');
+    }
+  }
+  let verifierTrustRootFile: string | undefined;
+  if (raw.verifier_trust_root_file !== undefined) {
+    verifierTrustRootFile = requireString(
+      raw.verifier_trust_root_file,
+      'execution.verifier_trust_root_file',
+      4096,
+    );
+    if (!isAbsolute(verifierTrustRootFile)) {
+      fail('execution.verifier_trust_root_file', 'must be an absolute path');
+    }
+  }
+  let verifierKeyId: string | undefined;
+  if (raw.verifier_key_id !== undefined) {
+    verifierKeyId = requireString(raw.verifier_key_id, 'execution.verifier_key_id', 64);
+    if (!SHA256_HEX.test(verifierKeyId)) {
+      fail('execution.verifier_key_id', 'must be a lowercase hex SHA-256 key id');
+    }
+  }
+  const signingFields = [verifierSigningKeyFile, verifierTrustRootFile, verifierKeyId];
+  if (signingFields.some((value) => value !== undefined)
+    && signingFields.some((value) => value === undefined)) {
+    fail(
+      'execution.verifier_signing_key_file',
+      'verifier signing requires verifier_signing_key_file, verifier_trust_root_file, and verifier_key_id together',
+    );
+  }
+
   return {
     workspace_directory: resolve(workspaceDirectory),
     agent_id: agentId,
@@ -299,6 +349,9 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     max_output_bytes: maxOutputBytes,
     workspace_max_bytes: workspaceMaxBytes,
     max_concurrent_tasks: maxConcurrentTasks,
+    ...(verifierSigningKeyFile === undefined ? {} : { verifier_signing_key_file: resolve(verifierSigningKeyFile) }),
+    ...(verifierTrustRootFile === undefined ? {} : { verifier_trust_root_file: resolve(verifierTrustRootFile) }),
+    ...(verifierKeyId === undefined ? {} : { verifier_key_id: verifierKeyId }),
   };
 }
 

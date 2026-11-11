@@ -12,6 +12,8 @@ import type { TaskEntity, WorkflowEntity } from '@aios/core';
 import { loadHostConfig } from '../src/config.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier, type ExecutionLedgerRef } from '../src/execution/command-verifier.js';
+import { createTrustRoot, generateSigningKey } from '../src/execution/artifact-signing.js';
+import { loadVerifierDecisionSigner, type VerifierDecisionSigner } from '../src/execution/verifier-decision.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { DurableAuthorizationAuditStore } from '../src/persistence/authorization-audit-store.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
@@ -100,6 +102,7 @@ async function startHost(options: {
   policy?: AccessPolicy;
   withAdapters?: boolean;
   withLocalAdapters?: boolean;
+  verifierSigner?: VerifierDecisionSigner;
   verification?: TaskVerificationPort;
   directory?: string;
   maxConcurrentTasks?: number;
@@ -145,7 +148,7 @@ async function startHost(options: {
     ledgerRef = {};
     localAdapters = {
       execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces),
-      verification: new LocalCommandVerifier(executionConfig, sandbox, workspaces, ledgerRef),
+      verification: new LocalCommandVerifier(executionConfig, sandbox, workspaces, ledgerRef, options.verifierSigner),
     };
   }
   const runtime = createHostRuntime({
@@ -739,6 +742,61 @@ describe('trusted host HTTP surface', () => {
     const rereadArtifact = reread.body?.evidence as Record<string, unknown>;
     expect(rereadArtifact.entity_id).toBe(storedTask?.audit_trail_ref);
     expect(rereadArtifact.description).toBe(artifact.description);
+  });
+
+  it('persists signed verifier provenance and rejects a tampered evidence record', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-host-signed-verifier-'));
+    const generated = generateSigningKey();
+    const now = Date.now();
+    const trustRoot = createTrustRoot({
+      key_id: generated.key_id,
+      public_key_pem: generated.public_key_pem,
+      not_before: new Date(now - 60_000).toISOString(),
+      not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+    });
+    const keyPath = join(directory, 'verifier.pem');
+    const trustRootPath = join(directory, 'trust-root.json');
+    writeFileSync(keyPath, generated.private_key_pem, { mode: 0o600 });
+    writeFileSync(trustRootPath, JSON.stringify(trustRoot), { mode: 0o600 });
+    const signer = loadVerifierDecisionSigner({
+      private_key_file: keyPath,
+      trust_root_file: trustRootPath,
+      key_id: generated.key_id,
+    });
+    const task = makeTask({
+      execution: { kind: 'local_command', argv: ['/bin/echo', 'signed'] },
+      verification: { kind: 'local_command', argv: ['/bin/true'] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+      verifierSigner: signer,
+      directory,
+    });
+    expect((await intake(harness, 'task', task)).status).toBe(201);
+    expect((await intake(harness, 'workflow', workflow)).status).toBe(201);
+    expect((await dispatch(harness, workflow.entity_id)).status).toBe(200);
+
+    const evidenceId = harness.runtime.taskStore.getTask(task.entity_id)?.audit_trail_ref;
+    if (!evidenceId) throw new Error('dispatch did not create evidence');
+    const evidencePath = `/v1/tasks/${task.entity_id}/evidence/${evidenceId}`;
+    const accepted = await call(harness, 'GET', evidencePath, { token: FOUNDER_TOKEN });
+    expect(accepted.status).toBe(200);
+    const artifact = accepted.body?.evidence as Record<string, unknown>;
+    const description = JSON.parse(String(artifact.description)) as Record<string, unknown>;
+    const provenance = description.verifier_provenance as Record<string, unknown>;
+    expect(provenance.key_id).toBe(generated.key_id);
+    expect(provenance.signature).toMatch(/^[A-Za-z0-9+/]{86}==$/);
+
+    // A record mutated after signing must not read as verified, even though its verifier id
+    // still matches the configured principal.
+    const tampered = { ...description, verifier_reason: 'tampered after signing' };
+    harness.runtime.artifactStore.update(evidenceId, { description: JSON.stringify(tampered) });
+    const rejected = await call(harness, 'GET', evidencePath, { token: FOUNDER_TOKEN });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body?.error).toBe('orchestration_rejected');
+    expect(String(rejected.body?.message)).toMatch(/provenance/);
   });
 
   it('rejects persisted evidence with no verifier identity and records no completion', async () => {

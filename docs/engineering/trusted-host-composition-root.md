@@ -80,7 +80,12 @@ the per-task workspace, not by a filesystem quota; an over-cap run is aborted, i
 discarded, and the durable failure reason is `disk_quota_exceeded` (ADR-0026).
 `max_concurrent_tasks` is optional, must be an integer from 1 to 32, and defaults to 1. A dispatch beyond the cap is rejected with 429
 `execution_capacity_exceeded` before any lifecycle write; it is not queued and it does not
-start a sandbox invocation.
+start a sandbox invocation. `verifier_signing_key_file`, `verifier_trust_root_file`, and
+`verifier_key_id` are optional but must be supplied together. The private key must be a
+regular, unlinked, owner-only file; the trust root is the same strict Ed25519 document used
+for gVisor provenance. When configured, every verifier decision is signed and checked before
+persistence and again on evidence read; the signature is local tamper evidence, not remote
+attestation (ADR-0033).
 
 `obsidian` is optional and, when present, must be `http://127.0.0.1:<port>` or
 `http://[::1]:<port>` with no credentials, path, query, or fragment. The Obsidian++ password

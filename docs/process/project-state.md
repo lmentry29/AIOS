@@ -214,7 +214,7 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable v2 policy registry/audit, exact-granted human-only runtime policy publication and retirement, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
-broker, no signed verifier provenance, no detached policy signature, no automatic
+broker, no remote-attested verifier provenance, no detached policy signature, no automatic
 retry/backoff loop, and no live external-provider verification.
 
 ## Architecture decisions
@@ -410,8 +410,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    base/snapshot signing, snapshot availability, single-UID and no-host-cgroup residuals remain.
    Node/libuv is currently killed by the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
-   command is implemented, but there is no signed decision, key rotation, or protection from
-   a compromised host process.
+   command and optional local Ed25519 decision signing are implemented. Signing is pinned to
+   the external trust root, checked before persistence and on read, and rejects mutation.
+   It does not protect against a compromised host process; remote attestation, production
+   key custody, and external audit custody remain open.
 3. **Execution re-drive quality.** Resume/retry are deliberate, authorized, append-only
    operations (ADR-0022), and the cap still rejects rather than queues. There is no automatic
    retry, backoff loop, scheduler, or capacity queue. Multi-generation resume, duplicate
@@ -449,7 +451,8 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    actual results, including cancellation and the explicit Docker container kill. Re-run the
    measured Docker and gVisor CI matrices when the runner, image, runtime, rootfs, or engine
    changes.
-3. Add verifier key provenance or explicitly retain and document the host-trust model.
+3. Local verifier decision signing and trust-root pinning are implemented (ADR-0033);
+   remote attestation, production key custody, and external audit custody remain open.
 4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
    crashes, cancelling generation 2, and workspace reuse across generations.
 5. Source/review the Mission field model before adding any Mission API/schema.
@@ -458,6 +461,30 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 8. Define detached policy signatures and a key-recovery/rotation procedure before treating
    runtime policy administration as production security. Revocation itself is implemented;
    what is missing is protection against a rewritten policy file and key compromise.
+
+## Local verifier decision signing (2026-11-11)
+
+`apps/host/src/execution/verifier-decision.ts` adds optional detached Ed25519 provenance to
+verifier decisions (ADR-0033). The signed body covers the Task id, optional execution id and
+attempt, the attempt-bound result digest, verifier id, acceptance flag, reason, and the
+complete verifier evidence array. The envelope carries the trust-root key id, signing time,
+payload SHA-256, and a canonical 64-byte signature. The trust root is the same strict
+Ed25519 document used by gVisor provenance and build/evidence bundles; signing keys must be
+regular, unlinked, owner-only files. Startup fails closed on a partial configuration, an
+unknown/revoked/expired/mismatched key, or a trust root that does not contain the key.
+
+The kernel verifies provenance before persisting a decision and verifies it again on evidence
+reads. A record edited after signing is rejected with `orchestration_rejected`. This is local
+tamper evidence, not remote attestation: a compromised host that can read the private key can
+still sign, and the repository trust root remains intentionally unprovisioned.
+
+Tests: `verifier-decision.test.ts` (3 tests: exact signing, tampered reason/payload,
+revoked/unknown keys, owner-only key enforcement, real verifier provenance, record tampering)
+and `http-host.test.ts` (58 tests, including the kernel write path, durable persistence,
+authenticated evidence read, and post-signing mutation rejection). Config validation covers
+the all-or-none key fields. At this head: focused verifier tests **61/61**, full host suite
+**266 passed / 17 skipped** across 30 files, and the forced workspace gate **46/46 tasks,
+0 cached**, exit 0.
 
 ## Source-of-truth rules
 
@@ -517,8 +544,8 @@ Implemented and locally verified on `security/openjarvis-defensive-integration`:
   revocation, wrong/unknown/expired keys, previous-version rollback, wrong commit/builder/
   workflow/artifact digest/key id, symlinked provenance/trust-root files, local generate/verify
   and no-replace output.
-- Focused lifecycle/signing/provenance: **30/30**. Founder: **95/95**. Host: **261 passed / 17
-  skipped** across 29 files. Uncached workspace gate: **46/46 tasks, 0 cached**, exit 0.
+- Focused lifecycle/signing/provenance: **30/30**. Founder: **95/95**. Host: **266 passed / 17
+  skipped** across 30 files. Uncached workspace gate: **46/46 tasks, 0 cached**, exit 0.
 - Still open: an operator must provision and protect a production key/trust root; CI uses an
   ephemeral run-scoped key, not OIDC/Fulcio/Rekor identity or external custody. Base/snapshot
   inputs remain unsigned. No Sigstore, SLSA or in-toto conformance is claimed.

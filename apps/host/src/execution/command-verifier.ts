@@ -4,6 +4,7 @@ import type {
   TaskVerificationPort,
   TaskVerificationRequest,
 } from '@aios/orchestration';
+import type { VerifierDecisionBody, VerifierDecisionSigner } from './verifier-decision.js';
 import type { HostExecutionConfig } from '../config.js';
 import {
   HostExecutionError,
@@ -57,11 +58,53 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     private readonly provider: SandboxProvider,
     private readonly workspaces: RunWorkspaceManager,
     private readonly ledger?: ExecutionLedgerRef,
+    private readonly signer?: VerifierDecisionSigner,
   ) {
     this.verifier_id = config.verifier_id;
   }
 
   async verify(request: TaskVerificationRequest): Promise<TaskVerificationDecision> {
+    const decision = await this.verifyInternal(request);
+    if (this.signer === undefined) return decision;
+    const values = new Map<string, string>();
+    for (const line of decision.evidence) {
+      const separator = line.indexOf(':');
+      if (separator > 0) {
+        const key = line.slice(0, separator);
+        if (!values.has(key)) values.set(key, line.slice(separator + 1));
+      }
+    }
+    const executionId = values.get('execution_id');
+    const attemptText = values.get('execution_attempt');
+    const attempt = attemptText !== undefined && /^[1-9][0-9]{0,8}$/.test(attemptText)
+      ? Number(attemptText)
+      : null;
+    const binding = values.get('executor_result_sha256') ?? values.get('bound_result_sha256');
+    const body: VerifierDecisionBody = {
+      schema_version: 1,
+      task_id: request.task.entity_id,
+      execution_id: executionId ?? null,
+      attempt,
+      bound_result_sha256: binding !== undefined && /^[a-f0-9]{64}$/.test(binding) ? binding : null,
+      verifier_id: decision.verifier_id,
+      accepted: decision.accepted,
+      reason: decision.reason,
+      evidence: decision.evidence,
+    };
+    return { ...decision, provenance: this.signer.sign(body) };
+  }
+
+  async verifyProvenance(record: Record<string, unknown>): Promise<boolean> {
+    if (this.signer === undefined) return true;
+    try {
+      this.signer.verifyRecord(record);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async verifyInternal(request: TaskVerificationRequest): Promise<TaskVerificationDecision> {
     if (request.agent_ids.includes(this.verifier_id)) {
       throw new HostExecutionError('The verifier must be independent from every executor.');
     }

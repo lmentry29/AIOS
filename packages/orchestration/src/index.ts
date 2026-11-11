@@ -131,12 +131,23 @@ export interface TaskVerificationRequest {
   execution_result: TaskExecutionResult;
 }
 
+export interface VerifierDecisionProvenance {
+  schema_version: 1;
+  key_id: string;
+  signed_at: string;
+  decision: unknown;
+  payload_sha256: string;
+  signature: string;
+}
+
 export interface TaskVerificationDecision {
   accepted: boolean;
   evidence: string[];
   reason: string;
   /** The verifier principal that produced this decision; must match the configured verifier. */
   verifier_id: string;
+  /** Optional detached signature over this decision; required when the verifier configures it. */
+  provenance?: VerifierDecisionProvenance;
 }
 
 /** Independent verifier; must not simply trust the executor's self-reported outcome. */
@@ -144,6 +155,12 @@ export interface TaskVerificationPort {
   /** Trusted verifier principal configured by the host, never supplied by the executor or requester. */
   readonly verifier_id: string;
   verify(request: TaskVerificationRequest): Promise<TaskVerificationDecision>;
+  /**
+   * Verify a persisted evidence record's detached provenance. Implementations that do not
+   * configure signing return true; once signing is configured, missing or invalid provenance
+   * fails closed. Called both before persistence and when evidence is read back.
+   */
+  verifyProvenance?(record: Record<string, unknown>): Promise<boolean>;
 }
 
 export interface AuthorizationRequest {
@@ -1057,6 +1074,19 @@ export class OrchestrationKernel {
         'Execution evidence verifier identity is missing or does not match the configured verifier.',
       );
     }
+    if (this.options.verification.verifyProvenance !== undefined) {
+      let provenanceValid = false;
+      try {
+        provenanceValid = await this.options.verification.verifyProvenance(record);
+      } catch {
+        provenanceValid = false;
+      }
+      if (!provenanceValid) {
+        throw new OrchestrationError(
+          'Execution evidence verifier provenance is missing or invalid; the record is not authoritative.',
+        );
+      }
+    }
     return evidence;
   }
 
@@ -1091,6 +1121,9 @@ export class OrchestrationKernel {
         verifier_accepted: verification.accepted,
         verifier_reason: verification.reason,
         verifier_evidence: verification.evidence,
+        ...(verification.provenance === undefined
+          ? {}
+          : { verifier_provenance: verification.provenance }),
         recorded_at: now,
       }),
       lifecycle_state: 'created',
@@ -1196,6 +1229,29 @@ export class OrchestrationKernel {
       throw new OrchestrationError(
         `Task "${task.entity_id}" was not completed: the verification decision verifier identity is missing or does not match the configured verifier.`,
       );
+    }
+    if (this.options.verification.verifyProvenance !== undefined) {
+      const record: Record<string, unknown> = {
+        task_id: task.entity_id,
+        verifier_id: verification.verifier_id,
+        verifier_accepted: verification.accepted,
+        verifier_reason: verification.reason,
+        verifier_evidence: verification.evidence,
+        ...(verification.provenance === undefined
+          ? {}
+          : { verifier_provenance: verification.provenance }),
+      };
+      let provenanceValid = false;
+      try {
+        provenanceValid = await this.options.verification.verifyProvenance(record);
+      } catch {
+        provenanceValid = false;
+      }
+      if (!provenanceValid) {
+        throw new OrchestrationError(
+          `Task "${task.entity_id}" was not completed: the verifier decision has no valid signed provenance.`,
+        );
+      }
     }
     return { result: snapshot, decision: verification, verifier_id: verifierId };
   }

@@ -81,10 +81,11 @@ first local slice and explicitly rejects a subprocess as a security boundary.
 - The verifier identity is bound into the persisted evidence and re-checked on read, so a
   host that changes its configured verifier treats older evidence as not verified. That is
   deliberate and requires re-verification rather than silent acceptance.
-- A signed verifier decision is not yet implemented. The current trust anchor is the
-  host-configured verifier principal plus an actual independent command; a future ADR must
-  add key distribution/rotation and remote attestation before claiming cryptographic
-  verifier provenance.
+- ADR-0033 adds optional local detached Ed25519 signing of verifier decisions and verifies
+  it before evidence persistence and on read. The trust anchor remains the host-configured
+  verifier principal plus the external trust root; a compromised host can still sign, so
+  remote attestation, production key custody, and external audit custody remain separate
+  requirements before claiming cryptographic verifier provenance.
 - Coordination (`coordinate()`) is not implemented by the local adapter. It fails rather
   than pretending that one command coordinated multiple Agents.
 

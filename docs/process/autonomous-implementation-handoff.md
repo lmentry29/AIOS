@@ -358,8 +358,10 @@ on both the acceptance and the read path.
   before evidence or completion, leaving the Task `suspended`.
 - Existing verification, resume/retry, and attempt-inspection suites are unchanged and pass,
   including the 401/403/404 contracts and all-or-nothing Workflow inspection.
-- Not cryptographic provenance. A compromised host process can still lie; signed decisions,
-  key distribution/rotation, and remote attestation remain the open trust-model decision.
+- Local detached signing is now implemented (ADR-0033): the decision body is signed with an
+owner-only Ed25519 key pinned to the external trust root and checked before persistence and
+on read. A compromised host process can still read the key and sign; remote attestation,
+production key custody, and external audit custody remain the open trust-model decisions.
 
 ## Completed — all-or-nothing Workflow attempt inspection (`8cd427a`)
 
@@ -636,8 +638,10 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   with live denial drills (ADR-0027) and per-process RLIMIT enforcement (ADR-0028), but has no
   aggregate cgroup accounting, no active Landlock, and is labelled kernel-namespace/trusted-local
   only. Docker and gVisor are measured (ADR-0031/ADR-0032); Seatbelt remains unverified.
-- **Not signed:** verifier decisions have no Ed25519/TUF provenance. The trust anchor is a
-  host-configured distinct principal plus a separately executed command.
+- **Locally signed, not remotely attested:** verifier decisions can now carry detached
+  Ed25519 provenance pinned to the external trust root (ADR-0033). The trust anchor remains
+  a host-configured distinct principal plus a separately executed command; a compromised
+  host can still sign, and production key custody/remote attestation are absent.
 
 ## Remaining engineering blockers, in priority order
 
@@ -647,8 +651,9 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
    matrices when the runner, image, runtime, rootfs, or engine changes. For gVisor, rebuild from
    the fixed snapshot on a later date, sign the runtime pin and rootfs manifest, and retain
    snapshot provenance (F-017; F-018 is fixed).
-2. **Verifier provenance.** Add key generation/distribution/rotation and kernel-side
-   signature verification, or explicitly retain the current host-configured trust model.
+2. **Verifier provenance.** Local key provenance, rotation/revocation and kernel-side
+   signature verification are implemented (ADR-0033). Remote attestation, production key
+   custody and external audit custody remain open.
 3. **Execution re-drive quality.** Resume/retry are implemented and authorized per ADR-0022,
    with multi-generation and duplicate suppression, but there is still no automatic retry,
    backoff loop, scheduler, or capacity queue. Multi-generation resume/retry has not been
@@ -1057,3 +1062,15 @@ artifact set are checked explicitly. CI generates and verifies it with the exist
 key. Tests cover forged signatures, key lifecycle, wrong identities, artifact mismatch/missing/
 extra, splice, replay and schema failures. Still open: OIDC builder identity, external custody,
 production key provisioning, SLSA/in-toto/Sigstore conformance and macOS/rootless-Docker measurement.
+
+## Local verifier decision signing — 2026-11-11
+
+`verifier-decision.ts` signs the verifier decision itself (Task/attempt identity, bound result
+digest, verifier id, acceptance, reason and complete verifier evidence) with an owner-only
+Ed25519 key pinned to the external trust root. The kernel checks the signature before the
+evidence Artifact is written and again on evidence read; a post-signing mutation is rejected
+with `orchestration_rejected`. Configuration is all-or-none
+(`verifier_signing_key_file`, `verifier_trust_root_file`, `verifier_key_id`). This closes the
+accidental durable-evidence edit path but not a compromised host, remote attestation,
+production key custody, or external audit custody. Tests: `verifier-decision.test.ts` and
+the signed-evidence path in `http-host.test.ts`; the repository trust root remains empty.

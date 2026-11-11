@@ -22,6 +22,12 @@ result merely because its JSON looks familiar. Acceptance requires all of the fo
    replayed result object even when two runs produce byte-identical content.
 7. The verifier then runs its own command in a fresh sandbox invocation; only that command's
    actual exit status can authorize acceptance.
+8. When verifier signing is configured, the decision also carries a detached Ed25519
+   provenance envelope. The signed body covers the Task, attempt identity/digest, verifier
+   identity, acceptance, reason, and complete verifier evidence. The kernel verifies it
+   before persistence; evidence reads verify it again and fail closed on mutation. The
+   private key is owner-only and loaded at startup; this is local tamper evidence, not
+   remote attestation.
 
 ## Defects found and fixed
 
@@ -53,14 +59,17 @@ replay, legacy evidence, post-hoc removal and duplication of the bound digest, u
 verifiers, and reserved-environment filtering. Replay and cross-Task cases assert the
 verification command is not run when binding fails.
 
-Measured locally: full uncached gate 46/46 tasks, 0 cached; host 218 passed / 17 skipped;
-integration 43; conformance 107. No existing test or check was weakened.
+Measured locally: full uncached gate 46/46 tasks, 0 cached; host 266 passed / 17 skipped;
+integration 43; conformance 107. Signed-decision focused tests: 61/61. No existing test or
+check was weakened.
 
 ## Remaining open
 
-- The ledger and verification decision are host-process state; there is no cross-process
-  attestation or external audit custody for them. The operational journal is hash-chained
-  (ADR-0015) but not independently witnessed.
-- Production gVisor trust-root/key provisioning is blocked on an operator-held secret.
+- The ledger and verification decision remain host-process state; detached signing makes
+  persisted decisions tamper-evident but a compromised host can still sign. There is no
+  cross-process attestation or external audit custody. The operational journal is
+  hash-chained (ADR-0015) but not independently witnessed.
+- Production gVisor/verifier trust-root/key provisioning is blocked on an operator-held
+  secret; the repository trust root is intentionally empty.
 - Sigstore/Fulcio/Rekor identity and SLSA provenance are not implemented or claimed.
 - macOS and rootless-Docker measurements remain separate, unmeasured platforms.

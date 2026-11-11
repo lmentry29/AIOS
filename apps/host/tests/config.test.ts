@@ -104,6 +104,29 @@ describe('host configuration', () => {
     })).execution?.max_concurrent_tasks).toBe(4);
   });
 
+  it('requires complete verifier signing configuration and validates its key id', () => {
+    const execution = {
+      workspace_directory: join(tmpdir(), 'aios-workspaces'),
+      agent_id: '11111111-1111-4111-8111-111111111111',
+      verifier_id: '22222222-2222-4222-8222-222222222222',
+      provider: 'bubblewrap',
+      verifier_signing_key_file: '/tmp/verifier.pem',
+      verifier_trust_root_file: '/tmp/trust-root.json',
+      verifier_key_id: 'a'.repeat(64),
+    };
+    expect(parseHostConfig(validConfig({ execution })).execution).toMatchObject({
+      verifier_signing_key_file: '/tmp/verifier.pem',
+      verifier_trust_root_file: '/tmp/trust-root.json',
+      verifier_key_id: 'a'.repeat(64),
+    });
+    expect(() => parseHostConfig(validConfig({
+      execution: { ...execution, verifier_key_id: undefined },
+    }))).toThrow(HostConfigError);
+    expect(() => parseHostConfig(validConfig({
+      execution: { ...execution, verifier_key_id: 'not-a-digest' },
+    }))).toThrow(HostConfigError);
+  });
+
   it('parses explicit gVisor provider wiring and rejects ambiguous rootfs selection', () => {
     const base = {
       workspace_directory: join(tmpdir(), 'aios-workspaces'),
