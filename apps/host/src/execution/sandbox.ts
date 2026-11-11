@@ -2,12 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { SandboxProviderKind } from '../config.js';
 import {
   HostUnavailableError,
   SandboxFilterUnavailableError,
+  SandboxIsolationUnavailableError,
   SandboxResourceLimitUnavailableError,
 } from '../errors.js';
+import {
+  digestRootfs,
+  hashFile,
+  ProvenanceError,
+  readGvisorRuntimePin,
+  resolveExecutable,
+} from './provenance.js';
 import { runCapturedProcess, type CapturedProcessResult } from './process.js';
 import {
   buildDockerSeccompProfile,
@@ -28,6 +37,20 @@ export interface SandboxEngineEvidence {
   security_options?: string[];
 }
 
+export interface SandboxProvenanceEvidence {
+  runtime: {
+    release: string;
+    version: string;
+    binary_sha256: string;
+    artifact_sha512: string;
+    pin_sha256: string;
+  };
+  rootfs: {
+    sha256: string;
+    entries: number;
+  };
+}
+
 export interface SandboxCheck {
   available: boolean;
   reason: string;
@@ -39,6 +62,8 @@ export interface SandboxCheck {
   isolationFailure?: boolean;
   /** Measured runtime identity, present when the runtime could be queried. */
   engine?: SandboxEngineEvidence;
+  /** Actual pinned runtime and measured rootfs identity, present only after verification. */
+  provenance?: SandboxProvenanceEvidence;
 }
 
 export interface SandboxRunSpec {
@@ -104,6 +129,11 @@ export const DOCKER_NANO_CPUS = DOCKER_CPU_LIMIT * 1_000_000_000;
 export const GVISOR_MEMORY_BYTES = 512 * 1024 * 1024;
 export const GVISOR_MAX_PROCESSES = 128;
 
+/** Repository-owned pin; a missing file makes the gVisor provider unavailable. */
+const GVISOR_RUNTIME_PIN_PATH = fileURLToPath(
+  new URL('../../../../tools/security/gvisor-runtime.pin.json', import.meta.url),
+);
+
 /** RLIMIT_CPU is aligned to the run's own deadline, in whole seconds. */
 export function bubblewrapCpuSeconds(timeoutMs: number): number {
   return Math.max(1, Math.ceil(timeoutMs / 1000));
@@ -129,6 +159,8 @@ export interface SandboxResult {
   boundary?: SandboxBoundaryEvidence;
   /** Runtime version and rootless classification measured by the provider. */
   engine?: SandboxEngineEvidence;
+  /** Pinned runtime and measured rootfs identity for this invocation. */
+  provenance?: SandboxProvenanceEvidence;
 }
 
 /**
@@ -738,27 +770,30 @@ class GvisorSandbox implements SandboxProvider {
   readonly id = 'gvisor';
   readonly assurance = 'gvisor-user-space-kernel' as const;
   private engine: SandboxEngineEvidence | undefined;
+  private provenance: SandboxProvenanceEvidence | undefined;
+  private runscPath: string | undefined;
 
-  constructor(private readonly rootfs: string) {}
+  constructor(
+    private readonly rootfs: string,
+    private readonly pinPath: string = GVISOR_RUNTIME_PIN_PATH,
+  ) {}
 
   async check(): Promise<SandboxCheck> {
     if (process.platform !== 'linux') {
       return { available: false, reason: 'gVisor runsc is only available on Linux.' };
     }
-    let rootfs: string;
+    let provenance: SandboxProvenanceEvidence;
     try {
-      rootfs = this.rootfsPath();
+      provenance = await this.verifyProvenance();
     } catch (error) {
       return {
         available: false,
-        reason: error instanceof Error ? error.message : 'The gVisor rootfs is unavailable.',
+        isolationFailure: true,
+        reason: `gVisor runtime provenance failed closed: ${error instanceof Error ? error.message : 'unknown error'}`,
       };
     }
-    const version = await this.runscVersion();
-    if (version === undefined) {
-      return { available: false, reason: 'runsc is not installed or could not report its version.' };
-    }
-    this.engine = { name: 'runsc', version, rootless: true };
+    this.provenance = provenance;
+    this.engine = { name: 'runsc', version: provenance.runtime.version, rootless: true };
 
     const directory = mkdtempSync(join(tmpdir(), 'aios-gvisor-probe-'));
     try {
@@ -786,8 +821,9 @@ class GvisorSandbox implements SandboxProvider {
       }
       return {
         available: true,
-        reason: 'gVisor runsc passed its OCI rootfs, Sentry, network and rlimit probe.',
+        reason: 'gVisor runsc passed its pinned-runtime, canonical-rootfs, Sentry, network and rlimit probe.',
         engine: this.engine,
+        provenance,
       };
     } catch (error) {
       return {
@@ -801,7 +837,23 @@ class GvisorSandbox implements SandboxProvider {
   }
 
   async run(spec: SandboxRunSpec): Promise<SandboxResult> {
+    let provenance: SandboxProvenanceEvidence;
+    try {
+      // Re-verify on every invocation. A pin or runtime changed after `check()` must not
+      // inherit the earlier availability result, and a different PATH candidate must not
+      // silently replace the binary whose digest was advertised.
+      provenance = await this.verifyProvenance();
+    } catch (error) {
+      throw new SandboxIsolationUnavailableError(
+        `The gVisor runtime provenance could not be verified: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
+    this.provenance = provenance;
+    this.engine = { name: 'runsc', version: provenance.runtime.version, rootless: true };
     const rootfs = this.rootfsPath();
+    if (this.runscPath === undefined) {
+      throw new SandboxIsolationUnavailableError('The verified gVisor runsc path is unavailable.');
+    }
     const workspace = assertWorkspace(spec.workspaceDirectory);
     if (spec.argv.length === 0 || spec.argv[0] === undefined || spec.argv[0].length === 0) {
       throw new HostUnavailableError('A gVisor sandbox command must have a non-empty argv.');
@@ -862,7 +914,7 @@ class GvisorSandbox implements SandboxProvider {
 
     try {
       const result = await runCapturedProcess(
-        'runsc',
+        this.runscPath,
         [
           '--root', stateDirectory,
           '--rootless',
@@ -890,6 +942,7 @@ class GvisorSandbox implements SandboxProvider {
         provider: this.id,
         assurance: this.assurance,
         ...(this.engine === undefined ? {} : { engine: this.engine }),
+        provenance,
         boundary: {
           mechanism: 'gvisor-sentry',
           applied: boundaryApplied,
@@ -917,13 +970,14 @@ class GvisorSandbox implements SandboxProvider {
   }
 
   private async cleanup(stateDirectory: string, containerName: string): Promise<void> {
+    const runsc = this.runscPath ?? 'runsc';
     await runCapturedProcess(
-      'runsc',
+      runsc,
       ['--root', stateDirectory, 'kill', '--all', containerName],
       { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }, timeoutMs: 2_000, maxOutputBytes: 1024 },
     );
     await runCapturedProcess(
-      'runsc',
+      runsc,
       ['--root', stateDirectory, 'delete', '--force', containerName],
       { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }, timeoutMs: 2_000, maxOutputBytes: 1024 },
     );
@@ -949,9 +1003,48 @@ class GvisorSandbox implements SandboxProvider {
     return resolved;
   }
 
-  private async runscVersion(): Promise<string | undefined> {
+  private async verifyProvenance(): Promise<SandboxProvenanceEvidence> {
+    const rootfs = this.rootfsPath();
+    const loaded = readGvisorRuntimePin(this.pinPath);
+    const architecture = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : process.arch;
+    if (loaded.pin.architecture !== architecture) {
+      throw new ProvenanceError(
+        `The gVisor runtime pin is for ${loaded.pin.architecture}, but this host is ${architecture}.`,
+      );
+    }
+    const runsc = resolveExecutable('runsc');
+    const binarySha256 = hashFile(runsc, 'sha256');
+    if (binarySha256 !== loaded.pin.runsc.sha256) {
+      throw new ProvenanceError(
+        `The gVisor runsc SHA-256 does not match the repository pin (expected ${loaded.pin.runsc.sha256}, observed ${binarySha256}).`,
+      );
+    }
+    const version = await this.runscVersion(runsc);
+    if (version === undefined) {
+      throw new ProvenanceError('The pinned gVisor runsc did not report its version.');
+    }
+    if (version !== loaded.pin.runsc.version) {
+      throw new ProvenanceError(
+        `The gVisor runsc version does not match the repository pin (expected ${loaded.pin.runsc.version}, observed ${version}).`,
+      );
+    }
+    const rootfsDigest = digestRootfs(rootfs);
+    this.runscPath = runsc;
+    return {
+      runtime: {
+        release: loaded.pin.release,
+        version,
+        binary_sha256: binarySha256,
+        artifact_sha512: loaded.pin.artifact.sha512,
+        pin_sha256: loaded.pin_sha256,
+      },
+      rootfs: rootfsDigest,
+    };
+  }
+
+  private async runscVersion(executable: string): Promise<string | undefined> {
     const result = await runCapturedProcess(
-      'runsc',
+      executable,
       ['--version'],
       { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }, timeoutMs: 5_000, maxOutputBytes: 1024 },
     );
@@ -1022,6 +1115,8 @@ export function createSandboxProvider(config: {
   provider: SandboxProviderKind;
   image?: string;
   rootfs?: string;
+  /** Test-only pin override; production resolves the repository pin. */
+  gvisorPinPath?: string;
 }): SandboxProvider {
   if (config.provider === 'docker') {
     if (!config.image) throw new HostUnavailableError('The Docker sandbox requires a configured image.');
@@ -1029,7 +1124,7 @@ export function createSandboxProvider(config: {
   }
   if (config.provider === 'gvisor') {
     if (!config.rootfs) throw new HostUnavailableError('The gVisor sandbox requires a configured rootfs.');
-    return new GvisorSandbox(config.rootfs);
+    return new GvisorSandbox(config.rootfs, config.gvisorPinPath);
   }
   if (config.provider === 'bubblewrap') return new BubblewrapSandbox();
   if (config.provider === 'seatbelt') return new SeatbeltSandbox();

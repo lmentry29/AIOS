@@ -353,6 +353,16 @@ export class LocalCommandVerifier implements TaskVerificationPort {
               `sandbox_engine_version:${result.engine.version}`,
               `sandbox_engine_rootless:${result.engine.rootless === null ? 'unknown' : result.engine.rootless}`,
             ]),
+        ...(result.provenance === undefined
+          ? []
+          : [
+              `sandbox_runtime_release:${result.provenance.runtime.release}`,
+              `sandbox_runtime_sha256:${result.provenance.runtime.binary_sha256}`,
+              `sandbox_runtime_artifact_sha512:${result.provenance.runtime.artifact_sha512}`,
+              `sandbox_runtime_pin_sha256:${result.provenance.runtime.pin_sha256}`,
+              `sandbox_rootfs_sha256:${result.provenance.rootfs.sha256}`,
+              `sandbox_rootfs_entries:${result.provenance.rootfs.entries}`,
+            ]),
         ...(boundAttempt === undefined
           ? []
           : [

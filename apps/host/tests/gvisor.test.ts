@@ -1,26 +1,49 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HostUnavailableError } from '../src/errors.js';
+import { SandboxIsolationUnavailableError } from '../src/errors.js';
+import { digestRootfs } from '../src/execution/provenance.js';
 import { createSandboxProvider } from '../src/execution/sandbox.js';
+
+interface FakeRunsc {
+  directory: string;
+  rootfs: string;
+  capture: string;
+  calls: string;
+  pinPath: string;
+  binarySha256: string;
+}
+
+function architecture(): string {
+  return process.arch === 'x64' ? 'x86_64' : 'arm64';
+}
 
 /**
  * Reproducible provider tests do not need a live Sentry. The fake runsc only records the
  * exact argv and generated OCI config; the live boundary is exercised separately by the
- * adversarial drill and `gvisor-live.test.ts`. This keeps the command/configuration
- * regression tests runnable on hosts without runsc.
+ * adversarial drill. The fake also has a real repository-style pin so a missing or
+ * mismatched pin is tested before any probe can run.
  */
-function fakeRunsc(): { directory: string; rootfs: string; capture: string } {
+function fakeRunsc(): FakeRunsc {
   const directory = mkdtempSync(join(tmpdir(), 'aios-fake-runsc-'));
   const rootfs = mkdtempSync(join(tmpdir(), 'aios-fake-rootfs-'));
   const capture = join(directory, 'capture.json');
+  const calls = join(directory, 'calls.log');
   const executable = join(directory, 'runsc');
   writeFileSync(executable, `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const capture = ${JSON.stringify(capture)};
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
 if (args.includes('--version')) {
   console.log('runsc version release-test');
   process.exit(0);
@@ -35,7 +58,23 @@ if (args.includes('kill') || args.includes('delete')) process.exit(0);
 process.exit(0);
 `);
   chmodSync(executable, 0o755);
-  return { directory, rootfs, capture };
+  const binarySha256 = createHash('sha256').update(readFileSync(executable)).digest('hex');
+  const pinPath = join(directory, 'gvisor-runtime.pin.json');
+  writeFileSync(pinPath, `${JSON.stringify({
+    schema_version: 1,
+    provider: 'gvisor',
+    release: 'test-release',
+    architecture: architecture(),
+    artifact: {
+      url: 'https://example.invalid/gvisor.tar.bz2',
+      sha512: 'a'.repeat(128),
+    },
+    runsc: {
+      version: 'release-test',
+      sha256: binarySha256,
+    },
+  }, null, 2)}\n`, { mode: 0o600 });
+  return { directory, rootfs, capture, calls, pinPath, binarySha256 };
 }
 
 function withPath<T>(directory: string, body: () => Promise<T>): Promise<T> {
@@ -53,16 +92,30 @@ describe('gvisor provider', () => {
     return expect(provider.check()).resolves.toMatchObject({ available: false });
   });
 
-  it('generates a controlled rootless OCI bundle and records Sentry evidence', async () => {
+  it('generates a controlled rootless OCI bundle and records pinned provenance', async () => {
     const fake = fakeRunsc();
     try {
       await withPath(fake.directory, async () => {
-        const provider = createSandboxProvider({ provider: 'gvisor', rootfs: fake.rootfs });
+        const provider = createSandboxProvider({
+          provider: 'gvisor',
+          rootfs: fake.rootfs,
+          gvisorPinPath: fake.pinPath,
+        });
         const check = await provider.check();
         expect(check).toMatchObject({
           available: true,
           engine: { name: 'runsc', version: 'release-test', rootless: true },
+          provenance: {
+            runtime: {
+              release: 'test-release',
+              version: 'release-test',
+              binary_sha256: fake.binarySha256,
+              artifact_sha512: 'a'.repeat(128),
+            },
+            rootfs: { sha256: digestRootfs(fake.rootfs).sha256, entries: 0 },
+          },
         });
+        expect(check.provenance?.runtime.pin_sha256).toMatch(/^[0-9a-f]{64}$/);
 
         const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-workspace-'));
         const result = await provider.run({
@@ -79,6 +132,10 @@ describe('gvisor provider', () => {
           boundary: { mechanism: 'gvisor-sentry', applied: true, rootless: true },
           limits: { mechanism: 'gvisor-oci-rlimit', applied: true, processes: 128 },
           engine: { name: 'runsc', version: 'release-test', rootless: true },
+          provenance: {
+            runtime: { binary_sha256: fake.binarySha256 },
+            rootfs: { sha256: digestRootfs(fake.rootfs).sha256, entries: 0 },
+          },
         });
 
         const captured = JSON.parse(readFileSync(fake.capture, 'utf8')) as {
@@ -127,6 +184,62 @@ describe('gvisor provider', () => {
     }
   });
 
+  it('fails closed on a missing pin before invoking runsc', async () => {
+    const fake = fakeRunsc();
+    const missingPin = join(fake.directory, 'missing.pin.json');
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: missingPin,
+      });
+      const check = await provider.check();
+      expect(check.available).toBe(false);
+      expect(check.isolationFailure).toBe(true);
+      expect(check.reason).toMatch(/runtime provenance failed closed.*pin file does not exist/i);
+      expect(existsSync(fake.calls)).toBe(false);
+      await expect(provider.run({
+        argv: ['/bin/true'],
+        workspaceDirectory: mkdtempSync(join(tmpdir(), 'aios-gvisor-missing-pin-')),
+        timeoutMs: 1_000,
+        maxOutputBytes: 1024,
+        env: {},
+      })).rejects.toBeInstanceOf(SandboxIsolationUnavailableError);
+      expect(existsSync(fake.calls)).toBe(false);
+    });
+  });
+
+  it('fails closed when the runsc binary does not match the pinned SHA-256', async () => {
+    const fake = fakeRunsc();
+    const mismatchedPin = join(fake.directory, 'mismatched.pin.json');
+    writeFileSync(mismatchedPin, `${JSON.stringify({
+      schema_version: 1,
+      provider: 'gvisor',
+      release: 'test-release',
+      architecture: architecture(),
+      artifact: {
+        url: 'https://example.invalid/gvisor.tar.bz2',
+        sha512: 'a'.repeat(128),
+      },
+      runsc: {
+        version: 'release-test',
+        sha256: '0'.repeat(64),
+      },
+    }, null, 2)}\n`, { mode: 0o600 });
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: mismatchedPin,
+      });
+      const check = await provider.check();
+      expect(check.available).toBe(false);
+      expect(check.isolationFailure).toBe(true);
+      expect(check.reason).toMatch(/does not match the repository pin/i);
+      expect(existsSync(fake.calls)).toBe(false);
+    });
+  });
+
   it('fails closed when runsc is absent', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'aios-no-runsc-'));
     const rootfs = mkdtempSync(join(tmpdir(), 'aios-empty-rootfs-'));
@@ -156,7 +269,7 @@ describe('gvisor provider', () => {
           new RunWorkspaceManager(executorConfig.workspace_directory),
         );
         return executor.validateAgent(executorConfig.agent_id);
-      })).rejects.toBeInstanceOf(HostUnavailableError);
+      })).rejects.toBeInstanceOf(SandboxIsolationUnavailableError);
     });
   });
 });

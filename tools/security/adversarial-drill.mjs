@@ -44,6 +44,7 @@ assert.ok(
 const bwrapDirectory = process.env.AIOS_BWRAP_DIR;
 const dockerImage = process.env.AIOS_DOCKER_IMAGE;
 const gvisorRootfs = process.env.AIOS_GVISOR_ROOTFS;
+const gvisorRootfsManifest = process.env.AIOS_GVISOR_ROOTFS_MANIFEST;
 if (requestedProvider === 'bubblewrap') {
   assert.ok(bwrapDirectory, 'AIOS_BWRAP_DIR must point at a directory containing bwrap');
   process.env.PATH = `${bwrapDirectory}:${process.env.PATH ?? ''}`;
@@ -51,6 +52,10 @@ if (requestedProvider === 'bubblewrap') {
   assert.ok(dockerImage, 'AIOS_DOCKER_IMAGE must name a locally present Docker image');
 } else {
   assert.ok(gvisorRootfs, 'AIOS_GVISOR_ROOTFS must name a controlled OCI rootfs');
+  assert.ok(
+    gvisorRootfsManifest,
+    'AIOS_GVISOR_ROOTFS_MANIFEST must name the reproducible rootfs manifest',
+  );
 }
 
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -79,6 +84,22 @@ assert.equal(
   true,
   `${requestedProvider} boundary is unavailable: ${availability.reason}`,
 );
+let rootfsManifest;
+if (requestedProvider === 'gvisor') {
+  rootfsManifest = JSON.parse(readFileSync(gvisorRootfsManifest, 'utf8'));
+  assert.match(rootfsManifest.rootfs_sha256 ?? '', /^[0-9a-f]{64}$/, 'rootfs manifest has no content digest');
+  assert.ok(Number.isSafeInteger(rootfsManifest.entries), 'rootfs manifest has no entry count');
+  assert.equal(
+    availability.provenance?.rootfs.sha256,
+    rootfsManifest.rootfs_sha256,
+    'provider rootfs digest does not match the reproducible rootfs manifest',
+  );
+  assert.equal(
+    availability.provenance?.rootfs.entries,
+    rootfsManifest.entries,
+    'provider rootfs entry count does not match the reproducible rootfs manifest',
+  );
+}
 const workspaces = new RunWorkspaceManager(root);
 const executor = new LocalCommandExecutor(config, provider, workspaces);
 const cases = [];
@@ -109,6 +130,14 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+const caseProvenance = availability.provenance === undefined
+  ? {}
+  : {
+      provenance_sha256: sha256(JSON.stringify(availability.provenance)),
+      runtime_sha256: availability.provenance.runtime.binary_sha256,
+      rootfs_sha256: availability.provenance.rootfs.sha256,
+    };
+
 function processesMatching(marker) {
   const matches = [];
   for (const entry of readdirSync('/proc')) {
@@ -128,7 +157,7 @@ function delay(milliseconds) {
 }
 
 function pass(name, evidence) {
-  cases.push({ attack: name, denied: true, ...evidence });
+  cases.push({ attack: name, denied: true, ...caseProvenance, ...evidence });
 }
 
 function assertNotRead(result, secret, label) {
@@ -772,6 +801,15 @@ process.stdout.write(`${JSON.stringify({
   kernel: readFileSync('/proc/sys/kernel/osrelease', 'utf8').trim(),
   availability,
   engine: availability.engine ?? null,
+  provenance: availability.provenance ?? null,
+  rootfs_manifest: rootfsManifest === undefined
+    ? null
+    : {
+        sha256: sha256(readFileSync(gvisorRootfsManifest, 'utf8')),
+        source: rootfsManifest.source,
+        rootfs_sha256: rootfsManifest.rootfs_sha256,
+        entries: rootfsManifest.entries,
+      },
   cases,
   result: 'all adversarial cases denied or contained',
 })}\n`);

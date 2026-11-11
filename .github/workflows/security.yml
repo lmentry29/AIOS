@@ -40,29 +40,31 @@ jobs:
         run: docker build --pull -t aios-sandbox:local -f tools/security/docker-sandbox.Dockerfile tools/security
       # The same 21-case matrix through the explicit Docker provider and real verifier.
       - run: AIOS_SANDBOX_PROVIDER=docker AIOS_DOCKER_IMAGE=aios-sandbox:local node tools/security/adversarial-drill.mjs
-      # gVisor is opt-in; install a pinned, checksum-verified runsc and export a controlled
+      # gVisor is opt-in; fetch the repository-pinned runtime and build a reproducible
       # OCI rootfs from the already-built test image. The Docker image build above is reused.
       - name: Install pinned gVisor runsc
+        run: node tools/security/gvisor-provenance.mjs fetch-runtime --pin tools/security/gvisor-runtime.pin.json --output "$RUNNER_TEMP/gvisor"
+      # A failing check is the required outcome; the step fails if tampering or a missing pin succeeds.
+      - name: Prove gVisor provenance fails closed
         run: |
           set -euo pipefail
-          VERSION=20261102.0
-          ARCH=x86_64
-          BASE="https://storage.googleapis.com/gvisor/releases/release/${VERSION}/${ARCH}"
-          mkdir -p "$RUNNER_TEMP/gvisor"
-          curl -fsSL "$BASE/gvisor.tar.bz2" -o "$RUNNER_TEMP/gvisor.tar.bz2"
-          curl -fsSL "$BASE/gvisor.tar.bz2.sha512" -o "$RUNNER_TEMP/gvisor.tar.bz2.sha512"
-          (cd "$RUNNER_TEMP" && sha512sum -c gvisor.tar.bz2.sha512)
-          tar -xjf "$RUNNER_TEMP/gvisor.tar.bz2" -C "$RUNNER_TEMP/gvisor"
-          chmod +x "$RUNNER_TEMP/gvisor/runsc" "$RUNNER_TEMP/gvisor/gvisor-bin/"*
-      - name: Export gVisor OCI rootfs
-        run: |
-          set -euo pipefail
-          docker create --name aios-gvisor-rootfs aios-sandbox:local >/dev/null
-          mkdir -p "$RUNNER_TEMP/gvisor-rootfs"
-          docker export aios-gvisor-rootfs | tar -xf - -C "$RUNNER_TEMP/gvisor-rootfs"
-          docker rm aios-gvisor-rootfs >/dev/null
+          PIN=tools/security/gvisor-runtime.pin.json
+          printf 'tampered-gvisor-artifact' > "$RUNNER_TEMP/tampered-gvisor.tar.bz2"
+          if node tools/security/gvisor-provenance.mjs verify-archive --pin "$PIN" --archive "$RUNNER_TEMP/tampered-gvisor.tar.bz2" > "$RUNNER_TEMP/tampered.log" 2>&1; then
+            echo "tampered gVisor artifact was accepted"
+            exit 1
+          fi
+          grep -F 'does not match the pinned SHA-512' "$RUNNER_TEMP/tampered.log"
+          if node tools/security/gvisor-provenance.mjs verify-archive --pin "$RUNNER_TEMP/missing-gvisor.pin.json" --archive "$RUNNER_TEMP/tampered-gvisor.tar.bz2" > "$RUNNER_TEMP/missing-pin.log" 2>&1; then
+            echo "missing gVisor pin was accepted"
+            exit 1
+          fi
+          grep -F 'pin file does not exist' "$RUNNER_TEMP/missing-pin.log"
+          echo 'observed fail-closed provenance errors'
+      - name: Build reproducible gVisor OCI rootfs
+        run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --verify-reproducible
       # Same 21-case matrix through the explicit gVisor provider and real verifier.
-      - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" node tools/security/adversarial-drill.mjs
+      - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" AIOS_GVISOR_ROOTFS_MANIFEST="$RUNNER_TEMP/gvisor-rootfs.manifest.json" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.
       - run: node tools/security/session-operator-drill.mjs
 

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "source_image": "debian:bookworm-slim",
+  "dockerfile": "tools/security/docker-sandbox.Dockerfile",
+  "packages": ["perl", "coreutils", "util-linux"],
+  "excluded_paths": ["/etc/shadow", "/etc/gshadow"],
+  "construction": "docker create --name <unique> aios-sandbox:local; docker export --output <tar> <container>; tar -xf <tar> -C <rootfs>"
+}
