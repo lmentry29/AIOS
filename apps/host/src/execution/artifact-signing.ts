@@ -85,6 +85,8 @@ export interface SignedStatement {
 export interface VerifiedSignature {
   key_id: string;
   artifact_sha256: string;
+  /** SHA-256 of the exact signature-statement bytes that were verified. */
+  signature_sha256: string;
   signed_at: string;
   subject: SignatureSubject;
   source: SignatureSource;
@@ -560,9 +562,8 @@ export function verifyArtifactSignature(options: {
   now?: Date;
 }): VerifiedSignature {
   const artifact = readCappedFile(options.artifact_path, 'artifact', MAX_ARTIFACT_BYTES);
-  const statement = parseSignedStatement(
-    readCappedFile(options.signature_path, 'signature statement', MAX_STATEMENT_BYTES).toString('utf8'),
-  );
+  const signatureBytes = readCappedFile(options.signature_path, 'signature statement', MAX_STATEMENT_BYTES);
+  const statement = parseSignedStatement(signatureBytes.toString('utf8'));
   if (statement.artifact_kind !== options.artifact_kind) {
     throw new SigningError(`The signature is for ${statement.artifact_kind}, not ${options.artifact_kind}.`);
   }
@@ -617,6 +618,7 @@ export function verifyArtifactSignature(options: {
   return {
     key_id: statement.key_id,
     artifact_sha256: artifactSha256,
+    signature_sha256: createHash('sha256').update(signatureBytes).digest('hex'),
     signed_at: statement.signed_at,
     subject: statement.subject,
     source: statement.source,

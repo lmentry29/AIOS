@@ -4,6 +4,8 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -192,6 +194,8 @@ describe('gvisor provider', () => {
           },
         });
         expect(check.provenance?.runtime.pin_sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(check.provenance?.runtime.pin_signature_sha256)
+          .toBe(hashFile(fake.runtimeSignaturePath, 'sha256'));
         const manifest = JSON.parse(readFileSync(fake.rootfsManifestPath, 'utf8')) as {
           rootfs_sha256: string;
           entries: number;
@@ -382,6 +386,29 @@ describe('gvisor provider', () => {
         maxOutputBytes: 1024,
         env: {},
       })).rejects.toBeInstanceOf(SandboxIsolationUnavailableError);
+      expect(existsSync(fake.calls)).toBe(false);
+    });
+  });
+
+  it('fails closed when the signed rootfs manifest is reached through a symlink', async () => {
+    const fake = fakeRunsc();
+    const realManifest = join(fake.directory, 'rootfs-manifest-real.json');
+    renameSync(fake.rootfsManifestPath, realManifest);
+    symlinkSync(realManifest, fake.rootfsManifestPath);
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: fake.pinPath,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
+      });
+      const check = await provider.check();
+      expect(check.available).toBe(false);
+      expect(check.isolationFailure).toBe(true);
+      expect(check.reason).toMatch(/rootfs manifest.*(?:regular file|symlink)/i);
       expect(existsSync(fake.calls)).toBe(false);
     });
   });

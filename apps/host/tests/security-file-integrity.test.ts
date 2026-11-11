@@ -48,6 +48,15 @@ describe('host file-integrity boundary', () => {
       .toThrow(/exceeds the 1024-byte limit/);
   });
 
+  it('refuses a safe-looking symlink to a protected credential file', () => {
+    const root = directory();
+    const secret = join(root, '.env');
+    writeFileSync(secret, 'SECRET=value', { mode: 0o600 });
+    const link = join(root, 'artifact.bin');
+    symlinkSync(secret, link);
+    expect(() => measureBuildArtifact('artifact-b', link)).toThrow(/regular file|symlink/);
+  });
+
   it('refuses to measure a protected credential artifact', () => {
     const root = directory();
     const path = join(root, '.env');

@@ -188,9 +188,10 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   step 20 passed. Local **21/21** used rootfs `2e7a3eba…` (2,693 entries) and the same
   pin/runtime. Full gate **46/46**, 0 cached; host **168 passed / 17 skipped**; bubblewrap
   **21/21**.
-- F-017 remains a mitigated, unsigned residual (pin/base/snapshot/manifest unsigned, snapshot
-  availability, host-writer trust inside the host trust boundary,
-  single-UID/no-netstack/no-host-cgroup). F-018 is fixed: the base image (platform digest), apt
+- F-017 is materially mitigated: the runtime pin and rootfs manifest are detached-signature
+  verified, while base/snapshot signing, production trust-root/key custody, snapshot
+  availability, host-writer trust inside the host trust boundary, and
+  single-UID/no-netstack/no-host-cgroup residuals remain. F-018 is fixed: the base image (platform digest), apt
   snapshot, and package versions are pinned, and independent image builds produce the same
   canonical rootfs digest and 6,195 entries. F-019 is fixed: staging/promotion, ownership-safe
   cleanup, private measured runtime copies and post-run rootfs re-measurement.
@@ -290,7 +291,8 @@ retry/backoff loop, and no live external-provider verification.
   a privileged daemon and measured rootful mode; gVisor adds a user-space Sentry boundary, OCI
   rlimits, a rootless runtime, a repository-pinned `runsc`, and a rootfs built from pinned
   base/snapshot/package inputs with a reproducible manifest, but has no host cgroup; its
-  pin/manifest are unsigned and the Debian snapshot must remain available. Both fail closed;
+  pin and rootfs manifest are signature-verified, but production trust-root provisioning
+  remains open and the Debian snapshot must remain available. Both fail closed;
   Linux `auto` remains bubblewrap. Rootless Docker, signed artifacts/images, and local-daemon
   measurement remain open.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
@@ -404,8 +406,8 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    remains trusted-local only. Docker has measured aggregate cgroups but no per-process
    `RLIMIT_AS`; rootless Docker, Seatbelt, and Apple Containerization remain unverified, while
    gVisor is measured in ADR-0032 with a repository-pinned runtime and reproducible rootfs
-   digest, but unsigned pin/manifest provenance, snapshot availability, single-UID, and
-   no-host-cgroup residuals remain.
+   digest; signed pin/manifest verification is implemented but production trust-root
+   provisioning, snapshot availability, single-UID, and no-host-cgroup residuals remain.
    Node/libuv is currently killed by the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from

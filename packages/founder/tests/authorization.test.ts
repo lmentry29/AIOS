@@ -508,6 +508,19 @@ describe('Authorization audit correlation and grant binding', () => {
       .toBe(false);
   });
 
+  it('rejects unsupported and wildcard actions during policy construction', () => {
+    const rule = policy.rules[0];
+    if (!rule) throw new Error('Policy fixture rule missing.');
+    for (const action of ['read_everything', '*', 'execute:*']) {
+      const malformed = {
+        ...policy,
+        policy_id: randomUUID(),
+        rules: [{ ...rule, actions: [action] }],
+      } as unknown as AccessPolicy;
+      expect(() => new StaticAccessPolicyStore([malformed])).toThrow(/unsupported action/);
+    }
+  });
+
   it('denies and audits an unknown capability instead of inferring authority', async () => {
     const audit = new InMemoryAuthorizationAuditStore();
     const auth = new AuthorizationService(

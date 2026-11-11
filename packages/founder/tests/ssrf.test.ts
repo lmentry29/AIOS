@@ -112,7 +112,7 @@ describe('SSRF address policy', () => {
     ])).rejects.toMatchObject({ code: 'dns_failure' });
   });
 
-  it('pins the validated DNS answer for the connection and never re-resolves', async () => {
+  it('pins the validated DNS answer against a mutating resolver and never re-resolves', async () => {
     let requests = 0;
     const target = await server((_request, response) => {
       requests += 1;
@@ -122,7 +122,7 @@ describe('SSRF address policy', () => {
     let resolutions = 0;
     const resolver = async (): Promise<ResolvedAddress[]> => {
       resolutions += 1;
-      return [{ address: '127.0.0.1', family: 4 }];
+      return [{ address: resolutions === 1 ? '127.0.0.1' : '169.254.169.254', family: 4 }];
     };
     try {
       const result = await safeHttpRequest(`http://rebind.test:${target.port}/ok`, {

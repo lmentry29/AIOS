@@ -99,10 +99,14 @@ would leave the resolved platform manifest unpinned.
   what runs.
 - `assertMaterializedExecutableUnchanged` re-checks inode, size, writability and SHA-256
   immediately before execution. The remaining window is confined to a directory only the
-  invoking user can write; a same-UID attacker is inside the host trust boundary.- The rootfs is measured, then copied into an invocation-owned directory; the copy must measure
-  identically before execution and is the tree the runtime receives. `runsc` writes runtime
-  scratch state into its rootfs, so this keeps the operator tree unmodified and makes the
-  executed tree the measured tree.
+  invoking user can write; a same-UID attacker is inside the host trust boundary.
+- The signed rootfs manifest is read through the bounded no-follow reader (`O_NOFOLLOW`,
+  descriptor `fstat`, post-read identity/size/time check), so a swapped symlink cannot
+  substitute a different manifest between validation and parsing.
+- The rootfs is measured, then copied into an invocation-owned directory; the copy must
+  measure identically before execution and is the tree the runtime receives. `runsc` writes
+  runtime scratch state into its rootfs, so this keeps the operator tree unmodified and
+  makes the executed tree the measured tree.
 
 ## Remaining omissions and residuals
 
@@ -113,5 +117,9 @@ would leave the resolved platform manifest unpinned.
   rootfs between operations. This is why the host is the trust root and why same-UID
   compromise is out of scope rather than claimed as defended.
 - The Debian snapshot used by the image build must remain available for a future rebuild.
-- Pins, the build manifest and the rootfs manifest are not yet signed; that is tracked as
-  F-017 and is not claimed as complete by this note.
+- Runtime pins and rootfs manifests are signed with detached Ed25519 statements verified
+  against the repository trust root; missing, foreign, revoked, expired or future-dated
+  signatures fail closed. The checked-in trust root is intentionally empty until a real
+  operator key is provisioned, and CI's ephemeral drill key is not production custody.
+  The OCI index/base-image and Debian snapshot pins are not independently signed beyond
+  the signed rootfs manifest and its recorded build provenance.

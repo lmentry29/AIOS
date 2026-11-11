@@ -276,6 +276,7 @@ describe('gVisor provenance', () => {
     const changed = createOwnedStagingDirectory(parent, 'private-');
     expect(() => materializeVerifiedRootfs(source, expected, changed))
       .toThrow(/does not match the verified rootfs/);
+    expect(existsSync(join(changed.path, 'rootfs'))).toBe(false);
     removeOwnedDirectory(changed);
     removeOwnedDirectory(stage);
   });
@@ -303,6 +304,7 @@ describe('gVisor provenance', () => {
     const rejected = createOwnedStagingDirectory(parent, 'private-');
     expect(() => materializeVerifiedRuntime(source, '0'.repeat(64), rejected))
       .toThrow(/does not match the verified SHA-256/);
+    expect(existsSync(join(rejected.path, 'runtime'))).toBe(false);
     removeOwnedDirectory(rejected);
 
     const hostile = join(parent, 'hostile');

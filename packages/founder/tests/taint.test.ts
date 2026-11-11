@@ -66,6 +66,22 @@ describe('taint tracking', () => {
     }
   });
 
+  it('blocks a disallowed label at a declared outbound sink', () => {
+    const policy = new TaintSinkPolicy({
+      allowed_labels: { external_network: ['external_untrusted'] },
+    });
+    const allowed = taintMark(['external_untrusted'], ['gmail-1']);
+    const blocked = taintMark(['connector_poisoning_risk'], ['notion-1']);
+    expect(() => assertTaintSink(allowed, 'external_network', policy)).not.toThrow();
+    try {
+      assertTaintSink(blocked, 'external_network', policy);
+      throw new Error('expected the outbound sink check to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TaintSinkError);
+      expect((error as TaintSinkError).code).toBe('blocked_label');
+    }
+  });
+
   it('requires a human reason and a successful audit before declassification', async () => {
     const audit = new InMemoryTaintDeclassificationAudit();
     const input = taintValue({ text: 'provider content' }, ['external_untrusted'], ['notion-1']);

@@ -10,6 +10,7 @@ import {
   SandboxIsolationUnavailableError,
   SandboxResourceLimitUnavailableError,
 } from '../errors.js';
+import { readBoundedRegularFile } from '../security/file-integrity.js';
 import {
   assertMaterializedExecutableUnchanged,
   createOwnedStagingDirectory,
@@ -774,25 +775,22 @@ class BubblewrapSandbox implements SandboxProvider {
   }
 }
 
-function digestOfSignature(path: string): string {
-  return hashFile(resolve(path), 'sha256');
-}
+const MAX_ROOTFS_MANIFEST_BYTES = 8 * 1024 * 1024;
 
-/** Parse the signed rootfs manifest; authorization comes only from its verified signature. */
+/** Parse the signed rootfs manifest through a bounded no-follow descriptor. */
 function readRootfsManifest(path: string): { rootfs_sha256: string; entries: number } {
   const resolved = resolve(path);
-  let stats: ReturnType<typeof lstatSync>;
+  let raw: Buffer;
   try {
-    stats = lstatSync(resolved);
-  } catch {
-    throw new ProvenanceError(`The gVisor rootfs manifest file does not exist: ${resolved}.`);
-  }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new ProvenanceError(`The gVisor rootfs manifest must be a regular file, not a symlink: ${resolved}.`);
+    raw = readBoundedRegularFile(resolved, 'gVisor rootfs manifest', MAX_ROOTFS_MANIFEST_BYTES);
+  } catch (error) {
+    throw new ProvenanceError(
+      error instanceof Error ? error.message : 'The gVisor rootfs manifest could not be read.',
+    );
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(resolved, 'utf8')) as unknown;
+    parsed = JSON.parse(raw.toString('utf8')) as unknown;
   } catch (error) {
     throw new ProvenanceError(
       `The gVisor rootfs manifest is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
@@ -1186,7 +1184,7 @@ class GvisorSandbox implements SandboxProvider {
             artifact_sha512: loaded.pin.artifact.sha512,
             pin_sha256: loaded.pin_sha256,
             pin_signature_key_id: runtimeSignature.key_id,
-            pin_signature_sha256: digestOfSignature(this.runtimeSignaturePath),
+            pin_signature_sha256: runtimeSignature.signature_sha256,
           },
           rootfs: {
             ...rootfsDigest,

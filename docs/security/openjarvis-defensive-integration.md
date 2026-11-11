@@ -16,7 +16,7 @@ imported, and no Python/Rust runtime dependency was added.
 | Sensitive paths | Implemented | `packages/founder/src/security/sensitive-path.ts` | Vault evidence paths and signed build-provenance artifacts; symlink-aware containment helper | `packages/founder/tests/sensitive-path.test.ts`, `apps/host/tests/security-file-integrity.test.ts` |
 | Capability inventory | Implemented | `packages/founder/src/security/capability-inventory.ts` | Single source for policy validation, exact-resource authorization and human-only administrative actions | `packages/founder/tests/capability-inventory.test.ts`, `packages/founder/tests/authorization.test.ts` |
 | Atomic persistence | Verified, one durability gap closed | Existing `Journal`, gVisor staging/promotion and evidence-bundle code | Directory fsync after evidence-bundle export and gVisor promotion; no second store created | `apps/host/tests/evidence-bundle.test.ts`, `apps/host/tests/gvisor-provenance.test.ts` |
-| No-follow file reads | Implemented | `apps/host/src/security/file-integrity.ts` | Build attestations, trust roots, gVisor runtime/rootfs pins and Dockerfile verification | `apps/host/tests/security-file-integrity.test.ts`, existing provenance/signing suites |
+| No-follow file reads | Implemented | `apps/host/src/security/file-integrity.ts` | Build attestations, trust roots, gVisor runtime/rootfs pins, rootfs manifest and Dockerfile verification | `apps/host/tests/security-file-integrity.test.ts`, existing provenance/signing suites |
 
 ## SSRF contract
 
@@ -63,10 +63,11 @@ read. Signed build provenance refuses a sensitive artifact name or path.
 `resolveContainedPath` rejects traversal, validates every symlink against the canonical
 root, allows only the final component to be absent when creation explicitly opts in, and
 rejects a symlinked root.
-The host's no-follow reader uses `O_NOFOLLOW`, `fstat` and a post-read identity/size check,
-closing the final-component lstat/read replacement race. Parent-directory replacement
-still needs an OS-level `openat2`/`RESOLVE_BENEATH` primitive that portable Node does not
-expose; that residual limitation is explicit rather than claimed away.
+The host's no-follow reader uses `O_NOFOLLOW`, `fstat` and a post-read identity/size/time
+check, closing the final-component lstat/read replacement race. The gVisor rootfs manifest
+and the evidence-bundle, trust-root, pin and attestation readers all use it. Parent-directory
+replacement still needs an OS-level `openat2`/`RESOLVE_BENEATH` primitive that portable Node
+does not expose; that residual limitation is explicit rather than claimed away.
 
 ## Capability inventory contract
 
@@ -76,6 +77,13 @@ wildcard, guest or default-allow capability. Policy construction and runtime eva
 both use the same inventory. Only `administer_policy`, `revoke_policy` and
 `administer_sessions` are human-only. An unknown capability is denied and audited as
 `invalid_request`, never inferred from an owner, role or resource match.
+
+Named fail-closed tests cover the policy-construction and runtime paths:
+`rejects unsupported and wildcard actions during policy construction`,
+`denies and audits an unknown capability instead of inferring authority`,
+`allows only an exact subject/action/resource match`, and the three exact human-only
+grant tests. The inventory tests also reject `*`, `execute:*`, inherited properties and
+malformed values.
 
 ## Atomic persistence decision
 
@@ -101,8 +109,8 @@ Full uncached gate:
 
 Result: **46/46 tasks successful, 0 cached, exit status 0**. Test totals:
 
-- `@aios/founder`: 93 passed across 10 files.
-- `@aios/host`: 251 passed, 17 skipped across 28 files (25 passed files, 3 skipped files).
+- `@aios/founder`: 95 passed across 10 files.
+- `@aios/host`: 253 passed, 17 skipped across 28 files (25 passed files, 3 skipped files).
   The skips are live gVisor/Docker/rootfs probes that require a host environment; they are
   not counted as passing evidence.
 - conformance: 107 passed; integration: 43 passed; orchestration: 30 passed. The remaining

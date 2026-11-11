@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,6 +124,7 @@ describe('artifact signing', () => {
     expect(verified).toMatchObject({
       key_id: fixture.signatureKeyId,
       artifact_sha256: fixture.artifactDigest,
+      signature_sha256: createHash('sha256').update(readFileSync(fixture.signaturePath)).digest('hex'),
       subject: runtimeSubject,
     });
     expect(verified.source.repository).toBe(process.env.GITHUB_REPOSITORY ?? null);
