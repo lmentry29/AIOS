@@ -141,7 +141,7 @@ canonical collections, and the live bubblewrap controls remain in place from
   Bubblewrap/Docker steps and all existing assertions remain untouched.
 - CI at `378e7d6`: Security run `42956393498`, live job `130312417881`; pin guard `9fccac3e…`;
   install measured `runsc release-20261102.0`, binary `c5a5a7ba…`, archive `2e6671bb…`, pin
-  `20c017d9…`; independent images `89eacf2a…` and `a8abdab0…` both produced rootfs `6e1376d8…`
+  `20c017d9…`; independent run-scoped images `89eacf2a…` and `a8abdab0…` both produced rootfs `6e1376d8…`
   (6,195 entries), Dockerfile `5acad18a…`, manifest `845c9853…`; drill **21/21** with per-case
   provenance `8490ada2…`. Fail-closed observed errors are in the validation ledger. Local
   **21/21** used rootfs `2e7a3eba…` (2,693 entries) and the same pin/runtime; full gate **46/46**,

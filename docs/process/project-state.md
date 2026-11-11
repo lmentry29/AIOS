@@ -171,7 +171,7 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   measured `runsc release-20261102.0`, binary
   `c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098`, archive
   `2e6671bb…`, pin `20c017d9…`; fail-closed step 17 observed the tampered-archive and
-  missing-pin errors; rootfs step 18 measured `6e1376d8…` (6,195 entries), image IDs
+  missing-pin errors; rootfs step 18 measured `6e1376d8…` (6,195 entries), run-scoped image IDs
   `89eacf2a…` and `a8abdab0…`, Dockerfile `5acad18a…`, manifest `845c9853…`, with independent
   builds identical; drill step 19 passed **21/21** with per-case provenance `8490ada2…`; session
   step 20 passed. Local **21/21** used rootfs `2e7a3eba…` (2,693 entries) and the same

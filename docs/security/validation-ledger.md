@@ -1042,6 +1042,9 @@ The manifest digest is `845c98537b568983f70644d4ef5fc9582303c3aa09893cca39d6e5bf
 source records the base index digest, amd64 platform digest, snapshot, exact packages,
 Dockerfile SHA-256 `5acad18ae243c42ba3e5f4cc8cd30557beafe9aaad95b025d9e64d7f6fb8fe2c`,
 exclusions, both image IDs, and `rootfs_build_pin_sha256 9fccac3e…`. No path differed.
+Image IDs and the manifest SHA-256 are run-scoped: they changed on a later docs-head rerun while
+the rootfs digest and 6,195 entries stayed identical. The latter are the reproducibility
+invariant.
 
 - Step 19, gVisor drill. Result `all adversarial cases denied or contained`; runtime
   `release-20261102.0`, rootless `true`; every case carried runtime

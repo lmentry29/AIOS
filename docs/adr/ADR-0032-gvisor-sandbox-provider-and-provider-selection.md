@@ -171,7 +171,9 @@ hashing. A Sigstore-signed release and immutable runtime mount remain future wor
     rootfs `6e1376d8ee022a239e7dc38a068498729a88632639559ccc41a0174d788f20d7` with 6,195
     entries; manifest SHA-256
     `845c98537b568983f70644d4ef5fc9582303c3aa09893cca39d6e5bf5b5bab3f`; comparison method
-    `independent-image-build`.
+    `independent-image-build`. Image IDs and the manifest SHA-256 identify this run only; Docker
+    image config is not reproducible, so later builds can produce different image IDs and a
+    different manifest hash. The reproduction invariant is the rootfs digest and entry count.
   - Step 19 ran the gVisor drill **21/21**; every case carried provenance digest
     `8490ada2b7adb15bad155212fcde4b7c3187ad12ae6b989319b0bfa62052007b`, runtime `c5a5a7ba…`,
     and rootfs `6e1376d8…`; result `all adversarial cases denied or contained`.
