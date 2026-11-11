@@ -35,8 +35,9 @@ result merely because its JSON looks familiar. Acceptance requires all of the fo
   so a previous result validated against the new attempt. The digest now includes the durable
   attempt identity, and the nonce history rejects exact replay.
 - **Permissive evidence parsing.** `find(entry.startsWith(...))` accepted duplicate keys and
-  newline-injected lines. Evidence lines are parsed into a strict map with duplicate and
-  format rejection.
+  newline-injected lines. Durable attempt evidence is parsed into a strict map with duplicate
+  and format rejection. Opaque executor result evidence is bounded, hashed as data and never
+  parsed as lines; only its `execution_nonce` entry is extracted strictly.
 - **Reserved environment injection.** A Task could declare `AIOS_VERIFIER_ID`,
   `AIOS_TRUST_ROOT`, `AIOS_SIGNING_*`, `AIOS_GVISOR_*` or `AIOS_ARTIFACT_*` variables.
   `AIOS_VERIFIER_ID`, trust-root, signing, gVisor and artifact configuration names are now
@@ -45,8 +46,9 @@ result merely because its JSON looks familiar. Acceptance requires all of the fo
 ## Coverage
 
 `apps/host/tests/evidence-binding.test.ts` (9 tests) covers accessors, class instances,
-prototype keys, cycles, BigInt/NaN/oversized values, unknown fields, newline injection,
-duplicate evidence keys, identity/field sensitivity, replay across attempts, cross-Task
+prototype keys, cycles, BigInt/NaN/oversized values, unknown fields, multi-line opaque
+result evidence, forged nonce entries, duplicate evidence keys, identity/field sensitivity,
+replay across attempts, cross-Task
 replay, legacy evidence, post-hoc removal and duplication of the bound digest, unbound
 verifiers, and reserved-environment filtering. Replay and cross-Task cases assert the
 verification command is not run when binding fails.
