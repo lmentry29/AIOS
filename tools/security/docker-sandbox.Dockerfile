@@ -1,16 +1,19 @@
 # Minimal, reproducible image for the Docker and gVisor adversarial drills.
 #
-# The base image is pinned by immutable manifest-list digest. Apt uses a fixed
-# snapshot.debian.org timestamp; the exact top-level package versions are pinned
-# again in the install command. Do not replace this with a floating tag or a
-# moving deb.debian.org index.
+# The base image is pinned by immutable linux/amd64 manifest digest, not the
+# multi-arch index digest: pinning the index alone leaves the platform manifest
+# that this build resolves to unpinned. gvisor-rootfs.json records both, and CI
+# proves the platform digest is a child of the recorded index
+# (`verify-platform-digest`). Apt uses a fixed snapshot.debian.org timestamp; the
+# exact top-level package versions are pinned again in the install command. Do not
+# replace this with a floating tag or a moving deb.debian.org index.
 #
 # The image carries only the ordinary POSIX tools the drill invokes. Build-only
 # logs, caches and indexes are removed so two independent builds have the same
 # filesystem content. /etc/shadow and /etc/gshadow are removed so the host-file-read
 # case tests the container rootfs rather than a file that happens to exist in the
 # image; it is not a host bind either way.
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+FROM debian:bookworm-slim@sha256:c67e92c8099ba22853ab4cfda7cfb494d253d6012ca82dee98ba8976772af018
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C \

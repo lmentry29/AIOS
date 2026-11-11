@@ -1118,3 +1118,54 @@ At the same code head, `ci` run `42956393497`, `conformance` run `42956393507`, 
 `schema-check` run `42956393513` were green; Security run `42956393498` passed both jobs. The
 Release workflow is `workflow_dispatch`-only and is run on the final documentation head. The
 documentation checkpoint follows this code head; read `git log --oneline -3` for the exact tip.
+
+## 2026-11-11 — artifact staging, metadata-attesting manifest v2 and verify-to-execute binding
+
+Code head: the commit that introduces this section; CI evidence is appended below once the
+workflows for that commit complete.
+
+### Implemented
+
+- **Owned staging and atomic promotion.** `createOwnedStagingDirectory`,
+  `removeOwnedDirectory`, `assertDestinationAbsent` and `promoteOwnedDirectory` in
+  `apps/host/src/execution/provenance.ts`. Runtime downloads and rootfs exports are verified in
+  unique sibling staging directories and promoted with a non-replacing `rename`. An existing
+  file, directory or symlink destination is rejected before Docker or archive work. Cleanup
+  only removes the staging inode the invocation created; a replaced or symlinked staging path
+  is left untouched.
+- **Manifest v2.** `digestRootfs` now hashes path, entry type, permission bits (including
+  setuid/setgid/sticky), owner uid/gid, file size, file-content SHA-256, symlink target and
+  extended attributes into `sha256`/`metadata_sha256`, with mtime in a separate
+  `timestamps_sha256`; the v1 content algorithm is retained as `content_sha256`. Extended
+  attributes are read with `getfattr`; an absent reader records `xattrs: "unavailable"` and
+  `required` fails closed. Rationale and omissions: `docs/security/rootfs-metadata-attestation.md`.
+- **Platform digest enforcement.** The Dockerfile uses the `linux/amd64` manifest digest
+  `c67e92c8…` under the recorded index `734a72b3…`; the pin verifier rejects a tag or the index
+  digest in `FROM`. `verify-platform-digest` selects the single amd64 entry from the raw pinned
+  index and requires it to equal the recorded platform digest. The Security workflow installs
+  `attr`, passes `--require-xattrs`, and runs the index check before building.
+- **Verify-to-execute binding.** The pinned `runsc` is copied into a private `0700`/`0500`
+  directory, the copy is hashed, and the copy is executed. Inode, size, writability and SHA-256
+  are re-checked immediately before spawn, and the rootfs is re-measured after execution; a
+  difference rejects the result with `SandboxIsolationUnavailableError`.
+- **Archive hardening.** A symlinked `runsc` or `gvisor-bin` is rejected, chmod never follows a
+  symlink in the extracted tree, extraction uses `--no-same-owner`, and manifests are written
+  atomically.
+
+### Local verification
+
+- `pnpm --filter @aios/host build`: exit 0.
+- `vitest run tests/gvisor-provenance.test.ts tests/gvisor.test.ts`: **27/27** passed.
+- Full host suite: **182 passed / 17 skipped** (the skips are live-provider suites without an
+  environment).
+- `node --check tools/security/gvisor-provenance.mjs`: exit 0.
+
+### Not established by this run
+
+- No local Docker daemon: the independent-image rootfs export and the platform-index check
+  remain CI-only.
+- Extended attributes are not captured on this host (`getfattr` is absent); the manifest records
+  the omission and CI requires the reader.
+- Pins and manifests remain unsigned (F-017).
+- Rootless Docker, macOS Seatbelt and Apple Containerization are unchanged and remain
+  unmeasured or unavailable; no result here is extrapolated to those platforms.

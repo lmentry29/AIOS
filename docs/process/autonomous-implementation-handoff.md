@@ -128,12 +128,15 @@ canonical collections, and the live bubblewrap controls remain in place from
   absolute binary path, and returns provenance; executor and verifier evidence carry the pin,
   release, version, archive digest, binary digest, rootfs digest, and entry count. A failure
   raises `SandboxIsolationUnavailableError`; no fallback.
-- `tools/security/docker-sandbox.Dockerfile` builds from
-  `debian:bookworm-slim@sha256:734a72b3…`, reads the Debian snapshot at `20261110T000000Z`, and
-  installs exact `coreutils`, `perl`, and `util-linux` versions. `tools/security/gvisor-rootfs.json`
-  records those inputs and the pin SHA-256 `9fccac3e…`. `gvisor-provenance.mjs` adds
-  `verify-rootfs-pin` and `build-rootfs --compare-image`; the latter rejects same-image
-  comparison and differing digests.
+- `tools/security/docker-sandbox.Dockerfile` builds from the `linux/amd64` manifest digest
+  `sha256:c67e92c8…` under the recorded index `734a72b3…`, reads the Debian snapshot at
+  `20261110T000000Z`, and installs exact `coreutils`, `perl`, and `util-linux` versions.
+  `tools/security/gvisor-rootfs.json` records those inputs and the pin SHA-256 `9fccac3e…`.
+  `gvisor-provenance.mjs` adds `verify-rootfs-pin`, `verify-platform-digest` and
+  `build-rootfs --compare-image`; the latter rejects same-image comparison and differing
+  digests. Outputs are staged and promoted atomically; the manifest is v2 (ownership, permission
+  bits, mtime and extended attributes); the runtime executes from a private measured copy and the
+  rootfs is re-measured after execution.
 - `tools/security/adversarial-drill.mjs` requires `AIOS_GVISOR_ROOTFS_MANIFEST`, compares the
   provider's rootfs digest/entries to it, records the manifest, and puts provenance digests on
   every case. Security workflow steps 12 and 15–19 validate the pin, rebuild the image
@@ -147,10 +150,10 @@ canonical collections, and the live bubblewrap controls remain in place from
   **21/21** used rootfs `2e7a3eba…` (2,693 entries) and the same pin/runtime; full gate **46/46**,
   host **168 passed / 17 skipped**, bubblewrap **21/21**.
 - Residuals: pin/base/snapshot/manifest are unsigned; upstream is not Sigstore-verified; the
-  Debian snapshot must remain available; canonical manifest excludes ownership/timestamps; a host
-  writer can replace runtime/rootfs after hashing. F-017 is mitigated for accidental
-  substitution; F-018 is fixed for deterministic build inputs and independent-image
-  reproduction. Bubblewrap remains the Linux default.
+  Debian snapshot must remain available; a same-UID host writer remains inside the host trust
+  boundary. F-017 is mitigated for accidental substitution; F-018 is fixed for deterministic
+  build inputs and independent-image reproduction; F-019 is fixed for staged promotion,
+  ownership-safe cleanup and verify-to-execute binding. Bubblewrap remains the Linux default.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 

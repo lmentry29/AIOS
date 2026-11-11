@@ -1,15 +1,22 @@
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   closeSync,
+  constants as fsConstants,
+  copyFileSync,
   lstatSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
   realpathSync,
   readdirSync,
   readlinkSync,
+  renameSync,
+  rmSync,
 } from 'node:fs';
-import { delimiter, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 /**
  * Provenance primitives for the gVisor runtime and its OCI rootfs.
@@ -47,9 +54,53 @@ export interface LoadedGvisorRuntimePin {
   path: string;
 }
 
+/**
+ * Canonical rootfs measurement.
+ *
+ * Manifest v2 hashes the entry path, type, permission bits (including setuid/setgid/sticky),
+ * owner uid/gid, file size, file-content SHA-256, symlink target and extended attributes.
+ * `content_sha256` preserves the v1 content-only algorithm so earlier evidence remains
+ * comparable; `timestamps_sha256` attests mtime separately because Docker export does not
+ * produce byte-identical directory timestamps across independent image builds.
+ */
 export interface RootfsDigest {
+  manifest_version: 2;
   sha256: string;
   entries: number;
+  content_sha256: string;
+  metadata_sha256: string;
+  timestamps_sha256: string;
+  xattrs: 'captured' | 'unavailable';
+}
+
+/** A digest, or a legacy two-field digest that predates manifest v2. */
+export type RootfsDigestLike = Pick<RootfsDigest, 'sha256' | 'entries'> & Partial<Pick<
+  RootfsDigest,
+  'content_sha256' | 'metadata_sha256' | 'timestamps_sha256' | 'xattrs'
+>>;
+
+export interface RootfsDigestOptions {
+  /**
+   * `auto` records whether extended attributes were readable; `required` fails closed when
+   * no reader is installed; `skip` deliberately records the omission.
+   */
+  xattrs?: 'auto' | 'required' | 'skip';
+}
+
+export interface MaterializedExecutable {
+  path: string;
+  source: string;
+  sha256: string;
+  device: number;
+  inode: number;
+  size: number;
+}
+
+/** A directory created by this invocation, identified by inode for ownership-safe cleanup. */
+export interface OwnedDirectory {
+  path: string;
+  device: number;
+  inode: number;
 }
 
 export interface GvisorRootfsBuildPin {
@@ -344,7 +395,10 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
   const contents = readFileSync(path, 'utf8');
 
   const froms = [...contents.matchAll(/^FROM\s+(\S+)\s*$/gm)].map((match) => match[1]);
-  const expectedBase = `${pin.base_image.reference}@${pin.base_image.digest}`;
+  // The platform digest is the manifest the amd64 build actually resolves to. Pinning the
+  // manifest list alone leaves the per-platform manifest unpinned, so the Dockerfile must
+  // name the platform digest and CI proves it is a child of the pinned index.
+  const expectedBase = `${pin.base_image.reference}@${pin.base_image.platform_digest_amd64}`;
   if (froms.length !== 1 || froms[0] !== expectedBase) {
     throw new ProvenanceError(
       `The gVisor rootfs Dockerfile must use the pinned base image ${expectedBase}, observed ${froms.join(', ') || 'none'}.`,
@@ -404,11 +458,144 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
   }
 }
 
-/** Require two measured rootfs exports to agree exactly. */
-export function assertReproducibleRootfs(first: RootfsDigest, second: RootfsDigest, detail = ''): void {
-  if (first.sha256 !== second.sha256 || first.entries !== second.entries) {
+/**
+ * Create a private staging directory next to its eventual destination. The parent must be a
+ * real directory, not a symlink, and the staging path is unique to this invocation.
+ */
+export function createOwnedStagingDirectory(parent: string, prefix: string): OwnedDirectory {
+  const root = resolve(parent);
+  let parentStats: ReturnType<typeof lstatSync>;
+  try {
+    parentStats = lstatSync(root);
+  } catch {
+    throw new ProvenanceError(`The staging parent does not exist: ${root}.`);
+  }
+  if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
+    throw new ProvenanceError(`The staging parent must be a real directory, not a symlink: ${root}.`);
+  }
+  const path = mkdtempSync(join(root, prefix));
+  const stats = lstatSync(path);
+  return { path, device: stats.dev, inode: stats.ino };
+}
+
+/**
+ * Remove only the directory this invocation created. If the path was replaced by a symlink
+ * or a different inode, leave it untouched; cleanup must never recurse over operator state.
+ */
+export function removeOwnedDirectory(directory: OwnedDirectory): void {
+  let stats: ReturnType<typeof lstatSync>;
+  try {
+    stats = lstatSync(directory.path);
+  } catch {
+    return;
+  }
+  if (stats.isSymbolicLink() || !stats.isDirectory()) return;
+  if (stats.dev !== directory.device || stats.ino !== directory.inode) return;
+  rmSync(directory.path, { recursive: true, force: true });
+}
+
+/** Reject an existing output before any expensive extraction or Docker work begins. */
+export function assertDestinationAbsent(destination: string): void {
+  const target = resolve(destination);
+  try {
+    lstatSync(target);
+    throw new ProvenanceError(`Refusing to overwrite an existing gVisor output: ${target}.`);
+  } catch (error) {
+    if (error instanceof ProvenanceError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+/**
+ * Promote a completed staging directory without replacing an existing destination. The
+ * source inode is checked immediately before rename; cleanup remains restricted to the
+ * staging path and never touches the promoted output.
+ */
+export function promoteOwnedDirectory(directory: OwnedDirectory, destination: string): void {
+  const target = resolve(destination);
+  if (target === directory.path) {
+    throw new ProvenanceError('The staging directory cannot be its own promotion destination.');
+  }
+  const parent = dirname(target);
+  let parentStats: ReturnType<typeof lstatSync>;
+  try {
+    parentStats = lstatSync(parent);
+  } catch {
+    throw new ProvenanceError(`The promotion parent does not exist: ${parent}.`);
+  }
+  if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
+    throw new ProvenanceError(`The promotion parent must be a real directory, not a symlink: ${parent}.`);
+  }
+  try {
+    const destinationStats = lstatSync(target);
+    if (destinationStats.isSymbolicLink() || destinationStats.isDirectory() || destinationStats.isFile()) {
+      throw new ProvenanceError(`Refusing to replace an existing gVisor output: ${target}.`);
+    }
+  } catch (error) {
+    if (error instanceof ProvenanceError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const stats = lstatSync(directory.path);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new ProvenanceError(`The staged output is not a real directory: ${directory.path}.`);
+  }
+  if (stats.dev !== directory.device || stats.ino !== directory.inode) {
+    throw new ProvenanceError(`The staged output was replaced during preparation: ${directory.path}.`);
+  }
+  renameSync(directory.path, target);
+}
+
+function digestMismatches(first: RootfsDigestLike, second: RootfsDigestLike, timestamps: boolean): string[] {
+  const mismatched: string[] = [];
+  if (first.sha256 !== second.sha256) mismatched.push(`sha256 ${first.sha256}/${second.sha256}`);
+  if (first.entries !== second.entries) mismatched.push(`entries ${first.entries}/${second.entries}`);
+  if (first.content_sha256 !== undefined && second.content_sha256 !== undefined
+    && first.content_sha256 !== second.content_sha256) {
+    mismatched.push(`content_sha256 ${first.content_sha256}/${second.content_sha256}`);
+  }
+  if (first.metadata_sha256 !== undefined && second.metadata_sha256 !== undefined
+    && first.metadata_sha256 !== second.metadata_sha256) {
+    mismatched.push(`metadata_sha256 ${first.metadata_sha256}/${second.metadata_sha256}`);
+  }
+  if (first.xattrs !== undefined && second.xattrs !== undefined && first.xattrs !== second.xattrs) {
+    mismatched.push(`xattrs ${first.xattrs}/${second.xattrs}`);
+  }
+  if (timestamps
+    && first.timestamps_sha256 !== undefined && second.timestamps_sha256 !== undefined
+    && first.timestamps_sha256 !== second.timestamps_sha256) {
+    mismatched.push(`timestamps_sha256 ${first.timestamps_sha256}/${second.timestamps_sha256}`);
+  }
+  return mismatched;
+}
+
+/**
+ * Require two measured rootfs exports to agree exactly.
+ *
+ * Timestamps are asserted only where the comparison is expected to be timestamp-stable
+ * (two exports of the same image). Independent builds legitimately differ in directory
+ * mtimes because Docker export does not normalize them.
+ */
+export function assertReproducibleRootfs(
+  first: RootfsDigestLike,
+  second: RootfsDigestLike,
+  detail = '',
+  options: { timestamps?: boolean } = {},
+): void {
+  const mismatched = digestMismatches(first, second, options.timestamps === true);
+  if (mismatched.length > 0) {
+    throw new ProvenanceError(`The gVisor rootfs export is not reproducible (${mismatched.join('; ')}).${detail}`);
+  }
+}
+
+/**
+ * Require the rootfs handed to the runtime to be unchanged after execution. A change means
+ * the result is not bound to the artifact whose digest was attested, so it is rejected.
+ */
+export function assertRootfsUnchanged(before: RootfsDigestLike, after: RootfsDigestLike): void {
+  const mismatched = digestMismatches(before, after, true);
+  if (mismatched.length > 0) {
     throw new ProvenanceError(
-      `The gVisor rootfs export is not reproducible (first ${first.sha256}/${first.entries} entries, second ${second.sha256}/${second.entries}).${detail}`,
+      `The gVisor rootfs changed while the sandbox was running (${mismatched.join('; ')}); the result is not bound to the verified artifact.`,
     );
   }
 }
@@ -431,45 +618,242 @@ export function resolveExecutable(name: string): string {
 }
 
 /**
- * Canonical content digest of a rootfs directory.
+ * Copy a verified executable into a private directory and measure the copy.
  *
- * Zero-byte framing includes the relative path, entry type, permission bits, file size,
- * file-content SHA-256, and symlink target. Timestamps, uid/gid, xattrs, and traversal
- * order are deliberately excluded so the manifest describes content rather than the
- * export container's metadata. Paths and names are sorted by code unit.
+ * The provider executes this copy, not the PATH-resolved original, so replacing the original
+ * after verification cannot change the bytes that run. The directory must be owned by this
+ * invocation, not a symlink, and not group- or world-writable.
  */
-export function digestRootfs(rootfs: string): RootfsDigest {
+export function materializeVerifiedExecutable(
+  source: string,
+  expectedSha256: string,
+  directory: OwnedDirectory,
+): MaterializedExecutable {
+  const resolved = resolve(source);
+  const directoryStats = lstatSync(directory.path);
+  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+    throw new ProvenanceError(`The private executable directory is not a real directory: ${directory.path}.`);
+  }
+  if (directoryStats.dev !== directory.device || directoryStats.ino !== directory.inode) {
+    throw new ProvenanceError(`The private executable directory was replaced during preparation: ${directory.path}.`);
+  }
+  if ((directoryStats.mode & 0o022) !== 0) {
+    throw new ProvenanceError('The private executable directory must not be group- or world-writable.');
+  }
+  const sourceStats = lstatSync(resolved);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+    throw new ProvenanceError(`The verified executable must be a regular file, not a symlink: ${resolved}.`);
+  }
+  const target = join(directory.path, 'runsc');
+  try {
+    lstatSync(target);
+    throw new ProvenanceError(`The private executable path already exists: ${target}.`);
+  } catch (error) {
+    if (error instanceof ProvenanceError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  copyFileSync(resolved, target, fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE);
+  try {
+    chmodSync(target, 0o500);
+    const sha256 = hashFile(target, 'sha256');
+    if (sha256 !== expectedSha256.toLowerCase()) {
+      throw new ProvenanceError(
+        `The materialized gVisor runsc does not match the verified SHA-256 (expected ${expectedSha256.toLowerCase()}, observed ${sha256}).`,
+      );
+    }
+    const stats = lstatSync(target);
+    return { path: target, source: resolved, sha256, device: stats.dev, inode: stats.ino, size: stats.size };
+  } catch (error) {
+    rmSync(target, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * Re-measure the materialized executable immediately before execution. A replaced inode, a
+ * changed size, a writable copy, or different bytes all fail closed. The remaining window is
+ * confined to a directory only the invoking user can write, which is inside the host trust
+ * boundary rather than the PATH search path.
+ */
+export function assertMaterializedExecutableUnchanged(executable: MaterializedExecutable): void {
+  const stats = lstatSync(executable.path);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new ProvenanceError(`The materialized gVisor runsc is not a regular file: ${executable.path}.`);
+  }
+  if (stats.dev !== executable.device || stats.ino !== executable.inode || stats.size !== executable.size) {
+    throw new ProvenanceError(`The materialized gVisor runsc was replaced after verification: ${executable.path}.`);
+  }
+  if ((stats.mode & 0o022) !== 0) {
+    throw new ProvenanceError(`The materialized gVisor runsc became writable after verification: ${executable.path}.`);
+  }
+  if (hashFile(executable.path, 'sha256') !== executable.sha256) {
+    throw new ProvenanceError(`The materialized gVisor runsc changed after verification: ${executable.path}.`);
+  }
+}
+
+/** Select the single linux/amd64 manifest digest from a pinned OCI image index. */
+export function selectPlatformManifestDigest(index: unknown, os: string, architecture: string): string {
+  if (!isRecord(index)) {
+    throw new ProvenanceError('The OCI image index must be a JSON object.');
+  }
+  const manifests = index.manifests;
+  if (!Array.isArray(manifests) || manifests.length === 0) {
+    throw new ProvenanceError('The OCI image index must contain a non-empty manifests array.');
+  }
+  const matches: string[] = [];
+  for (const entry of manifests) {
+    if (!isRecord(entry) || !isRecord(entry.platform)) continue;
+    if (entry.platform.os !== os || entry.platform.architecture !== architecture) continue;
+    const digest = entry.digest;
+    if (typeof digest !== 'string' || !SHA256_DIGEST_HEX.test(digest)) {
+      throw new ProvenanceError('The OCI image index platform entry has no valid sha256 digest.');
+    }
+    matches.push(digest);
+  }
+  const [only] = matches;
+  if (matches.length !== 1 || only === undefined) {
+    throw new ProvenanceError(
+      `The OCI image index must contain exactly one ${os}/${architecture} manifest, observed ${matches.length}.`,
+    );
+  }
+  return only;
+}
+
+const XATTR_READER = 'getfattr';
+const XATTR_NAME = /^[A-Za-z0-9_.:@-]+$/;
+
+interface XattrTable {
+  available: boolean;
+  entries: Map<string, string[]>;
+}
+
+/**
+ * Read extended attributes for every entry under `root` through `getfattr`.
+ *
+ * Node exposes no extended-attribute API, so the reader is an external tool. When it is not
+ * installed the manifest records `xattrs: 'unavailable'`; a caller that requires completeness
+ * asks for `required` and fails closed instead of silently omitting attestation.
+ */
+function readXattrTable(root: string): XattrTable {
+  const result = spawnSync(XATTR_READER, ['-R', '-d', '-m', '*', '.'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error !== undefined) {
+    if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { available: false, entries: new Map() };
+    }
+    throw new ProvenanceError(`The extended-attribute reader failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || '').trim().split('\n')[0] ?? 'no output';
+    throw new ProvenanceError(`The extended-attribute reader exited ${result.status ?? 'unknown'}: ${detail.slice(0, 200)}`);
+  }
+  const entries = new Map<string, string[]>();
+  let current: string | undefined;
+  for (const raw of result.stdout.split('\n')) {
+    const line = raw.trimEnd();
+    if (line.length === 0) continue;
+    if (line.startsWith('# file: ')) {
+      const path = line.slice('# file: '.length).replace(/^\.\//, '');
+      current = path === '.' ? '' : path;
+      continue;
+    }
+    const separator = line.indexOf('=');
+    if (current === undefined || separator <= 0 || !XATTR_NAME.test(line.slice(0, separator))) {
+      throw new ProvenanceError(`The extended-attribute listing could not be parsed: ${line.slice(0, 120)}.`);
+    }
+    const list = entries.get(current) ?? [];
+    list.push(line);
+    entries.set(current, list);
+  }
+  for (const list of entries.values()) list.sort();
+  return { available: true, entries };
+}
+
+/**
+ * Canonical content-and-metadata digest of a rootfs directory (manifest v2).
+ *
+ * Zero-byte framing includes the relative path, entry type, permission bits, uid, gid, file
+ * size, file-content SHA-256, symlink target and extended attributes. Paths are sorted by
+ * code unit so traversal order cannot affect the digest. Modification time is hashed
+ * separately in `timestamps_sha256`; atime and ctime are excluded because reading the tree
+ * changes atime and ctime is not reproducible across exports. See
+ * docs/security/rootfs-metadata-attestation.md for the normalization rationale.
+ */
+export function digestRootfs(rootfs: string, options: RootfsDigestOptions = {}): RootfsDigest {
   const root = resolve(rootfs);
-  const rootStats = lstatSync(root);
+  const rootStats = lstatSync(root, { bigint: true });
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
     throw new ProvenanceError('The gVisor rootfs manifest requires a real directory, not a symlink.');
   }
 
-  const hash = createHash('sha256');
-  hash.update('AIOS-GVISOR-ROOTFS-MANIFEST-v1\0');
+  const xattrMode = options.xattrs ?? 'auto';
+  const table: XattrTable = xattrMode === 'skip'
+    ? { available: false, entries: new Map() }
+    : readXattrTable(root);
+  if (xattrMode === 'required' && !table.available) {
+    throw new ProvenanceError(
+      'The gVisor rootfs manifest requires extended attributes, but no getfattr reader is installed.',
+    );
+  }
+  const xattrs: RootfsDigest['xattrs'] = table.available ? 'captured' : 'unavailable';
+  const extended = (relative: string): string => (table.entries.get(relative) ?? []).join('\0');
+
+  const content = createHash('sha256');
+  content.update('AIOS-GVISOR-ROOTFS-MANIFEST-v1\0');
+  const manifest = createHash('sha256');
+  manifest.update(`AIOS-GVISOR-ROOTFS-MANIFEST-v2\0${xattrs}\0`);
+  const metadata = createHash('sha256');
+  metadata.update(`AIOS-GVISOR-ROOTFS-METADATA-v2\0${xattrs}\0`);
+  const timestamps = createHash('sha256');
+  timestamps.update('AIOS-GVISOR-ROOTFS-TIMESTAMPS-v2\0');
   let entries = 0;
+
+  const rootMode = Number(rootStats.mode & 0o7777n).toString(8);
+  metadata.update(`R\0${rootMode}\0${rootStats.uid}\0${rootStats.gid}\0${extended('')}\0`);
+  timestamps.update(`R\0${rootStats.mtimeNs}\0`);
 
   const walk = (absolute: string, relative: string): void => {
     const names = readdirSync(absolute).sort();
     for (const name of names) {
       const childAbsolute = resolve(absolute, name);
       const childRelative = relative.length === 0 ? name : `${relative}/${name}`;
-      const stats = lstatSync(childAbsolute);
-      const mode = (stats.mode & 0o7777).toString(8);
+      const stats = lstatSync(childAbsolute, { bigint: true });
+      const mode = Number(stats.mode & 0o7777n).toString(8);
+      const owner = `${stats.uid}\0${stats.gid}`;
+      const xattr = extended(childRelative);
       entries += 1;
+      timestamps.update(`${childRelative}\0${stats.mtimeNs}\0`);
+      metadata.update(`P\0${childRelative}\0${mode}\0${owner}\0${xattr}\0`);
       if (stats.isSymbolicLink()) {
-        hash.update(`L\0${childRelative}\0${mode}\0${readlinkSync(childAbsolute)}\0`);
+        const target = readlinkSync(childAbsolute);
+        content.update(`L\0${childRelative}\0${mode}\0${target}\0`);
+        manifest.update(`L\0${childRelative}\0${mode}\0${owner}\0${target}\0${xattr}\0`);
       } else if (stats.isDirectory()) {
-        hash.update(`D\0${childRelative}\0${mode}\0`);
+        content.update(`D\0${childRelative}\0${mode}\0`);
+        manifest.update(`D\0${childRelative}\0${mode}\0${owner}\0${xattr}\0`);
         walk(childAbsolute, childRelative);
       } else if (stats.isFile()) {
-        hash.update(`F\0${childRelative}\0${mode}\0${stats.size}\0${hashFile(childAbsolute, 'sha256')}\0`);
+        const fileHash = hashFile(childAbsolute, 'sha256');
+        content.update(`F\0${childRelative}\0${mode}\0${stats.size}\0${fileHash}\0`);
+        manifest.update(`F\0${childRelative}\0${mode}\0${owner}\0${stats.size}\0${fileHash}\0${xattr}\0`);
       } else {
-        hash.update(`O\0${childRelative}\0${mode}\0${stats.size}\0`);
+        content.update(`O\0${childRelative}\0${mode}\0${stats.size}\0`);
+        manifest.update(`O\0${childRelative}\0${mode}\0${owner}\0${stats.size}\0${xattr}\0`);
       }
     }
   };
 
   walk(root, '');
-  return { sha256: hash.digest('hex'), entries };
+  return {
+    manifest_version: 2,
+    sha256: manifest.digest('hex'),
+    entries,
+    content_sha256: content.digest('hex'),
+    metadata_sha256: metadata.digest('hex'),
+    timestamps_sha256: timestamps.digest('hex'),
+    xattrs,
+  };
 }

@@ -183,6 +183,30 @@ hashing. A Sigstore-signed release and immutable runtime mount remain future wor
   `42956393513` were green. The Release workflow is `workflow_dispatch`-only and is dispatched
   separately on the final documentation head.
 
+### Amendment 2026-11-11 — platform digest, metadata manifest and verify-to-execute binding
+
+- The build is bound to the `linux/amd64` manifest digest
+  `sha256:c67e92c8099ba22853ab4cfda7cfb494d253d6012ca82dee98ba8976772af018`; the recorded
+  manifest-list digest `sha256:734a72b3…` is verified in CI to contain that platform manifest
+  (`verify-platform-digest`). A tag or the index digest in `FROM` is rejected.
+- The rootfs manifest is v2: `sha256` covers path, type, permission bits (including
+  setuid/setgid/sticky), uid/gid, size, file SHA-256, symlink target and extended attributes;
+  `timestamps_sha256` attests mtime separately because independent Docker builds do not produce
+  identical directory times. `content_sha256` keeps the v1 algorithm comparable. The Security
+  workflow installs `attr` and requires xattr capture, so the published evidence cannot silently
+  omit them. Rationale and omissions: `docs/security/rootfs-metadata-attestation.md`.
+- Runtime and rootfs outputs are prepared in unique staging directories and promoted
+  atomically only after verification. Pre-existing destinations, including symlinks, are
+  refused, and cleanup is restricted to the staging inode the invocation created.
+- The pinned `runsc` is executed from a private copy of the measured bytes and re-checked
+  immediately before spawn; the rootfs is re-measured after execution and any difference
+  rejects the result. This does not defend against a same-UID host writer, which remains inside
+  the host trust boundary.
+- Local verification at the amendment head: host build exit 0; focused provenance/provider
+  tests **27/27**; full host suite **182 passed / 17 skipped**; tool syntax check exit 0. The
+  Docker-based independent-image and platform-index checks remain CI-only because no local
+  Docker daemon is available.
+
 ### Earlier CI at `54344f1`
 
 - Code head `54344f1`; Security run `42946929104`, live job `130281855560`:

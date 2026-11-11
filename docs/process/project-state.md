@@ -162,10 +162,15 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   architecture-mismatched, or digest-mismatched pin raises `SandboxIsolationUnavailableError`
   before a probe or drill; there is no fallback.
 - `tools/security/gvisor-rootfs.json` and `tools/security/docker-sandbox.Dockerfile` pin the
-  rootfs build to `debian:bookworm-slim@sha256:734a72b3…`, Debian snapshot `20261110T000000Z`,
-  and exact `coreutils`/`perl`/`util-linux` versions. `gvisor-provenance.mjs verify-rootfs-pin`
-  rejects drift; `build-rootfs --compare-image` requires two independent no-cache images to
-  produce the same canonical digest and rejects same-image comparison.
+  rootfs build to the `linux/amd64` manifest digest `c67e92c8…` under the recorded index
+  `734a72b3…` (CI proves the child relationship), Debian snapshot `20261110T000000Z`, and exact
+  `coreutils`/`perl`/`util-linux` versions. `gvisor-provenance.mjs verify-rootfs-pin` rejects a
+  tag or index digest in `FROM`; `build-rootfs --compare-image` requires two independent
+  no-cache images to produce the same manifest-v2 digest and rejects same-image comparison.
+  Runtime and rootfs outputs are staged in unique directories and promoted atomically; the
+  manifest attests uid/gid, permission bits, mtime and extended attributes (`--require-xattrs`
+  in CI); the runtime executes from a private measured copy and the rootfs is re-measured after
+  execution.
 - CI at `378e7d6` (Security run `42956393498`, live job `130312417881`) passed: pin guard step 12;
   Docker build/drill steps 13–14 (**21/21**); independent image build step 15; install step 16
   measured `runsc release-20261102.0`, binary
@@ -178,9 +183,11 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   pin/runtime. Full gate **46/46**, 0 cached; host **168 passed / 17 skipped**; bubblewrap
   **21/21**.
 - F-017 remains a mitigated, unsigned residual (pin/base/snapshot/manifest unsigned, snapshot
-  availability, host-writer trust, metadata exclusion, single-UID/no-netstack/no-host-cgroup).
-  F-018 is fixed: the base image, apt snapshot, and package versions are pinned, and independent
-  image builds produce the same canonical rootfs digest and 6,195 entries.
+  availability, host-writer trust inside the host trust boundary,
+  single-UID/no-netstack/no-host-cgroup). F-018 is fixed: the base image (platform digest), apt
+  snapshot, and package versions are pinned, and independent image builds produce the same
+  canonical rootfs digest and 6,195 entries. F-019 is fixed: staging/promotion, ownership-safe
+  cleanup, private measured runtime copies and post-run rootfs re-measurement.
 
 ## Current package and application maturity
 

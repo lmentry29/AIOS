@@ -23,7 +23,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The suite is skipped without a real binary, so install it and point the test at it.
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # `attr` provides getfattr, which the rootfs manifest uses to attest extended
+      # attributes; the build step requires it so the omission cannot go unnoticed.
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap attr
       # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor; bwrap needs one.
       - name: Allow unprivileged user namespaces for this job
         run: |
@@ -39,6 +41,17 @@ jobs:
       # snapshot timestamp or exact package versions in gvisor-rootfs.json.
       - name: Verify pinned gVisor rootfs inputs
         run: node tools/security/gvisor-provenance.mjs verify-rootfs-pin --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile
+      # The Dockerfile pins the amd64 manifest digest. Prove that manifest is a child of
+      # the recorded multi-arch index instead of trusting two independent literals.
+      - name: Verify pinned platform digest belongs to the pinned index
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw \
+            debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc \
+            > "$RUNNER_TEMP/debian-index.json"
+          node tools/security/gvisor-provenance.mjs verify-platform-digest \
+            --source tools/security/gvisor-rootfs.json \
+            --index "$RUNNER_TEMP/debian-index.json"
       # Build the image locally so the Docker run does not depend on an implicit pull.
       - name: Build the Docker sandbox image
         run: docker build --pull -t aios-sandbox:local -f tools/security/docker-sandbox.Dockerfile tools/security
@@ -71,7 +84,7 @@ jobs:
           grep -F 'pin file does not exist' "$RUNNER_TEMP/missing-pin.log"
           echo 'observed fail-closed provenance errors'
       - name: Build reproducible gVisor OCI rootfs
-        run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --compare-image aios-sandbox:local-rebuild --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json"
+        run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --compare-image aios-sandbox:local-rebuild --require-xattrs --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json"
       # Same 21-case matrix through the explicit gVisor provider and real verifier.
       - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" AIOS_GVISOR_ROOTFS_MANIFEST="$RUNNER_TEMP/gvisor-rootfs.manifest.json" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.

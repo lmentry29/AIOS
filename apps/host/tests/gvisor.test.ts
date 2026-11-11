@@ -51,7 +51,10 @@ if (args.includes('--version')) {
 if (args.includes('run')) {
   const bundle = args[args.indexOf('--bundle') + 1];
   const config = JSON.parse(fs.readFileSync(path.join(bundle, 'config.json'), 'utf8'));
-  fs.writeFileSync(capture, JSON.stringify({ args, config }));
+  fs.writeFileSync(capture, JSON.stringify({ args, config, executable: process.argv[1] }));
+  if (config.process.env.includes('AIOS_FAKE_MUTATE=1')) {
+    fs.writeFileSync(path.join(config.root.path, 'intruder'), 'mutation');
+  }
   process.exit(0);
 }
 if (args.includes('kill') || args.includes('delete')) process.exit(0);
@@ -182,6 +185,51 @@ describe('gvisor provider', () => {
     } finally {
       // The fake runtime and rootfs are test-owned temporary state.
     }
+  });
+
+  it('executes a private copy of the measured runtime and removes it afterwards', async () => {
+    const fake = fakeRunsc();
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: fake.pinPath,
+      });
+      const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-private-'));
+      await provider.run({
+        argv: ['/bin/true'],
+        workspaceDirectory: workspace,
+        cwd: '.',
+        timeoutMs: 3_000,
+        maxOutputBytes: 1024,
+        env: {},
+      });
+      const captured = JSON.parse(readFileSync(fake.capture, 'utf8')) as { executable: string };
+      expect(captured.executable).not.toBe(join(fake.directory, 'runsc'));
+      expect(captured.executable.startsWith(tmpdir())).toBe(true);
+      // Ownership-safe cleanup: the measured copy is gone once the invocation completes.
+      expect(existsSync(captured.executable)).toBe(false);
+    });
+  });
+
+  it('rejects a rootfs that changes while the sandbox runs', async () => {
+    const fake = fakeRunsc();
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: fake.pinPath,
+      });
+      const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-mutation-'));
+      await expect(provider.run({
+        argv: ['/bin/true'],
+        workspaceDirectory: workspace,
+        cwd: '.',
+        timeoutMs: 3_000,
+        maxOutputBytes: 1024,
+        env: { AIOS_FAKE_MUTATE: '1' },
+      })).rejects.toThrow(/could not be re-verified after execution.*changed while the sandbox was running/);
+    });
   });
 
   it('fails closed on a missing pin before invoking runsc', async () => {
