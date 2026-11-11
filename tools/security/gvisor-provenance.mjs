@@ -200,6 +200,7 @@ async function main() {
   if (command === 'fetch-runtime') {
     const pinPath = required(parsed, 'pin');
     const output = resolve(required(parsed, 'output'));
+    const outputExisted = existsSync(output);
     const loaded = readGvisorRuntimePin(pinPath);
     assertArchitecture(loaded.pin);
     const archive = join(dirname(output), `gvisor-${randomUUID()}.tar.bz2`);
@@ -217,7 +218,9 @@ async function main() {
         runsc: join(output, 'runsc'),
       })}\n`);
     } catch (error) {
-      rmSync(output, { recursive: true, force: true });
+      // Only remove a directory created by this invocation. extractRuntime refuses to
+      // overwrite a pre-existing path, and cleanup must not destroy operator-owned state.
+      if (!outputExisted) rmSync(output, { recursive: true, force: true });
       throw error;
     } finally {
       rmSync(archive, { force: true });
