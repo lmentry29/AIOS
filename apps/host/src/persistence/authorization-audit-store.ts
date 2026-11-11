@@ -28,6 +28,7 @@ const ACTIONS = new Set([
   'read_evidence',
   'administer_policy',
   'revoke_policy',
+  'administer_sessions',
 ]);
 const REASONS = new Set([
   'matching_allow',

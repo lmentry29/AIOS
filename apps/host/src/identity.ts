@@ -20,6 +20,7 @@ export type {
 export {
   SessionConflictError,
   SessionDeniedError,
+  SessionNotFoundError,
   SessionScopeError,
   parseSessionScope,
 } from './persistence/session-store.js';

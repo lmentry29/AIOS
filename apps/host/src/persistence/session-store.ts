@@ -86,6 +86,13 @@ export class SessionConflictError extends Error {
   }
 }
 
+export class SessionNotFoundError extends Error {
+  constructor(readonly sessionId: string) {
+    super('Session was not found.');
+    this.name = 'SessionNotFoundError';
+  }
+}
+
 export class SessionScopeError extends Error {
   constructor(message: string) {
     super(message);
@@ -120,6 +127,24 @@ export interface RevocationResult {
   session_id: string;
   generation: number;
   revoked_at: string;
+}
+
+export interface AdminRevocationResult extends RevocationResult {
+  already_revoked: boolean;
+}
+
+/** Operator-visible session metadata; deliberately excludes the token digest. */
+export interface PublicSessionRecord {
+  session_id: string;
+  principal_id: string;
+  label: string;
+  issued_at: string;
+  expires_at: string;
+  generation: number;
+  status: 'active' | 'revoked';
+  scope?: SessionScope;
+  revoked_at?: string;
+  revocation_reason?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -215,6 +240,21 @@ function sessionIdentity(record: SessionRecord): AuthenticatedSession {
     expires_at: record.expires_at,
     ...(record.scope === undefined ? {} : { scope: copyScope(record.scope) }),
   });
+}
+
+function publicSessionRecord(record: SessionRecord): PublicSessionRecord {
+  return {
+    session_id: record.session_id,
+    principal_id: record.principal_id,
+    label: record.label,
+    issued_at: record.issued_at,
+    expires_at: record.expires_at,
+    generation: record.generation,
+    status: record.status,
+    ...(record.scope === undefined ? {} : { scope: copyScope(record.scope) }),
+    ...(record.revoked_at === undefined ? {} : { revoked_at: record.revoked_at }),
+    ...(record.revocation_reason === undefined ? {} : { revocation_reason: record.revocation_reason }),
+  };
 }
 
 function parseSessionRecord(value: unknown): SessionRecord {
@@ -351,6 +391,11 @@ export class SessionState {
     return [...this.records.values()].map((record) => structuredClone(record));
   }
 
+  /** Lists sessions for an operator without exposing token digests. */
+  listPublic(): PublicSessionRecord[] {
+    return this.list().map(publicSessionRecord);
+  }
+
   retired(): RetiredSessionToken[] {
     return [...this.retiredTokens.values()].map((token) => structuredClone(token));
   }
@@ -416,6 +461,27 @@ export class SessionState {
     if (current === undefined || current.status !== 'active') {
       throw new SessionDeniedError('revoked_token');
     }
+    return this.planRotationFor(current, requestedScope, now);
+  }
+
+  /** Operator-initiated rotation by immutable session id, after exact authorization. */
+  planRotationById(sessionId: string, now: number = Date.now()): RotationPlan {
+    const current = this.records.get(sessionId);
+    if (current === undefined) throw new SessionNotFoundError(sessionId);
+    if (current.status !== 'active') {
+      throw new SessionConflictError('Session is already revoked.');
+    }
+    if (Date.parse(current.expires_at) <= now) {
+      throw new SessionConflictError('Session is expired and cannot be rotated; provision a new session instead.');
+    }
+    return this.planRotationFor(current, undefined, now);
+  }
+
+  private planRotationFor(
+    current: SessionRecord,
+    requestedScope: SessionScope | undefined,
+    now: number,
+  ): RotationPlan {
     if (this.retiredTokens.size >= MAX_RETIRED_TOKENS) {
       throw new SessionConflictError('The retired-token limit was reached; restart from a newly provisioned session.');
     }
@@ -450,13 +516,13 @@ export class SessionState {
   ): RotationResult {
     const plan = this.planRotation(authorizationHeader, requestedScope, now);
     this.applyRotation(plan);
-    return {
-      token: plan.token,
-      session_id: plan.record.session_id,
-      generation: plan.record.generation,
-      expires_at: plan.record.expires_at,
-      ...(plan.record.scope === undefined ? {} : { scope: copyScope(plan.record.scope) }),
-    };
+    return rotationResult(plan);
+  }
+
+  rotateById(sessionId: string, now: number = Date.now()): RotationResult {
+    const plan = this.planRotationById(sessionId, now);
+    this.applyRotation(plan);
+    return rotationResult(plan);
   }
 
   applyRotation(plan: RotationPlan): void {
@@ -498,6 +564,33 @@ export class SessionState {
     if (current === undefined || current.status !== 'active') {
       throw new SessionDeniedError('revoked_token');
     }
+    return this.planRevocationFor(current, now);
+  }
+
+  /** Operator-initiated revocation by immutable session id; repeated calls are idempotent. */
+  planRevocationById(sessionId: string, now: number = Date.now()): ReturnType<SessionState['planRevocation']> & { already_revoked: boolean } {
+    const current = this.records.get(sessionId);
+    if (current === undefined) throw new SessionNotFoundError(sessionId);
+    if (current.status === 'revoked') {
+      return {
+        record: current,
+        revoked_at: current.revoked_at ?? new Date(now).toISOString(),
+        retired: {
+          token_sha256: current.token_sha256,
+          session_id: current.session_id,
+          reason: 'revoked',
+          retired_at: current.revoked_at ?? new Date(now).toISOString(),
+        },
+        already_revoked: true,
+      };
+    }
+    return { ...this.planRevocationFor(current, now), already_revoked: false };
+  }
+
+  private planRevocationFor(
+    current: SessionRecord,
+    now: number,
+  ): { retired: RetiredSessionToken; record: SessionRecord; revoked_at: string } {
     if (this.retiredTokens.size >= MAX_RETIRED_TOKENS) {
       throw new SessionConflictError('The retired-token limit was reached; restart from a newly provisioned session.');
     }
@@ -523,11 +616,14 @@ export class SessionState {
   revoke(authorizationHeader: string | undefined, now: number = Date.now()): RevocationResult {
     const plan = this.planRevocation(authorizationHeader, now);
     this.applyRevocation(plan);
-    return {
-      session_id: plan.record.session_id,
-      generation: plan.record.generation,
-      revoked_at: plan.revoked_at,
-    };
+    return revocationResult(plan);
+  }
+
+  revokeById(sessionId: string, now: number = Date.now()): AdminRevocationResult {
+    const plan = this.planRevocationById(sessionId, now);
+    if (plan.already_revoked) return { ...revocationResult(plan), already_revoked: true };
+    this.applyRevocation(plan);
+    return { ...revocationResult(plan), already_revoked: false };
   }
 
   applyRevocation(plan: ReturnType<SessionState['planRevocation']>): void {
@@ -634,6 +730,24 @@ export class SessionState {
  * either commits to disk and memory, or leaves both unchanged; it never acknowledges a
  * lifecycle change that will disappear on restart.
  */
+function rotationResult(plan: RotationPlan): RotationResult {
+  return {
+    token: plan.token,
+    session_id: plan.record.session_id,
+    generation: plan.record.generation,
+    expires_at: plan.record.expires_at,
+    ...(plan.record.scope === undefined ? {} : { scope: copyScope(plan.record.scope) }),
+  };
+}
+
+function revocationResult(plan: { record: SessionRecord; revoked_at: string }): RevocationResult {
+  return {
+    session_id: plan.record.session_id,
+    generation: plan.record.generation,
+    revoked_at: plan.revoked_at,
+  };
+}
+
 export class DurableSessionStore {
   readonly state: SessionState;
 
@@ -647,6 +761,10 @@ export class DurableSessionStore {
 
   list(): SessionRecord[] {
     return this.state.list();
+  }
+
+  listPublic(): PublicSessionRecord[] {
+    return this.state.listPublic();
   }
 
   authenticate(
@@ -668,33 +786,48 @@ export class DurableSessionStore {
     now: number = Date.now(),
   ): RotationResult {
     const plan = this.state.planRotation(authorizationHeader, requestedScope, now);
+    this.commitRotation(plan);
+    return rotationResult(plan);
+  }
+
+  rotateById(sessionId: string, now: number = Date.now()): RotationResult {
+    const plan = this.state.planRotationById(sessionId, now);
+    this.commitRotation(plan);
+    return rotationResult(plan);
+  }
+
+  private commitRotation(plan: RotationPlan): void {
     this.journal.append('session_rotated', {
       previous_token_sha256: plan.previous_token_sha256,
       retired_at: plan.retired_at,
       session: plan.record,
     });
     this.state.applyRotation(plan);
-    return {
-      token: plan.token,
-      session_id: plan.record.session_id,
-      generation: plan.record.generation,
-      expires_at: plan.record.expires_at,
-      ...(plan.record.scope === undefined ? {} : { scope: copyScope(plan.record.scope) }),
-    };
   }
 
   revoke(authorizationHeader: string | undefined, now: number = Date.now()): RevocationResult {
     const plan = this.state.planRevocation(authorizationHeader, now);
+    this.commitRevocation(plan);
+    return revocationResult(plan);
+  }
+
+  revokeById(sessionId: string, now: number = Date.now()): AdminRevocationResult {
+    const plan = this.state.planRevocationById(sessionId, now);
+    if (plan.already_revoked) return { ...revocationResult(plan), already_revoked: true };
+    this.commitRevocation(plan);
+    return { ...revocationResult(plan), already_revoked: false };
+  }
+
+  private commitRevocation(plan: {
+    retired: RetiredSessionToken;
+    record: SessionRecord;
+    revoked_at: string;
+  }): void {
     this.journal.append('session_revoked', {
       revoked_at: plan.revoked_at,
       session: plan.record,
     });
     this.state.applyRevocation(plan);
-    return {
-      session_id: plan.record.session_id,
-      generation: plan.record.generation,
-      revoked_at: plan.revoked_at,
-    };
   }
 
   restoreRotation(value: unknown): void {

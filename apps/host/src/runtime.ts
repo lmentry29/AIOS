@@ -96,6 +96,8 @@ export interface HostRuntime {
   founder: FounderInterface;
   /** Durable operational repositories (ADR-0015). */
   operational: DurableOperationalStore;
+  /** Durable session authority shared by authentication and operator administration. */
+  sessions: DurableOperationalStore['sessions'];
   /** Approval-gated Learning System state, durable in learning.jsonl. */
   learning: LearningService;
   runs: DurableRunCoordinator;
@@ -319,6 +321,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       kernel,
       founder,
       operational,
+      sessions: operational.sessions,
       learning,
       runs: operational.runs,
       taskStore,

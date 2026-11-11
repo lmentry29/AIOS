@@ -16,6 +16,7 @@ import {
   parseSessionScope,
   SessionConflictError,
   SessionDeniedError,
+  SessionNotFoundError,
   SessionScopeError,
   type SessionBinding,
 } from './identity.js';
@@ -149,6 +150,9 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   }
   if (error instanceof SessionConflictError) {
     return { status: 409, code: 'session_conflict', message: error.message };
+  }
+  if (error instanceof SessionNotFoundError) {
+    return { status: 404, code: 'session_not_found', message: 'Session was not found.' };
   }
   if (error instanceof HostUnavailableError) {
     return { status: 503, code: 'adapter_unavailable', message: error.message };
@@ -384,7 +388,7 @@ export class HostHttpServer {
 async function requireAllowed(
   runtime: HostRuntime,
   session: AuthenticatedSession,
-  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry' | 'administer_policy' | 'revoke_policy',
+  action: 'read_status' | 'read_evidence' | 'cancel' | 'resume' | 'retry' | 'administer_policy' | 'revoke_policy' | 'administer_sessions',
   resourceId: string,
 ): Promise<void> {
   const allowed = await runtime.boundary.authorize({
@@ -393,6 +397,26 @@ async function requireAllowed(
     resource_id: resourceId,
   });
   if (!allowed) throw new HostHttpError(403, 'forbidden', 'Authorization policy denied this operation.');
+}
+
+async function requireSessionAdministration(
+  runtime: HostRuntime,
+  session: AuthenticatedSession,
+  sessionId: string,
+): Promise<void> {
+  const allowed = await runtime.boundary.authorize({
+    actor_id: session.principal_id,
+    action: 'administer_sessions',
+    resource_id: sessionId,
+  });
+  if (!allowed) {
+    throw new HostHttpError(
+      403,
+      'session_admin_denied',
+      'An exact administer_sessions grant is required on the target session.',
+    );
+  }
+  requireHuman(session);
 }
 
 async function requirePolicyAdministration(
@@ -537,6 +561,51 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           throw new HostHttpError(400, 'invalid_body', 'Session revocation does not accept a body.');
         }
         return { status: 200, body: host.identity.revoke(req.headers.authorization) };
+      },
+    },
+    {
+      pattern: /^\/v1\/admin\/sessions$/,
+      allow: ['GET'],
+      handle: async ({ runtime: host, session }) => {
+        // A human operator sees only sessions on which they hold the exact grant. The
+        // list is intentionally filtered rather than exposing every session identifier.
+        requireHuman(session);
+        const sessions = [];
+        for (const candidate of host.sessions.listPublic()) {
+          if (await host.boundary.authorize({
+            actor_id: session.principal_id,
+            action: 'administer_sessions',
+            resource_id: candidate.session_id,
+          })) {
+            sessions.push(candidate);
+          }
+        }
+        return { status: 200, body: { sessions, total: sessions.length } };
+      },
+    },
+    {
+      pattern: /^\/v1\/admin\/sessions\/([^/]+)\/rotate$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session, req }, params) => {
+        const sessionId = uuidParam(params[1], 'sessionId');
+        // Authorize the exact target before revealing whether it exists.
+        await requireSessionAdministration(host, session, sessionId);
+        if (hasRequestBody(req)) {
+          throw new HostHttpError(400, 'invalid_body', 'Session administration does not accept a body.');
+        }
+        return { status: 200, body: host.sessions.rotateById(sessionId) };
+      },
+    },
+    {
+      pattern: /^\/v1\/admin\/sessions\/([^/]+)\/revoke$/,
+      allow: ['POST'],
+      handle: async ({ runtime: host, session, req }, params) => {
+        const sessionId = uuidParam(params[1], 'sessionId');
+        await requireSessionAdministration(host, session, sessionId);
+        if (hasRequestBody(req)) {
+          throw new HostHttpError(400, 'invalid_body', 'Session administration does not accept a body.');
+        }
+        return { status: 200, body: host.sessions.revokeById(sessionId) };
       },
     },
     {

@@ -6,6 +6,7 @@ import { AppendOnlyJournal } from './persistence/journal.js';
 import { DurableOperationalStore } from './persistence/operational-store.js';
 import { createLocalExecutionAdapters, type ExecutionLedgerRef } from './execution/index.js';
 import { provisionPolicies, revokePolicies } from './policy-admin.js';
+import { runOperatorSessionCommand } from './operator-session.js';
 import { createHostRuntime } from './runtime.js';
 import { createHostServer } from './server.js';
 
@@ -27,6 +28,9 @@ const USAGE = `Usage:
   aios-host revoke-policy --config <absolute-config-path> --revocation <absolute-revocation-path>
   aios-host compact-journal --config <absolute-config-path> --archive <absolute-archive-path>
   aios-host restore-journal --config <absolute-config-path> --archive <absolute-archive-path>
+  aios-host list-sessions --config <absolute-config-path> --token-file <owner-only-token-file>
+  aios-host rotate-session --config <absolute-config-path> --token-file <owner-only-token-file> --session-id <uuid>
+  aios-host revoke-session --config <absolute-config-path> --token-file <owner-only-token-file> --session-id <uuid>
 `;
 
 function writeStartupFailure(message: string): void {
@@ -115,6 +119,8 @@ async function main(): Promise<void> {
       policy: { type: 'string' },
       revocation: { type: 'string' },
       archive: { type: 'string' },
+      'token-file': { type: 'string' },
+      'session-id': { type: 'string' },
     },
   });
   const command = parsed.positionals[0];
@@ -173,6 +179,14 @@ async function main(): Promise<void> {
       revocationPath: parsed.values.revocation,
     });
     process.stdout.write(`${JSON.stringify({ event: 'policy_revoked', ...result })}\n`);
+    return;
+  }
+  if (command === 'list-sessions' || command === 'rotate-session' || command === 'revoke-session') {
+    process.exitCode = await runOperatorSessionCommand(command, {
+      ...(parsed.values.config === undefined ? {} : { configPath: parsed.values.config }),
+      ...(parsed.values['token-file'] === undefined ? {} : { tokenFile: parsed.values['token-file'] }),
+      ...(parsed.values['session-id'] === undefined ? {} : { sessionId: parsed.values['session-id'] }),
+    });
     return;
   }
   process.stdout.write(USAGE);

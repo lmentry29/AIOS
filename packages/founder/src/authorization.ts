@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy' | 'revoke_policy';
+export type AccessAction = 'intake' | 'dispatch' | 'execute' | 'coordinate' | 'cancel' | 'resume' | 'retry' | 'read_status' | 'read_evidence' | 'administer_policy' | 'revoke_policy' | 'administer_sessions';
+
+const HUMAN_ONLY_ACTIONS: ReadonlySet<AccessAction> = new Set([
+  'administer_policy',
+  'revoke_policy',
+  'administer_sessions',
+]);
 
 export interface AccessRule {
   effect: 'allow' | 'deny';
@@ -233,9 +239,9 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
         if (rule.actions.some((action: string) => !isAccessAction(action))) {
           throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
         }
-        if (rule.actions.some((action: string) => action === 'administer_policy' || action === 'revoke_policy')
+        if (rule.actions.some((action: string) => HUMAN_ONLY_ACTIONS.has(action as AccessAction))
           && rule.subject_ids.some((id: string) => !isHumanPrincipal(id))) {
-          throw new Error(`Access policy "${policy.policy_id}" may grant policy administration only to human principals.`);
+          throw new Error(`Access policy "${policy.policy_id}" may grant administrative actions only to human principals.`);
         }
       }
       this.policies.set(policy.policy_id, Object.freeze({
@@ -534,7 +540,7 @@ function isHumanPrincipal(value: string): boolean {
 }
 
 function isAccessAction(value: string): value is AccessAction {
-  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy', 'revoke_policy'].includes(value);
+  return ['intake', 'dispatch', 'execute', 'coordinate', 'cancel', 'resume', 'retry', 'read_status', 'read_evidence', 'administer_policy', 'revoke_policy', 'administer_sessions'].includes(value);
 }
 
 function isPolicyTargetList(value: unknown): value is string[] {

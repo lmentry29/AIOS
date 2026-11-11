@@ -62,6 +62,34 @@ describe('AuthorizationService', () => {
     }])).toThrow(/human/);
   });
 
+  it('requires an exact human administer_sessions grant', async () => {
+    const adminPolicy: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [actorId],
+        actions: ['administer_sessions'],
+        resource_ids: [resourceId],
+      }],
+    };
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([adminPolicy]),
+      async () => adminPolicy.policy_id,
+      new InMemoryAuthorizationAuditStore(),
+    );
+
+    expect(await auth.authorize({ actor_id: actorId, action: 'administer_sessions', resource_id: resourceId })).toBe(true);
+    expect(await auth.authorize({ actor_id: 'human:other', action: 'administer_sessions', resource_id: resourceId })).toBe(false);
+    expect(await auth.authorize({ actor_id: actorId, action: 'administer_sessions', resource_id: randomUUID() })).toBe(false);
+    const adminRule = adminPolicy.rules[0];
+    if (!adminRule) throw new Error('Session policy fixture rule missing.');
+    expect(() => new StaticAccessPolicyStore([{
+      ...adminPolicy,
+      rules: [{ ...adminRule, subject_ids: [randomUUID()] }],
+    }])).toThrow(/human/);
+  });
+
   it('requires an exact human revoke_policy grant', async () => {
     const adminPolicy: AccessPolicy = {
       policy_id: randomUUID(),
