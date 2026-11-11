@@ -84,5 +84,9 @@ exec and is already inside the read-only `/usr` bind. A shell `ulimit` was rejec
 runs an ordinary Perl process, and drives a Perl memory bomb under real bubblewrap;
 `apps/host/tests/seccomp.test.ts` covers the distinct missing-limit executor/verifier
 rejections. `tools/security/resource-limit-drill.mjs` records the provider evidence and drill
-output in `docs/security/validation-ledger.md`. The pre-existing 9-case boundary suite, the
-3 seccomp cases, and the 2 quota cases are run in the same live suite.
+output in `docs/security/validation-ledger.md`. The 21-case
+`tools/security/adversarial-drill.mjs` additionally exercises CPU/PID exhaustion, orphan
+cleanup under cancellation and timeout, and the surrounding filesystem/network/capability
+boundary; it is a required step in the Security workflow, and a non-zero probe failed that
+job before the real drill passed. The pre-existing 9-case boundary suite, the 3 seccomp
+cases, and the 2 quota cases are run in the same live suite.

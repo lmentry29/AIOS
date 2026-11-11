@@ -3,10 +3,11 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, CI-guarded operator session administration
-over the durable host session lifecycle). Latest security code head: `550d0e5` (the operator
-drill is a required Security-workflow step; the guard landed in `fb7090a`), following
-`27ab654` and `b067501`; its documentation checkpoint follows. Re-check this
+Last updated: 2026-11-11 (Freebuff Cloud session, adversarial sandbox and verifier drill
+after the CI-guarded operator session administration). Latest security code head: `29eb496`
+(the 21-case adversarial drill is a required Security-workflow step; the drill landed in
+`8093095`), following `550d0e5`, `27ab654`, and `b067501`; its documentation checkpoint
+follows. Re-check this
 head rather than older CI lines below. F-009's digest mitigation, F-005's fail-closed
 regression, the bounded canonical collections, and the live bubblewrap controls remain in
 place from `24d2791`/`43e2dd6`.
@@ -16,10 +17,11 @@ place from `24d2791`/`43e2dd6`.
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
+- Verified security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
+- Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `27ab654`; read
+- Documentation checkpoint for this pass: the branch tip after `29eb496`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `7103957` with docs commit `0a1ae66`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
@@ -46,6 +48,9 @@ place from `24d2791`/`43e2dd6`.
   - `27ab654` — human-only operator session administration and executable operator drill
   - `fb7090a` — operator drill added to the Security workflow, with a temporary failure probe
   - `550d0e5` — real drill restored; probe removed after the red run demonstrated exit propagation
+  - `8093095` — 21-case adversarial sandbox and verifier drill, wired into the Security workflow
+  - `c5a4a44` — temporary non-zero probe for adversarial drill failure propagation
+  - `29eb496` — real adversarial drill restored; probe removed
 
 ## Environment notes
 
@@ -795,10 +800,58 @@ rejects more than 64 entries before inspecting values; the generated contract ca
 issue in about 100 ms. The host allowlist and 256 KiB default request-body cap remain defense
 in depth.
 
-Next action: F-013 is closed at `b067501`. Continue with the concrete work below; do not claim
+Next action: the adversarial drill is recorded below; F-013 remains fixed at `b067501`. Continue with the concrete work below; do not claim
 signed policy provenance, macOS isolation, Docker/gVisor execution, or aggregate cgroup
 enforcement until their recorded blockers are cleared. Re-run the full gate and live suite on
 the pushed documentation checkpoint before relying on its CI.
+
+## Completed — adversarial sandbox and verifier drill (`29eb496`)
+
+`tools/security/adversarial-drill.mjs` attempts 21 attacks against the production bubblewrap
+provider, `LocalCommandExecutor`, `ManagedExecutionPort`, durable `ExecutionLedger`, and
+`LocalCommandVerifier`. It uses no test double for the boundary or verification path.
+
+### Covered attacks
+
+- Filesystem: host `/etc/shadow` read, `../../` and `/proc/1/root` traversal, symlink chains,
+  hardlink to a host file, cwd traversal/absolute cwd, and writes to `/etc`, `/usr`, `/root`.
+- Secrets: a planted host environment variable is absent from `env` and
+  `/proc/self/environ`; a host `/tmp` secret is unreachable through `..`, `/proc/1/root`, or
+  the sandbox `/tmp`.
+- Network: a real TCP connect to a host loopback listener fails with zero accepted
+  connections; raw socket creation fails.
+- Capabilities: `CapEff` is zero; the mount syscall is killed with SIGSYS (159); real
+  `chroot` returns `Operation not permitted` (125).
+- Resources: CPU burner terminated at the 3 s deadline under `RLIMIT_CPU=3`/`RLIMIT_NPROC=128`;
+  fork loop creates at most 126 children with 128 namespaced processes and zero survivors;
+  a 64 KiB workspace cap stops a writer and discards the workspace with zero survivors.
+- Processes: cancellation and timeout each leave zero marked child processes.
+- Instruction boundary: hostile Task name/description and an env value are stored/passed
+  literally; the exact argv digest is recorded and hostile text is absent from evidence.
+- Verification: forged executor result rejected by the durable digest; verifier identity equal
+  to an executor rejected; artifact tampering makes the independent verifier exit 1; stale
+  attempt-1 evidence rejected after attempt 2 while attempt 2 is accepted.
+
+### Measured evidence
+
+- Local at `29eb496`: **21/21** cases denied/contained; forced gate **46/46**; host **152
+  passed/17 skipped**; live bubblewrap **17/17**; every existing drill exit 0; audit **0
+  triaged**; secret scan **281 files, no findings**.
+- Probe `c5a4a44`: Security run `42936839536`, job `130248895128`, step 11 failed with
+  `##[error]Process completed with exit code 1.`; step 12 was skipped.
+- Real drill `29eb496`: Security run `42937205409`, job `130250095076`, step 11 passed with 21
+  attack records and `all adversarial cases denied or contained`; step 12 passed. The step is
+  a plain `run:` in the existing live-sandbox job; no permission, action, or isolation change.
+
+### Not claimed
+
+- Docker, Seatbelt, gVisor, and Apple Containerization remain unverified/unavailable.
+- The CPU case was stopped at the deadline, not by a distinct `RLIMIT_CPU` signal; the memory
+  bomb remains covered by `resource-limit-drill.mjs`; disk enforcement is the 25 ms sampler,
+  not a hard quota. The artifact case relies on the Task's independent verification command;
+  there is no host artifact-ingestion API. Instruction smuggling is contained at the host
+  boundary, while F-012's model-level prompt-injection risk remains accepted.
+- F-016 records the coverage gap and its closure; no new code vulnerability was found.
 
 ## Next concrete work
 

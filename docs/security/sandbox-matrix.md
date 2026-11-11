@@ -5,7 +5,7 @@ Primary sources checked 2026-11-10. Versions are the latest published at that da
 
 | Provider | Boundary | Shares host kernel | Unprivileged operation | Resource limits | Network isolation | AIOS evidence |
 |---|---|---|---|---|---|---|
-| bubblewrap 0.13.1 | Namespaces + mounts + capability drop + generated seccomp deny-list; policy is caller-defined | Yes | Yes, user namespaces; setuid mode removed in 0.12.0 | Per-process `RLIMIT_AS` 1.25 GiB, `RLIMIT_CPU` aligned to the deadline, `RLIMIT_NPROC` 128 via `prlimit`; seccomp BPF deny-list; no cgroup aggregate/CPU/memory flags; `--size` bounds only the next tmpfs | `--unshare-net` / `--unshare-all` give loopback-only netns | **Validated** on Linux 6.1.102 with bwrap 0.9.0: 12/12 boundary/limit cases, 3/3 seccomp cases, 2/2 quota drills, and the resource-limit drill (see validation ledger) |
+| bubblewrap 0.13.1 | Namespaces + mounts + capability drop + generated seccomp deny-list; policy is caller-defined | Yes | Yes, user namespaces; setuid mode removed in 0.12.0 | Per-process `RLIMIT_AS` 1.25 GiB, `RLIMIT_CPU` aligned to the deadline, `RLIMIT_NPROC` 128 via `prlimit`; seccomp BPF deny-list; no cgroup aggregate/CPU/memory flags; `--size` bounds only the next tmpfs | `--unshare-net` / `--unshare-all` give loopback-only netns | **Validated** on Linux 6.1.102 with bwrap 0.9.0: 12/12 boundary/limit cases, 3/3 seccomp cases, 2/2 quota drills, the resource-limit drill, and 21/21 adversarial drill cases covering filesystem, secrets, network, capabilities, CPU/PID, orphans, quota, instruction smuggling, and forged/replayed verification (see validation ledger) |
 | Docker Engine 29.9.3 (rootless) | Container: namespaces, cgroups, seccomp, LSMs | Yes | Rootless daemon + userns; needs subuid/subgid mapping | cgroup v2 via `--memory`, `--cpus`, `--pids-limit`; ignored without cgroup v2 + systemd | netns per container; `--network=none` | **Unverified**: CLI present, daemon socket permission denied on the validation host. Adapter tests cover argument construction only |
 | gVisor 20261102.0 (`runsc`) | User-space application kernel (Sentry); second kernel | No guest kernel; minimal host syscalls | Partial: `--rootless` is single-UID, no netstack/create/save-restore | Host cgroups; in-sandbox cgroups do not enforce between processes | netstack; `--network=none` | **Not integrated**: no adapter, no runsc on the host |
 | Apple Containerization 1.7.1 | Per-container VM via Virtualization.framework | No | Per-user CLI after admin install; not Linux-userns rootless | Per-VM `--cpus` / `--memory` (defaults 4 CPU / 1 GB) | vmnet; isolated per-network on macOS 26+ | **Unavailable**: macOS 26 / Apple silicon required |
@@ -51,7 +51,8 @@ probes `io_uring_setup` and is killed by the filter at startup (F-007). The per-
 ceiling is enforced live by the host executor's 25 ms sampler, not by the kernel or the
 provider flags; it is not a hard quota and a fast writer can overshoot between samples
 (ADR-0026). The sandbox `/tmp` is size-bounded to 64 MiB, and the only other writable host
-path is the run workspace.
+path is the run workspace. The 21-case adversarial drill runs as a required step in the
+Security workflow’s live-sandbox job; a non-zero drill exit fails that job.
 
 ## Sources
 

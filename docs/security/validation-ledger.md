@@ -657,3 +657,96 @@ What is verified versus not:
 - **Not changed:** no sandbox, authentication, scope, verifier, policy, or journal behavior was
   modified by this pass. The operator-surface residuals in ADR-0030 (bearer operator token
   without step-up/MFA, loopback HTTP, one-time rotation delivery, single-process state) remain.
+
+## 2026-11-11 — Adversarial sandbox and verifier drill (`29eb496`)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. This pass adds `tools/security/adversarial-drill.mjs`, which
+attempts hostile operations against the production provider, executor, durable execution
+ledger, and verifier. No attack uses a test double: every boundary case calls
+`createSandboxProvider({ provider: 'bubblewrap' })`; the verification cases use
+`ManagedExecutionPort`, `DurableOperationalStore`, the durable `ExecutionLedger`, and
+`LocalCommandVerifier`.
+
+Commands actually run, in this order:
+
+```sh
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+for d in resource-limit workspace-quota seccomp collection-bound session-operator journal; do
+  AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/$d-drill.mjs
+done
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/adversarial-drill.mjs
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+```
+
+Observed at `29eb496`: **21/21 cases `denied:true`**, final result
+`all adversarial cases denied or contained`.
+
+| # | Attack | Measured denial or containment |
+|---|---|---|
+| 1 | Host file read (`/etc/shadow`) | exit 1; no `root:` bytes; filter SHA-256 `12e5ae01…1fbaac` applied |
+| 2 | Path traversal (`../../etc/shadow`, `/workspace/../etc/shadow`, `/proc/1/root/etc/shadow`) | exit 1; no shadow content |
+| 3 | Symlink chain to `/etc/shadow` | exit 1; no shadow content |
+| 4 | Hardlink `/etc/shadow` into `/workspace` | `rc=1`; no host-file link created |
+| 5 | Task cwd `../../etc` and absolute cwd | `HostExecutionError` before spawn; no marker file |
+| 6 | Writes to `/etc`, `/usr`, `/root` | no `wrote:` line; all host paths unchanged |
+| 7 | Host environment secret | absent from `/usr/bin/env` and `/proc/self/environ`; only `LANG=C` declared |
+| 8 | Host `/tmp` secret via `..`, `/proc/1/root`, and `/tmp` | secret bytes absent |
+| 9 | TCP connect to a real host loopback listener | exit 1; listener accepted 0 connections |
+| 10 | Raw socket without capabilities | exit 2; no raw-socket-open output |
+| 11 | Capability/privilege escalation | `CapEff: 0`; mount syscall exit 159/SIGSYS; real `chroot` exit 125, `Operation not permitted` |
+| 12 | CPU exhaustion | run with `RLIMIT_CPU` 3 s and `RLIMIT_NPROC` 128; burner stopped at 3,005 ms (`timedOut`, SIGKILL) |
+| 13 | Fork/PID exhaustion | 126 children created, 128 namespaced processes, 0 marked survivors |
+| 14 | Cancellation orphan cleanup | `cancelled:true`; 0 marked survivors after 300 ms |
+| 15 | Timeout orphan cleanup | `timedOut:true`; 0 marked survivors after 300 ms |
+| 16 | Disk exhaustion (64 KiB cap) | `WorkspaceQuotaExceededError`; 0 workspace entries; 0 marked survivors |
+| 17 | Instruction smuggling in Task name/description/env | exact `argv_sha256`; env value stored literally (89 bytes); output `safe`; hostile text absent from evidence |
+| 18 | Forged executor result | rejected: `The executor result does not match the durable attempt evidence.` |
+| 19 | Self-issued verification | rejected before running: verifier must be independent from every executor |
+| 20 | Artifact tampering after execution | independent verifier exited 1 instead of 0; `accepted:false` |
+| 21 | Stale attempt-1 evidence after attempt 2 | attempt 1 rejected by the latest-attempt digest; attempt 2 accepted |
+
+The drill’s CPU case proves the deadline/limit terminates the workload; the separate
+`ulimit -t` probe and `resource_limit_cpu_seconds:3` evidence prove the exact limit was
+installed. The memory-exhaustion case remains covered by `resource-limit-drill.mjs`.
+
+- Full workspace gate, forced with no cache: **46/46 tasks successful**; host **152 passed,
+  17 skipped**; founder **63**; core **51**; conformance **107**; integration **43**; objects
+  **32**; orchestration **30**; tools **9**; work-hierarchy **24**; containers **21**;
+  learning **28**; agents **6**. Counts are unchanged from `550d0e5`; no assertion was removed.
+- Live bubblewrap suite: **17/17 passed**. Resource-limit, workspace-quota, seccomp,
+  collection-bound, session-operator, and journal drills all exit **0**; adversarial drill
+  **21/21**, exit **0**.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)`; `secret-scan: no
+  findings across 281 tracked files`.
+
+CI evidence, read from the actual jobs and step logs:
+
+- **Failure propagation, probe head `c5a4a44`:** Security run `42936839536`, job
+  `130248895128` (`Live sandbox boundary`) concluded `failure`; step 11
+  `Run AIOS_BWRAP_DIR=... node tools/security/adversarial-drill.mjs` concluded `failure`, and
+  the step log ended with `##[error]Process completed with exit code 1.` Step 12 (operator
+  drill) was skipped. The probe was removed in `29eb496`.
+- **Real drill, final code head `29eb496`:** Security run `42937205409`, job `130250095076`
+  concluded `success`; step 11 concluded `success`. The step log contains 21 `"attack"`
+  records and the final `"result":"all adversarial cases denied or contained"`; step 12 also
+  passed. The drill step was added in the existing `sandbox-live` job in the same plain
+  `run:` pattern, with no workflow permission, action, or isolation change.
+
+What is verified versus not:
+
+- **Verified:** the listed filesystem, secret, network, capability, resource, orphan,
+  instruction-boundary, and verification attacks were denied or contained by the real
+  production path; the CI step fails the job on a non-zero drill exit and passes the real
+  21-case drill on the final head.
+- **Not claimed / local-only:** Docker, Seatbelt, gVisor, and Apple Containerization remain
+  unverified or unavailable; the CPU case was terminated at the deadline rather than by a
+  distinct `RLIMIT_CPU` signal; the memory bomb is covered by the existing resource-limit
+  drill, not repeated; disk enforcement is the 25 ms sampler, not a hard quota; the artifact
+  case relies on the Task's independent verification command because there is no host
+  artifact-ingestion API; and the instruction-smuggling case proves Task metadata/env are data
+  at the host boundary, not that a model cannot be influenced by hostile content (F-012
+  remains accepted). See F-016 for the coverage-gap closure.
