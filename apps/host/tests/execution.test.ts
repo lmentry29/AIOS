@@ -196,6 +196,7 @@ if (args[0] === 'inspect') {
   const source = /src=([^,]+)/.exec(mount)?.[1] ?? '/tmp/fake-workspace';
   const cpuArg = saved.find((entry) => entry.startsWith('cpu=')) ?? 'cpu=1:1';
   const cpu = Number(cpuArg.split('=')[1].split(':')[0]);
+  const seccomp = saved.find((entry) => entry.startsWith('seccomp=')) ?? 'seccomp=unknown';
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
   const gid = typeof process.getgid === 'function' ? process.getgid() : 0;
   console.log(JSON.stringify({
@@ -204,7 +205,7 @@ if (args[0] === 'inspect') {
       ReadonlyRootfs: true,
       NetworkMode: 'none',
       CapDrop: ['ALL'],
-      SecurityOpt: ['no-new-privileges:true', 'seccomp=/tmp/fake-seccomp.json'],
+      SecurityOpt: ['no-new-privileges:true', seccomp],
       PidsLimit: 128,
       Memory: 536870912,
       MemorySwap: 536870912,

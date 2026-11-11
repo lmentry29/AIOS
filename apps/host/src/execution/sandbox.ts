@@ -312,7 +312,7 @@ class DockerSandbox implements SandboxProvider {
       // self-report: read-only root, no network, dropped capabilities, no-new-privileges,
       // cgroup memory/PID/CPU limits, per-process rlimits, workspace mount, and non-root UID.
       const before = await this.inspect(containerName);
-      const controls = this.controlEvidence(before, workspace, profile, cpuSeconds, user);
+      const controls = this.controlEvidence(before, workspace, profile, profilePath, cpuSeconds, user);
       if (!controls.filter.applied) {
         throw new SandboxFilterUnavailableError(
           `The Docker seccomp profile was not active: ${controls.filter.reason ?? 'no filter evidence'}.`,
@@ -370,6 +370,7 @@ class DockerSandbox implements SandboxProvider {
     inspected: DockerInspect,
     workspace: string,
     profile: DockerSeccompProfile,
+    profilePath: string,
     cpuSeconds: number,
     user: string | undefined,
   ): { filter: SandboxFilterEvidence; limits: SandboxResourceLimitEvidence } {
@@ -381,7 +382,7 @@ class DockerSandbox implements SandboxProvider {
       (entry) => entry.Name === name && entry.Soft === value && entry.Hard === value,
     );
     const mount = (inspected.Mounts ?? []).find((entry) => entry.Destination === '/workspace');
-    const seccompApplied = security.some((entry) => entry.startsWith('seccomp=') && entry !== 'seccomp=unconfined');
+    const seccompApplied = security.includes(`seccomp=${profilePath}`);
     const checks: Array<[string, boolean]> = [
       ['read-only root filesystem', host.ReadonlyRootfs === true],
       ['network none', host.NetworkMode === 'none'],
@@ -408,7 +409,7 @@ class DockerSandbox implements SandboxProvider {
         profile: profile.profile,
         sha256: profile.sha256,
         applied: seccompApplied,
-        ...(seccompApplied ? {} : { reason: 'the custom seccomp profile is absent from HostConfig.SecurityOpt' }),
+        ...(seccompApplied ? {} : { reason: 'the generated seccomp profile path is absent from HostConfig.SecurityOpt' }),
       },
       limits: {
         memory_bytes: DOCKER_MEMORY_BYTES,
