@@ -46,13 +46,20 @@ Founder Intelligence vault's own access controls.
   access, credential reads, fork/exec floods, or leaving background processes behind.
 - A caller without the exact grant attempting to read, mutate, cancel, or verify protected work.
 - A local attacker able to modify journal files out of band (detected, not prevented, by the
-  hash chain) or to replace a provider binary (out of scope without signed tooling).
+  hash chain) or to replace a provider binary. The gVisor provider now checks a repository pin
+  and hashes the actual runtime and rootfs; those checks detect accidental substitution, but
+  the pin/manifest are unsigned and a host writer can replace both before execution.
 
 ## Explicit non-goals / residual risk
 
 - **Shared-kernel isolation.** bubblewrap and Docker do not survive a host-kernel exploit.
-  gVisor is now measured (ADR-0032), but it is a user-space kernel, not a VM; a VM boundary is
-  still not validated in this repository.
+  gVisor is measured (ADR-0032) and its runtime/rootfs are digest-verified, but it is a
+  user-space kernel, not a VM; a VM boundary is still not validated in this repository.
+- **Sandbox supply chain.** The gVisor release archive is pinned by SHA-512 and the extracted
+  `runsc` by SHA-256; CI requires a reproducible rootfs manifest. The pin file and manifest are
+  unsigned, the base image tag and apt package versions are not pinned, and the manifest omits
+  ownership/timestamps. A malicious host writer or upstream compromise is outside the workload
+  boundary.
 - **System-call attack surface.** bubblewrap now installs a generated seccomp deny-list
   (ADR-0027) that kills ptrace, mount/namespace, keyring/module, bpf/perf, io_uring,
   userfaultfd, and related syscalls. It is a deny-list, not a complete allow-list: unlisted
@@ -74,9 +81,10 @@ Founder Intelligence vault's own access controls.
   `disk_quota_exceeded` (ADR-0026). It is **not a hard filesystem quota**: a fast writer can
   overshoot between samples, symlinks are skipped, hardlinks are counted per name, and writes
   outside `/workspace` (for example other tmpfs paths) are not attributed to the run. There is
-  no unprivileged block/loop quota on this host. Docker provider has cgroup flags but was not
-  executable on the validation host. Node/libuv probes `io_uring_setup` and is killed by the
-  F-007 deny-list at startup; that compatibility residual is recorded in the findings ledger.
+  no unprivileged block/loop quota on this host. Docker has measured aggregate cgroup limits;
+  gVisor uses Sentry-enforced OCI rlimits and has no host aggregate cgroup. Node/libuv probes
+  `io_uring_setup` and is killed by the F-007 deny-list at startup; that compatibility residual
+  is recorded in the findings ledger.
 - **macOS.** `sandbox-exec` is deprecated; a supported macOS path requires Apple
   Containerization on macOS 26 / Apple silicon, which is not implemented or validated here.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor

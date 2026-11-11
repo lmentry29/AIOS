@@ -497,14 +497,15 @@ incident procedure, ordering, restart expectations, and remaining limits.
   suppression are proven only against the labelled `stub-container` double, not a real
   container runtime.
 - **Execution and verification.** The fixed `local.exec` path exists for Docker,
-  bubblewrap, and macOS Seatbelt. It is not a general capability runtime; coordination is
+  bubblewrap, gVisor, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured
   principal plus a separately executed command, but there is no signed verifier decision,
   key rotation, or protection against a compromised host process. Bubblewrap installs a
   generated seccomp deny-list before exec (ADR-0027) and per-process RLIMIT limits (ADR-0028),
   but still lacks aggregate cgroup accounting, has no active Landlock profile, and is suitable
   only for trusted local commands; Docker and gVisor are measured in CI
-  (ADR-0031/ADR-0032); Seatbelt remains unverified.
+  (ADR-0031/ADR-0032), and gVisor now verifies a repository-pinned runtime and canonical
+  rootfs digest before use; Seatbelt remains unverified.
 - **Live integrations.** Vault, Gmail, and Notion readers are composed but untested against
   real services; per-note vault authorization remains collection-level.
 - **Founder experience.** The API is usable; there is no UI, and no Mission/Objective

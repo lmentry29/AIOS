@@ -2,13 +2,14 @@
 
 Primary sources checked 2026-11-11. Versions are the latest published at that date. The
 “AIOS evidence” column is deliberately separate from vendor claims. Bubblewrap is validated
-locally; Docker and gVisor were measured in the Security workflow at `54344f1`.
+locally; Docker and gVisor were measured in the Security workflow at `ef02f27`, including the
+repository-pinned gVisor runtime and a reproducible rootfs digest.
 
 | Provider | Boundary | Shares host kernel | Unprivileged operation | Resource limits | Network isolation | AIOS evidence |
 |---|---|---|---|---|---|---|
 | bubblewrap 0.13.1 | Namespaces + mounts + capability drop + generated seccomp deny-list; policy is caller-defined | Yes | Yes, user namespaces; setuid mode removed in 0.12.0 | Per-process `RLIMIT_AS` 1.25 GiB, `RLIMIT_CPU` aligned to the deadline, `RLIMIT_NPROC` 128 via `prlimit`; seccomp BPF deny-list; no cgroup aggregate/CPU/memory flags; `--size` bounds only the next tmpfs | `--unshare-net` / `--unshare-all` give loopback-only netns | **Validated** on Linux 6.1.102 with bwrap 0.9.0: 12/12 boundary/limit cases, 3/3 seccomp cases, 2/2 quota drills, the resource-limit drill, and 21/21 adversarial drill cases covering filesystem, secrets, network, capabilities, CPU/PID, orphans, quota, instruction smuggling, and forged/replayed verification (see validation ledger) |
-| Docker Engine 28.0.4 (GitHub-hosted runner; **rootful** daemon measured) | Container: namespaces, cgroups, custom seccomp, read-only rootfs, dropped capabilities, no-new-privileges | Yes | Opt-in daemon container; workload runs as host UID/GID (non-root); daemon access is an operator prerequisite | cgroup v2 `--memory` 512 MiB (equal `--memory-swap`), `--cpus` 1, `--pids-limit` 128; deadline-aligned `--ulimit cpu`; **no `RLIMIT_AS`**, because Docker's CLI rejects `--ulimit as` | `--network=none`; container loopback only | **Validated** in CI at `54344f1` (Security run `42946929104`, live job `130281855560`, Docker step 13): 21/21 adversarial cases; engine `28.0.4`, `rootless:false`, daemon security options `name=apparmor`, `name=seccomp,profile=builtin`, `name=cgroupns`; kernel `7.0.0-1017-azure`. Local daemon remains blocked by socket permission; rootless Docker not measured |
-| gVisor 20261102.0 (`runsc`) | User-space application kernel (Sentry) + gofer; OCI rootfs; no workload on host kernel syscall path | No guest kernel; the Sentry/gofer still use the host kernel | Partial: `--rootless` single-UID, no netstack; no save/restore; operator-supplied rootfs | OCI `RLIMIT_AS` 512 MiB, deadline-aligned `RLIMIT_CPU`, `RLIMIT_NPROC` 128, `RLIMIT_NOFILE` 1024, enforced by the Sentry; no host cgroup; workspace disk is the 25 ms sampler | `--network=none`; private network namespace; no netstack in this mode | **Validated** in CI at `54344f1` (Security run `42946929104`, live job `130281855560`, gVisor steps 14–16): `runsc release-20261102.0`, rootless `true`, kernel `7.0.0-1017-azure`, **21/21** adversarial cases through provider → executor → managed port → durable ledger → verifier. Controlled rootfs, PID 1, `CapEff=0`, no host bind; local minimal-rootfs drill also 21/21 |
+| Docker Engine 28.0.4 (GitHub-hosted runner; **rootful** daemon measured) | Container: namespaces, cgroups, custom seccomp, read-only rootfs, dropped capabilities, no-new-privileges | Yes | Opt-in daemon container; workload runs as host UID/GID (non-root); daemon access is an operator prerequisite | cgroup v2 `--memory` 512 MiB (equal `--memory-swap`), `--cpus` 1, `--pids-limit` 128; deadline-aligned `--ulimit cpu`; **no `RLIMIT_AS`**, because Docker's CLI rejects `--ulimit as` | `--network=none`; container loopback only | **Validated** in CI at `ef02f27` (Security run `42950936794`, live job `130294805697`, Docker step 13): 21/21 adversarial cases; engine `28.0.4`, `rootless:false`, daemon security options `name=apparmor`, `name=seccomp,profile=builtin`, `name=cgroupns`; kernel `7.0.0-1017-azure`. Local daemon remains blocked by socket permission; rootless Docker not measured |
+| gVisor 20261102.0 (`runsc`) | User-space application kernel (Sentry) + gofer; OCI rootfs; no workload on host kernel syscall path | No guest kernel; the Sentry/gofer still use the host kernel | Partial: `--rootless` single-UID, no netstack; no save/restore; repository-pinned runtime, reproducible rootfs | OCI `RLIMIT_AS` 512 MiB, deadline-aligned `RLIMIT_CPU`, `RLIMIT_NPROC` 128, `RLIMIT_NOFILE` 1024, enforced by the Sentry; no host cgroup; workspace disk is the 25 ms sampler | `--network=none`; private network namespace; no netstack in this mode | **Validated** in CI at `ef02f27` (Security run `42950936794`, live job `130294805697`, gVisor steps 14–17): `runsc release-20261102.0`, extracted binary SHA-256 `c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098`, release archive SHA-512 `2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05`, pin SHA-256 `20c017d90727d32cffa931219f68a336d639f97ac234087190984312a5b9bd2c`; rootfs `c7004df1b39c4778ae93de9bde5303d09bc8a8b365225c7bbb2da693f28d7f05` (6,221 entries, manifest `b8115b66a817f06f7939a968e0b30ffae5132ecb9fb1a2f0a27434669aced186`, image ID `sha256:3ee869b8eab21408d36f4b898240f5d966a568f541eeb28e34cba65732a9174c`, Dockerfile SHA-256 `b3bff35269be52a05317b32755e54eeb0e4197bdeb03002c7d6772c9be86ab8b`, double export identical), **21/21** adversarial cases through provider → executor → managed port → durable ledger → verifier, kernel `7.0.0-1017-azure`. Controlled rootfs, PID 1, `CapEff=0`, no host bind; local minimal-rootfs drill also 21/21 (rootfs `2e7a3eba09cfbba65babc0566e10c70c5b9dd028f64d951a63483bb3a9f9caca`, 2,693 entries). A tampered archive and missing pin both failed closed before any drill case ran |
 | Apple Containerization 1.7.1 | Per-container VM via Virtualization.framework | No | Per-user CLI after admin install; not Linux-userns rootless | Per-VM `--cpus` / `--memory` (defaults 4 CPU / 1 GB) | vmnet; isolated per-network on macOS 26+ | **Unavailable**: macOS 26 / Apple silicon required |
 | macOS Seatbelt (`sandbox-exec`) | Sandbox profile applied by the kernel | Yes | Yes | None | `(deny network*)` in profile | **Unavailable and deprecated**: Apple ships but deprecates `sandbox-exec`; no removal date or CLI replacement published. The host fails closed when the probe is unavailable, covered by `apps/host/tests/execution.test.ts`; real macOS execution is unverified |
 
@@ -28,7 +29,9 @@ locally; Docker and gVisor were measured in the Security workflow at `54344f1`.
   never the host-root-mounting `runsc do` convenience. It has no host cgroup for the workload;
   its OCI rlimits are enforced inside the Sentry. gVisor is not the default because it adds a
   runtime binary, a separately maintained rootfs, rootless single-UID constraints, and
-  compatibility/performance cost, and its supply chain is operator-owned.
+  compatibility/performance cost. The runtime is now repository-pinned and the rootfs is
+  constructed from an in-repo recipe with a reproducible digest manifest, but the base image
+  tag and apt package versions are not pinned and neither artifact is signed.
 - Docker uses `create` → inspect → `start --attach` → cleanup, not `docker run`, so the
   daemon's reported controls are checked before execution and the named container is killed
   and removed on every exit path. The daemon's non-default seccomp report and the generated
@@ -104,12 +107,17 @@ marker and fails the case.
   rootfs lacks that host credential file; it does not prove a host `/etc` bind is absent.
   Docker shares the host kernel and is not a VM or gVisor-class boundary.
 - **gVisor:** rootless single-UID mapping, no netstack, and no save/restore are measured
-  constraints. The rootfs is operator-supplied and neither signed nor digest-attested;
-  `runsc` is pinned and SHA-512-checked but not Sigstore-verified. There is no host cgroup for
-  the workload; OCI rlimits are enforced by the Sentry. gVisor is a user-space kernel, not a
-  VM, and shares the host kernel through the Sentry/gofer. The measured CPU burner ended with
-  `SIGKILL` at the deadline, not `SIGXCPU`; case 1 proves the rootfs lacks `/etc/shadow`, not
-  that an arbitrary operator rootfs is trustworthy.
+  constraints. `runsc` is fetched from the release URL pinned by the repository and checked
+  against the pinned SHA-512 and extracted SHA-256 before use; the provider also hashes the
+  actual executable and canonical rootfs on every check/run. CI builds the rootfs twice from
+  `aios-sandbox:local` and requires identical content digests, and the drill requires the
+  manifest to match. Neither the pin nor the rootfs is Sigstore-signed; the pin file itself is
+  an unsigned repository trust anchor, the base `debian:bookworm-slim` tag and apt package
+  versions are not pinned, and a host writer can replace the runtime/rootfs after hashing.
+  There is no host cgroup for the workload; OCI rlimits are enforced by the Sentry. gVisor is a
+  user-space kernel, not a VM, and shares the host kernel through the Sentry/gofer. The measured
+  CPU burner ended with `SIGKILL` at the deadline, not `SIGXCPU`; case 1 proves the rootfs lacks
+  `/etc/shadow`, not that an arbitrary operator rootfs is trustworthy.
 - Docker has no `RLIMIT_AS`; bubblewrap has one. Docker has aggregate cgroup memory/CPU/PID
   limits; bubblewrap has per-process rlimits and no aggregate accounting. gVisor has Sentry
   OCI rlimits and no host aggregate.
@@ -119,7 +127,9 @@ marker and fails the case.
   (F-007). This is a bubblewrap policy detail, not a gVisor claim.
 - The 21-case adversarial drill runs as a required step against bubblewrap, Docker, and gVisor
   in the Security workflow; each failing case fails the job. The Docker image build and gVisor
-  install/rootfs export are separate setup steps in the same live-sandbox job.
+  install/rootfs export are separate setup steps in the same live-sandbox job. The required
+  fail-closed step deliberately tampers with an archive and omits the pin; either acceptance
+  would fail the job.
 - Real macOS Seatbelt, Apple Containerization remain unverified or unavailable; gVisor is
   measured only on Linux (CI kernel `7.0.0-1017-azure` and local `6.1.102`).
 

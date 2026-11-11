@@ -972,8 +972,10 @@ sandboxing or verification.
   subuid/subgid, and netstack are not measured. The measured network mode is `--network=none`.
 - The OCI rlimits are enforced by the Sentry; there is no host cgroup aggregate for the
   workload. The workspace disk control remains the executor's 25 ms sampler, not a hard quota.
-- `runsc` is pinned and SHA-512-verified in CI, but the runtime and rootfs are not Sigstore
-  signed or digest-attested by this repository. The operator owns rootfs provenance.
+- `runsc` is pinned and SHA-512/SHA-256-verified in CI, and the rootfs is reproducible from the
+  in-repo Docker recipe with a canonical manifest. Neither the pin nor the manifest is Sigstore
+  signed; the base image tag/apt versions are not pinned, and manifest metadata excludes
+  ownership/timestamps.
 - gVisor is a user-space kernel, not a VM; the Sentry/gofer still use the host kernel. A
   Sentry or host-kernel vulnerability remains in scope.
 - The CPU burner ended by deadline `SIGKILL`, not a distinct `SIGXCPU`; the OCI CPU rlimit was
@@ -983,7 +985,123 @@ sandboxing or verification.
 - Seatbelt and Apple Containerization remain unavailable/unverified. Docker rootless mode and
   signed/digest-pinned Docker images remain unverified.
 
-At the same code head, `ci` run `42946929409`, `conformance` run `42946929289`, and
-`schema-check` run `42946929280` were green. The final documentation checkpoint is the branch tip
-after `54344f1`; read `git log --oneline -3` for that docs SHA and re-check the exact-head
-workflow runs rather than treating this line as covering a later tree.
+## 2026-11-11 — pinned gVisor runtime and reproducible rootfs (`ef02f27`)
+
+Code head `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`) closes the
+accidental-substitution gap recorded in F-017. The gVisor provider now reads a repository-owned
+pin, verifies the release archive and extracted binary, hashes the actual executable and
+canonical rootfs on every check/run, and records all measured provenance in executor and
+verifier evidence. The drill requires `AIOS_GVISOR_ROOTFS_MANIFEST` and compares the measured
+rootfs digest and entry count before any case. There is no alternative-provider or bare-process
+fallback.
+
+### CI runtime and rootfs measurements
+
+Security run `42950936794`, live job `130294805697`, kernel `7.0.0-1017-azure`. Steps 14–17:
+
+- Step 14, install pinned runtime. Observed:
+
+```json
+{"release":"20261102.0","version":"release-20261102.0","artifact_sha512":"2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05","binary_sha256":"c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098","pin_sha256":"20c017d90727d32cffa931219f68a336d639f97ac234087190984312a5b9bd2c","runsc":"/home/runner/work/_temp/gvisor/runsc"}
+```
+
+- Step 15, required fail-closed probe. Both checks failed in the required direction, and the step
+  was successful only because neither verification was accepted:
+
+```text
+ gVisor provenance error: The gVisor runtime archive does not match the pinned SHA-512 (expected 2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05, observed aa46d5d28e34d6cc14e574cbbc35b2d5485e2b481bb79e4d33fdb85c58cd7389f097be0a2d77df46eb1e13de47cf3012db24c4c5dd1d908ce79c86a295991780).
+ gVisor provenance error: The gVisor runtime pin file does not exist: /home/runner/work/_temp/missing-gvisor.pin.json.
+ observed fail-closed provenance errors
+```
+
+If either verification had succeeded, the step would have printed the acceptance message and
+exited 1; a `set -euo pipefail` grep also fails the step if the expected error text is absent.
+
+- Step 16, reproducible rootfs. Observed:
+
+```json
+{"rootfs_sha256":"c7004df1b39c4778ae93de9bde5303d09bc8a8b365225c7bbb2da693f28d7f05","entries":6221,"image":"aios-sandbox:local","image_id":"sha256:3ee869b8eab21408d36f4b898240f5d966a568f541eeb28e34cba65732a9174c","reproducible":{"sha256":"c7004df1b39c4778ae93de9bde5303d09bc8a8b365225c7bbb2da693f28d7f05","entries":6221},"manifest":"/home/runner/work/_temp/gvisor-rootfs.manifest.json"}
+```
+
+The manifest digest was
+`b8115b66a817f06f7939a968e0b30ffae5132ecb9fb1a2f0a27434669aced186`. Its source metadata
+records `debian:bookworm-slim`, Dockerfile SHA-256
+`b3bff35269be52a05317b32755e54eeb0e4197bdeb03002c7d6772c9be86ab8b`, packages `perl`,
+`coreutils`, and `util-linux`, exclusions `/etc/shadow` and `/etc/gshadow`, and the construction
+`docker create` → `docker export --output` → `tar -xf`. The second export produced the same
+digest and entry count.
+
+- Step 17, gVisor drill. Result `all adversarial cases denied or contained`; runtime
+  `release-20261102.0`, rootless `true`; every case carried runtime
+  `c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098`, rootfs
+  `c7004df1b39c4778ae93de9bde5303d09bc8a8b365225c7bbb2da693f28d7f05`, and provenance digest
+  `ce8ac1c8f9e725e656e530c11446b6bc928b3aa121878fe29c3f3639d875f5cc`.
+
+### Per-case gVisor results from `ef02f27`
+
+| # | Attack | Observed result |
+|---|---|---|
+| 1 | `filesystem_host_file_read` | denied; exit 1; controlled OCI rootfs, no host bind |
+| 2 | `filesystem_path_traversal` | denied; exit 1; no shadow content |
+| 3 | `filesystem_symlink_chain` | denied; exit 1; `stderr_sha256 f4519b2c…` |
+| 4 | `filesystem_hardlink_denied` | denied; `rc=1`; no host-file link |
+| 5 | `filesystem_cwd_traversal` | denied; rejected before spawn |
+| 6 | `filesystem_write_outside` | denied; exit 2; no `wrote:` marker |
+| 7 | `secrets_host_environment` | denied; only `LANG=C`; host value absent |
+| 8 | `secrets_host_file_unmounted` | denied; host secret bytes absent |
+| 9 | `network_host_loopback_connect` | denied; exit 1; listener accepted 0 connections |
+| 10 | `network_raw_socket_denied` | denied; exit 2; no success output |
+| 11 | `capabilities_privilege_escalation` | denied; `CapEff: 0`; mount EPERM/exit 1; chroot exit 125, `Operation not permitted` |
+| 12 | `resource_cpu_exhaustion` | contained; `SIGKILL`, timed out at 3,007 ms |
+| 13 | `resource_pid_exhaustion` | contained; 127 children, 128 namespaced, 0 marked survivors |
+| 14 | `process_orphan_cancel` | contained; cancelled, 0 marked survivors |
+| 15 | `process_orphan_timeout` | contained; timed out, 0 marked survivors |
+| 16 | `resource_disk_exhaustion` | contained; 0 workspace entries, 0 survivors |
+| 17 | `injection_task_metadata` | contained; exact argv digest, 89-byte env literal, output `safe` |
+| 18 | `verification_forged_executor_result` | rejected: `The executor result does not match the durable attempt evidence.` |
+| 19 | `verification_self_issued` | rejected before running; verifier must be independent |
+| 20 | `verification_artifact_tampering` | rejected; verifier exit 1, `accepted:false` |
+| 21 | `verification_stale_replay` | stale attempt rejected; latest attempt accepted |
+
+### Local checks at the same tree
+
+Commands actually run locally at code head `ef02f27`:
+
+```sh
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/adversarial-drill.mjs
+AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS=/tmp/aios-gvisor-rootfs-clean \
+  AIOS_GVISOR_ROOTFS_MANIFEST=/tmp/aios-gvisor-rootfs-clean.local.manifest.json \
+  PATH="/tmp/gvisor-install:$PATH" node tools/security/adversarial-drill.mjs
+```
+
+Observed: full workspace gate **46/46** tasks, **0 cached**; host **165 passed / 17 skipped**;
+bubblewrap adversarial **21/21**; gVisor adversarial **21/21** with `runsc
+release-20261102.0`, rootfs
+`2e7a3eba09cfbba65babc0566e10c70c5b9dd028f64d951a63483bb3a9f9caca` (2,693 entries), and the
+same pin/runtime as CI. The local rootfs is a disposable minimal build, not the Docker recipe;
+its manifest source is empty. The local Docker daemon is still unreachable
+(`permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`),
+so the double-export reproducibility check is CI-only.
+
+### What this run does not establish
+
+- The pin file, manifest, release, and rootfs are not Sigstore-signed. A host writer can replace
+  the pin, runtime, or rootfs before or after hashing; the repository pin is an unsigned trust
+  anchor.
+- The base image is `debian:bookworm-slim` by tag, and apt package versions are not pinned. The
+  image ID/Dockerfile/rootfs digests prove the content actually used in this run, not that a
+  rebuild from the same tag on another date is identical (F-018).
+- The canonical manifest covers path, type, mode, size, file SHA-256, and symlink target, not
+  uid/gid, timestamps, xattrs, or host mount provenance.
+- Rootless gVisor remains single-UID, no netstack, and no save/restore; there is no host cgroup
+  aggregate, disk remains the 25 ms sampler, and the CPU burner ended by deadline `SIGKILL`. It
+  is not a VM.
+- Docker rootless mode, signed Docker images, Seatbelt, and Apple Containerization remain
+  unverified or unavailable.
+
+At the same code head, `ci` run `42950936687`, `conformance` run `42950936691`, and
+`schema-check` run `42950936700` were green; Security run `42950936794` passed both jobs. The
+Release workflow is `workflow_dispatch`-only and is not a pull-request check. The documentation
+checkpoint follows this code head; read `git log --oneline -3` for the exact tip and re-check the
+exact-head workflow runs rather than treating this line as covering a later tree.
