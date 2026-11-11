@@ -26,10 +26,6 @@ if (!existsSync(cliPath)) {
   process.exit(1);
 }
 
-// TEMPORARY CI failure-propagation probe; removed in the immediate follow-up commit.
-console.error(JSON.stringify({ drill: 'session-operator', ok: false, error: 'intentional CI failure-propagation probe' }));
-process.exit(1);
-
 const FOUNDER = 'human:founder';
 const OPERATOR = 'human:operator';
 const AGENT_ID = '00000000-0000-4000-8000-000000000301';
