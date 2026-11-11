@@ -125,7 +125,7 @@ function main() {
       key_id: keyIdForPublicKey(publicKeyPem),
       source: {
         repository: requiredEnvironment('GITHUB_REPOSITORY'),
-        commit: requiredEnvironment('GITHUB_SHA'),
+        commit: flag('commit', false) ?? requiredEnvironment('GITHUB_SHA'),
         ref: requiredEnvironment('GITHUB_REF'),
         event: requiredEnvironment('GITHUB_EVENT_NAME'),
         workflow_ref: workflowRef,
