@@ -60,7 +60,7 @@ describe('canonical execution evidence', () => {
 
     expect(() => canonicalEvidenceJson({ value: BigInt(1) })).toThrow(/plain object/);
     expect(() => canonicalEvidenceJson({ value: Number.NaN })).toThrow(/not finite/);
-    expect(() => canonicalEvidenceJson({ value: 'a'.repeat(9000) })).toThrow(/too long/);
+    expect(() => canonicalEvidenceJson({ value: 'a'.repeat(20_000) })).toThrow(/too long/);
     expect(() => canonicalEvidenceJson({ value: Array.from({ length: 300 }, () => 1) })).toThrow(/too many entries/);
 
     const cyclic: Record<string, unknown> = {};
