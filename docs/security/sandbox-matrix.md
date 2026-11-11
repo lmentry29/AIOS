@@ -148,3 +148,11 @@ action pin, timeout, or severity was changed for the gVisor run.
 - gVisor security model: <https://gvisor.dev/docs/architecture_guide/security/> · rootless: <https://gvisor.dev/docs/user_guide/rootless/> · platforms: <https://gvisor.dev/docs/architecture_guide/platforms/> · install: <https://gvisor.dev/docs/user_guide/install/>
 - Apple Containerization: <https://github.com/apple/containerization> · technical overview: <https://github.com/apple/container/blob/main/docs/technical-overview.md>
 - Apple App Sandbox: <https://developer.apple.com/documentation/security/app-sandbox>
+
+## Signed artifacts (2026-11-11)
+
+gVisor, all platforms: the runtime pin and rootfs manifest must verify against the configured
+trust root before use, and the signed rootfs digest must equal the measured and executed
+rootfs. With the repository's unprovisioned (empty) trust root the provider is unavailable;
+CI and drills supply a run-scoped trust root to exercise the offline chain. This row does not
+imply keyless identity or SLSA provenance.

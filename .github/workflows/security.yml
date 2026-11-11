@@ -85,6 +85,19 @@ jobs:
           echo 'observed fail-closed provenance errors'
       - name: Build reproducible gVisor OCI rootfs
         run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --compare-image aios-sandbox:local-rebuild --require-xattrs --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json"
+      # Offline trust-chain evidence: a run-scoped key signs both artifact kinds, and the
+      # verifier accepts only the exact bytes and subject against the generated trust root.
+      # This is not a Sigstore identity attestation; the private key exists only on this
+      # runner and its public half is discarded with the runner.
+      - name: Sign and verify gVisor provenance artifacts
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/aios-signing-key.pem"
+          ROOT="$RUNNER_TEMP/aios-trust-root.json"
+          node tools/security/sign-artifacts.mjs generate-key --private "$KEY" --trust-root "$ROOT"
+          node tools/security/sign-artifacts.mjs sign --kind runtime-pin --artifact tools/security/gvisor-runtime.pin.json --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-runtime.pin.sig.json"
+          node tools/security/sign-artifacts.mjs sign --kind rootfs-manifest --artifact "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json"
+          node tools/security/sign-artifacts.mjs verify-all --pin tools/security/gvisor-runtime.pin.json --pin-signature "$RUNNER_TEMP/gvisor-runtime.pin.sig.json" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --manifest-signature "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json" --trust-root "$ROOT"
       # Same 21-case matrix through the explicit gVisor provider and real verifier.
       - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" AIOS_GVISOR_ROOTFS_MANIFEST="$RUNNER_TEMP/gvisor-rootfs.manifest.json" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.

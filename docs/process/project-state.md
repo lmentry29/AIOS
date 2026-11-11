@@ -464,3 +464,11 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 - `docs/process/divergence-log.md` records unresolved differences.
 - Update this file only from fresh repository and test/CI evidence; never copy an old status
   forward without re-verification.
+
+## Signed provenance (2026-11-11)
+
+Implemented and locally verified: detached Ed25519 signatures for the gVisor runtime pin and
+rootfs manifest, checked-in (empty, fail-closed) trust root, rotation/revocation rules,
+provider-side verification bound to the measured rootfs and materialized runtime, and
+deterministic rejection tests. Open: production key/trust-root provisioning, CI workload
+identity (Fulcio/OIDC) and SLSA provenance. No conformance level is claimed.

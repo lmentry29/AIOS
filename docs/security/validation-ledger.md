@@ -1216,3 +1216,17 @@ steps 1–21 with no skipped step:
 (Priority 2); pins and manifests remain unsigned. Rootless Docker, macOS Seatbelt and Apple
 Containerization remain unmeasured or unavailable. No result is extrapolated across
 platforms.
+
+## Signed provenance artifacts (2026-11-11)
+
+Local evidence, `community/open-source-foundation`:
+
+- `pnpm --filter @aios/host build` — exit 0.
+- `pnpm --filter @aios/host exec vitest run tests/artifact-signing.test.ts tests/gvisor.test.ts tests/gvisor-provenance.test.ts` — 41 passed (13 signing, 7 provider, 21 provenance).
+- `TURBO_CACHE_DIR=/tmp/aios-turbo pnpm turbo build lint typecheck test --force` — 46/46 tasks, 0 cached; host 196 passed / 17 skipped.
+
+The Security workflow generates a run-scoped Ed25519 key, signs the committed runtime pin and
+the built rootfs manifest, and runs `verify-all` against the generated trust root before the
+gVisor drill; the drill additionally signs the artifacts it executes. This proves the offline
+chain only. A production trust root/key, Fulcio/Rekor identity and SLSA provenance are not
+provisioned and are not claimed.

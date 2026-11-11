@@ -341,3 +341,13 @@ remains the Linux default.
   rootfs cost.
 - The gVisor CI step is part of the security maintenance surface: `runsc` release updates,
   rootfs rebuilds, Sentry behavior, and GitHub-runner kernel changes must be re-drilled.
+
+## Amendment — signed pin and rootfs manifest (2026-11-11)
+
+The pin and rootfs manifest are now authenticated with detached Ed25519 statements verified
+against `tools/security/trust-root.json`; a public key shipped beside an artifact is never
+trusted. The provider requires the signed manifest's `rootfs_sha256`/`entries` to equal the
+measured rootfs, and that measurement is the one materialized and re-checked for execution.
+The checked-in trust root is empty until provisioned, so the provider fails closed by
+default. Sigstore keyless verification was evaluated and rejected as the primary path because
+it requires network access to Fulcio/Rekor; no Sigstore or SLSA conformance is claimed.

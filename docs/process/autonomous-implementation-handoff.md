@@ -1003,3 +1003,14 @@ Next action: keep the final documentation checkpoint on
 `community/open-source-foundation`, re-run the exact-head workflows, dispatch `release`, and
 verify PR #1 is open/draft/unmerged and `main` is still `767f30e`. Do not claim rootless
 Docker, signed image provenance, or VM-class isolation.
+
+## Signed provenance artifacts — 2026-11-11
+
+`apps/host/src/execution/artifact-signing.ts` implements canonical-JSON Ed25519 statements
+and fail-closed verification. `GvisorSandbox` verifies the pin and a signed rootfs manifest
+before materialization; its evidence records key ids and signature/manifest digests.
+`tools/security/sign-artifacts.mjs` generates keys, signs and verifies; the Security workflow
+exercises it with a run-scoped key and the adversarial drill signs what it executes. The
+checked-in trust root has no keys: provisioning a production key and committing its public
+half is the next required operator action. CI identity and transparency logging are not
+implemented.

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SandboxIsolationUnavailableError } from '../src/errors.js';
+import { createTrustRoot, generateSigningKey, signArtifact } from '../src/execution/artifact-signing.js';
 import { digestRootfs } from '../src/execution/provenance.js';
 import { createSandboxProvider } from '../src/execution/sandbox.js';
 
@@ -20,6 +21,12 @@ interface FakeRunsc {
   calls: string;
   pinPath: string;
   binarySha256: string;
+  trustRootPath: string;
+  runtimeSignaturePath: string;
+  rootfsManifestPath: string;
+  rootfsSignaturePath: string;
+  keyId: string;
+  privateKeyPem: string;
 }
 
 function architecture(): string {
@@ -77,7 +84,69 @@ process.exit(0);
       sha256: binarySha256,
     },
   }, null, 2)}\n`, { mode: 0o600 });
-  return { directory, rootfs, capture, calls, pinPath, binarySha256 };
+  const key = generateSigningKey();
+  const trustRoot = createTrustRoot({
+    key_id: key.key_id,
+    public_key_pem: key.public_key_pem,
+    not_before: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    not_after: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  });
+  const trustRootPath = join(directory, 'trust-root.json');
+  writeFileSync(trustRootPath, `${JSON.stringify(trustRoot, null, 2)}\n`, { mode: 0o600 });
+  const pinBytes = readFileSync(pinPath);
+  const pin = JSON.parse(pinBytes.toString('utf8')) as {
+    release: string;
+    artifact: { sha512: string };
+    runsc: { version: string; sha256: string };
+  };
+  const runtimeSignature = signArtifact({
+    artifact_kind: 'gvisor-runtime-pin',
+    artifact_path: pinPath,
+    key_id: key.key_id,
+    private_key_pem: key.private_key_pem,
+    trust_root: trustRoot,
+    source: { repository: null, commit: null, workflow: null, run_id: null },
+    subject: {
+      release: pin.release,
+      runsc_version: pin.runsc.version,
+      runsc_sha256: pin.runsc.sha256,
+      artifact_sha512: pin.artifact.sha512,
+    },
+  });
+  const runtimeSignaturePath = `${pinPath}.sig.json`;
+  writeFileSync(runtimeSignaturePath, `${JSON.stringify(runtimeSignature, null, 2)}\n`, { mode: 0o600 });
+  const rootfsDigest = digestRootfs(rootfs);
+  const rootfsManifestPath = join(directory, 'gvisor-rootfs.manifest.json');
+  writeFileSync(rootfsManifestPath, `${JSON.stringify({
+    schema_version: 2,
+    rootfs_sha256: rootfsDigest.sha256,
+    entries: rootfsDigest.entries,
+  }, null, 2)}\n`, { mode: 0o600 });
+  const rootfsSignature = signArtifact({
+    artifact_kind: 'gvisor-rootfs-manifest',
+    artifact_path: rootfsManifestPath,
+    key_id: key.key_id,
+    private_key_pem: key.private_key_pem,
+    trust_root: trustRoot,
+    source: { repository: null, commit: null, workflow: null, run_id: null },
+    subject: { rootfs_sha256: rootfsDigest.sha256, entries: rootfsDigest.entries },
+  });
+  const rootfsSignaturePath = `${rootfsManifestPath}.sig.json`;
+  writeFileSync(rootfsSignaturePath, `${JSON.stringify(rootfsSignature, null, 2)}\n`, { mode: 0o600 });
+  return {
+    directory,
+    rootfs,
+    capture,
+    calls,
+    pinPath,
+    binarySha256,
+    trustRootPath,
+    runtimeSignaturePath,
+    rootfsManifestPath,
+    rootfsSignaturePath,
+    keyId: key.key_id,
+    privateKeyPem: key.private_key_pem,
+  };
 }
 
 function withPath<T>(directory: string, body: () => Promise<T>): Promise<T> {
@@ -103,6 +172,10 @@ describe('gvisor provider', () => {
           provider: 'gvisor',
           rootfs: fake.rootfs,
           gvisorPinPath: fake.pinPath,
+          gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+          gvisorRootfsManifestPath: fake.rootfsManifestPath,
+          gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+          gvisorTrustRootPath: fake.trustRootPath,
         });
         const check = await provider.check();
         expect(check).toMatchObject({
@@ -196,6 +269,10 @@ describe('gvisor provider', () => {
         provider: 'gvisor',
         rootfs: fake.rootfs,
         gvisorPinPath: fake.pinPath,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
       });
       const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-private-'));
       await provider.run({
@@ -221,6 +298,10 @@ describe('gvisor provider', () => {
         provider: 'gvisor',
         rootfs: fake.rootfs,
         gvisorPinPath: fake.pinPath,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
       });
       const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-rootfs-copy-'));
       const result = await provider.run({
@@ -251,6 +332,10 @@ describe('gvisor provider', () => {
         provider: 'gvisor',
         rootfs: fake.rootfs,
         gvisorPinPath: missingPin,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
       });
       const check = await provider.check();
       expect(check.available).toBe(false);
@@ -285,11 +370,29 @@ describe('gvisor provider', () => {
         sha256: '0'.repeat(64),
       },
     }, null, 2)}\n`, { mode: 0o600 });
+    const mismatchedSignaturePath = `${mismatchedPin}.sig.json`;
+    writeFileSync(mismatchedSignaturePath, `${JSON.stringify(signArtifact({
+      artifact_kind: 'gvisor-runtime-pin',
+      artifact_path: mismatchedPin,
+      key_id: fake.keyId,
+      private_key_pem: fake.privateKeyPem,
+      source: { repository: null, commit: null, workflow: null, run_id: null },
+      subject: {
+        release: 'test-release',
+        runsc_version: 'release-test',
+        runsc_sha256: '0'.repeat(64),
+        artifact_sha512: 'a'.repeat(128),
+      },
+    }), null, 2)}\n`);
     await withPath(fake.directory, async () => {
       const provider = createSandboxProvider({
         provider: 'gvisor',
         rootfs: fake.rootfs,
         gvisorPinPath: mismatchedPin,
+        gvisorRuntimeSignaturePath: mismatchedSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
       });
       const check = await provider.check();
       expect(check.available).toBe(false);
@@ -301,9 +404,18 @@ describe('gvisor provider', () => {
 
   it('fails closed when runsc is absent', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'aios-no-runsc-'));
-    const rootfs = mkdtempSync(join(tmpdir(), 'aios-empty-rootfs-'));
+    const fake = fakeRunsc();
+    const rootfs = fake.rootfs;
     await withPath(empty, async () => {
-      const provider = createSandboxProvider({ provider: 'gvisor', rootfs });
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs,
+        gvisorPinPath: fake.pinPath,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
+      });
       await expect(provider.check()).resolves.toMatchObject({
         available: false,
         reason: expect.stringMatching(/runsc|installed/i),

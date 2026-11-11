@@ -33,6 +33,12 @@ import { LocalCommandExecutor } from '../../apps/host/dist/execution/command-exe
 import { LocalCommandVerifier } from '../../apps/host/dist/execution/command-verifier.js';
 import { ManagedExecutionPort } from '../../apps/host/dist/execution/managed-execution.js';
 import { createSandboxProvider } from '../../apps/host/dist/execution/sandbox.js';
+import {
+  createTrustRoot,
+  generateSigningKey,
+  signArtifact,
+} from '../../apps/host/dist/execution/artifact-signing.js';
+import { fileURLToPath } from 'node:url';
 import { RunWorkspaceManager } from '../../apps/host/dist/execution/workspace.js';
 import { DurableOperationalStore } from '../../apps/host/dist/persistence/operational-store.js';
 
@@ -73,10 +79,62 @@ const config = {
   workspace_max_bytes: 1024 * 1024,
   max_concurrent_tasks: 1,
 };
+// Signs the repository pin and the freshly built rootfs manifest with an ephemeral key whose
+// public half is written to a run-scoped trust root. This exercises the same fail-closed
+// verification path production uses without trusting any key shipped next to an artifact.
+let signedGvisor = {};
+if (requestedProvider === 'gvisor') {
+  const key = generateSigningKey();
+  const now = Date.now();
+  const trustRoot = createTrustRoot({
+    key_id: key.key_id,
+    public_key_pem: key.public_key_pem,
+    not_before: new Date(now - 60 * 60 * 1000).toISOString(),
+    not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+  });
+  const trustRootPath = join(root, 'drill-trust-root.json');
+  writeFileSync(trustRootPath, JSON.stringify(trustRoot));
+  const pinPath = fileURLToPath(new URL('../../tools/security/gvisor-runtime.pin.json', import.meta.url));
+  const pin = JSON.parse(readFileSync(pinPath, 'utf8'));
+  const pinSignature = signArtifact({
+    artifact_kind: 'gvisor-runtime-pin',
+    artifact_path: pinPath,
+    key_id: key.key_id,
+    private_key_pem: key.private_key_pem,
+    trust_root: trustRoot,
+    subject: {
+      release: pin.release,
+      runsc_version: pin.runsc.version,
+      runsc_sha256: pin.runsc.sha256,
+      artifact_sha512: pin.artifact.sha512,
+    },
+  });
+  const pinSignaturePath = join(root, 'drill-runtime-pin.sig.json');
+  writeFileSync(pinSignaturePath, JSON.stringify(pinSignature));
+  const manifest = JSON.parse(readFileSync(gvisorRootfsManifest, 'utf8'));
+  const manifestSignature = signArtifact({
+    artifact_kind: 'gvisor-rootfs-manifest',
+    artifact_path: gvisorRootfsManifest,
+    key_id: key.key_id,
+    private_key_pem: key.private_key_pem,
+    trust_root: trustRoot,
+    subject: { rootfs_sha256: manifest.rootfs_sha256, entries: manifest.entries },
+  });
+  const manifestSignaturePath = join(root, 'drill-rootfs.sig.json');
+  writeFileSync(manifestSignaturePath, JSON.stringify(manifestSignature));
+  signedGvisor = {
+    gvisorPinPath: pinPath,
+    gvisorRuntimeSignaturePath: pinSignaturePath,
+    gvisorRootfsManifestPath: gvisorRootfsManifest,
+    gvisorRootfsSignaturePath: manifestSignaturePath,
+    gvisorTrustRootPath: trustRootPath,
+  };
+}
 const provider = createSandboxProvider({
   provider: requestedProvider,
   ...(dockerImage === undefined ? {} : { image: dockerImage }),
   ...(gvisorRootfs === undefined ? {} : { rootfs: gvisorRootfs }),
+  ...signedGvisor,
 });
 const availability = await provider.check();
 assert.equal(

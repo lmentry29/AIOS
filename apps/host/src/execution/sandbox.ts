@@ -24,6 +24,7 @@ import {
   type MaterializedExecutable,
   type OwnedDirectory,
 } from './provenance.js';
+import { verifyArtifactSignature } from './artifact-signing.js';
 import { runCapturedProcess, type CapturedProcessResult } from './process.js';
 import {
   buildDockerSeccompProfile,
@@ -51,10 +52,18 @@ export interface SandboxProvenanceEvidence {
     binary_sha256: string;
     artifact_sha512: string;
     pin_sha256: string;
+    /** Trusted key id that signed the runtime pin, present only after verification. */
+    pin_signature_key_id?: string;
+    /** SHA-256 of the detached signature statement over the runtime pin. */
+    pin_signature_sha256?: string;
   };
   rootfs: {
     sha256: string;
     entries: number;
+    /** SHA-256 of the signed rootfs manifest whose digest equals this measurement. */
+    manifest_sha256?: string;
+    /** Trusted key id that signed the rootfs manifest. */
+    manifest_signature_key_id?: string;
     /** Manifest v2 ownership/mode/xattr digest. */
     metadata_sha256?: string;
     content_sha256?: string;
@@ -765,6 +774,43 @@ class BubblewrapSandbox implements SandboxProvider {
   }
 }
 
+function digestOfSignature(path: string): string {
+  return hashFile(resolve(path), 'sha256');
+}
+
+/** Parse the signed rootfs manifest; authorization comes only from its verified signature. */
+function readRootfsManifest(path: string): { rootfs_sha256: string; entries: number } {
+  const resolved = resolve(path);
+  let stats: ReturnType<typeof lstatSync>;
+  try {
+    stats = lstatSync(resolved);
+  } catch {
+    throw new ProvenanceError(`The gVisor rootfs manifest file does not exist: ${resolved}.`);
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new ProvenanceError(`The gVisor rootfs manifest must be a regular file, not a symlink: ${resolved}.`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(resolved, 'utf8')) as unknown;
+  } catch (error) {
+    throw new ProvenanceError(
+      `The gVisor rootfs manifest is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ProvenanceError('The gVisor rootfs manifest must be a JSON object.');
+  }
+  const manifest = parsed as Record<string, unknown>;
+  if (typeof manifest.rootfs_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(manifest.rootfs_sha256)) {
+    throw new ProvenanceError('The gVisor rootfs manifest must contain a rootfs_sha256 digest.');
+  }
+  if (typeof manifest.entries !== 'number' || !Number.isSafeInteger(manifest.entries) || manifest.entries < 0) {
+    throw new ProvenanceError('The gVisor rootfs manifest must contain an entry count.');
+  }
+  return { rootfs_sha256: manifest.rootfs_sha256, entries: manifest.entries };
+}
+
 interface VerifiedGvisorRuntime {
   provenance: SandboxProvenanceEvidence;
   executable: MaterializedExecutable;
@@ -793,6 +839,12 @@ class GvisorSandbox implements SandboxProvider {
   constructor(
     private readonly rootfs: string,
     private readonly pinPath: string = GVISOR_RUNTIME_PIN_PATH,
+    private readonly runtimeSignaturePath: string = `${pinPath}.sig.json`,
+    private readonly rootfsManifestPath: string | undefined = process.env.AIOS_GVISOR_ROOTFS_MANIFEST,
+    private readonly rootfsSignaturePath: string | undefined = process.env.AIOS_GVISOR_ROOTFS_MANIFEST === undefined
+      ? undefined
+      : `${process.env.AIOS_GVISOR_ROOTFS_MANIFEST}.sig.json`,
+    private readonly trustRootPath: string = process.env.AIOS_TRUST_ROOT ?? '',
   ) {}
 
   async check(): Promise<SandboxCheck> {
@@ -1050,7 +1102,26 @@ class GvisorSandbox implements SandboxProvider {
 
   private async verifyProvenance(): Promise<VerifiedGvisorRuntime> {
     const rootfs = this.rootfsPath();
+    if (this.trustRootPath.trim() === '') {
+      throw new ProvenanceError(
+        'The gVisor trust root is not configured; set AIOS_TRUST_ROOT to the repository trust root before using signed artifacts.',
+      );
+    }
+    // Parsing validates schema and types but never authorizes execution. The signature below
+    // binds these exact bytes and this normalized subject to a trusted key.
     const loaded = readGvisorRuntimePin(this.pinPath);
+    const runtimeSignature = verifyArtifactSignature({
+      artifact_kind: 'gvisor-runtime-pin',
+      artifact_path: this.pinPath,
+      signature_path: this.runtimeSignaturePath,
+      trust_root_path: this.trustRootPath,
+      expected_subject: {
+        release: loaded.pin.release,
+        runsc_version: loaded.pin.runsc.version,
+        runsc_sha256: loaded.pin.runsc.sha256,
+        artifact_sha512: loaded.pin.artifact.sha512,
+      },
+    });
     const architecture = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : process.arch;
     if (loaded.pin.architecture !== architecture) {
       throw new ProvenanceError(
@@ -1062,6 +1133,29 @@ class GvisorSandbox implements SandboxProvider {
     if (binarySha256 !== loaded.pin.runsc.sha256) {
       throw new ProvenanceError(
         `The gVisor runsc SHA-256 does not match the repository pin (expected ${loaded.pin.runsc.sha256}, observed ${binarySha256}).`,
+      );
+    }
+    // Bind execution to the signed rootfs manifest: the digest the operator signed must be
+    // exactly the digest measured here, and that same measured digest is what gets copied and
+    // compared again before the runtime starts.
+    const rootfsDigest = digestRootfs(rootfs);
+    if (this.rootfsManifestPath === undefined || this.rootfsManifestPath.trim() === '') {
+      throw new ProvenanceError(
+        'The gVisor rootfs manifest is not configured; set AIOS_GVISOR_ROOTFS_MANIFEST to a signed manifest.',
+      );
+    }
+    const manifestPath = this.rootfsManifestPath;
+    const manifest = readRootfsManifest(manifestPath);
+    const manifestSignature = verifyArtifactSignature({
+      artifact_kind: 'gvisor-rootfs-manifest',
+      artifact_path: manifestPath,
+      signature_path: this.rootfsSignaturePath ?? `${manifestPath}.sig.json`,
+      trust_root_path: this.trustRootPath,
+      expected_subject: { rootfs_sha256: manifest.rootfs_sha256, entries: manifest.entries },
+    });
+    if (manifest.rootfs_sha256 !== rootfsDigest.sha256 || manifest.entries !== rootfsDigest.entries) {
+      throw new ProvenanceError(
+        `The configured gVisor rootfs does not match the signed manifest (manifest ${manifest.rootfs_sha256}/${manifest.entries}, measured ${rootfsDigest.sha256}/${rootfsDigest.entries}).`,
       );
     }
     const directory = createOwnedStagingDirectory(tmpdir(), 'aios-gvisor-runtime-');
@@ -1091,8 +1185,14 @@ class GvisorSandbox implements SandboxProvider {
             binary_sha256: binarySha256,
             artifact_sha512: loaded.pin.artifact.sha512,
             pin_sha256: loaded.pin_sha256,
+            pin_signature_key_id: runtimeSignature.key_id,
+            pin_signature_sha256: digestOfSignature(this.runtimeSignaturePath),
           },
-          rootfs: digestRootfs(rootfs),
+          rootfs: {
+            ...rootfsDigest,
+            manifest_sha256: manifestSignature.artifact_sha256,
+            manifest_signature_key_id: manifestSignature.key_id,
+          },
         },
       };
     } catch (error) {
@@ -1176,6 +1276,14 @@ export function createSandboxProvider(config: {
   rootfs?: string;
   /** Test-only pin override; production resolves the repository pin. */
   gvisorPinPath?: string;
+  /** Detached signature over the runtime pin; defaults to `<pin>.sig.json`. */
+  gvisorRuntimeSignaturePath?: string;
+  /** Signed rootfs manifest whose digest must equal the measured rootfs. */
+  gvisorRootfsManifestPath?: string;
+  /** Detached signature over the rootfs manifest; defaults to `<manifest>.sig.json`. */
+  gvisorRootfsSignaturePath?: string;
+  /** Repository-controlled trust root; required, no key is trusted implicitly. */
+  gvisorTrustRootPath?: string;
 }): SandboxProvider {
   if (config.provider === 'docker') {
     if (!config.image) throw new HostUnavailableError('The Docker sandbox requires a configured image.');
@@ -1183,7 +1291,14 @@ export function createSandboxProvider(config: {
   }
   if (config.provider === 'gvisor') {
     if (!config.rootfs) throw new HostUnavailableError('The gVisor sandbox requires a configured rootfs.');
-    return new GvisorSandbox(config.rootfs, config.gvisorPinPath);
+    return new GvisorSandbox(
+      config.rootfs,
+      config.gvisorPinPath,
+      config.gvisorRuntimeSignaturePath,
+      config.gvisorRootfsManifestPath,
+      config.gvisorRootfsSignaturePath,
+      config.gvisorTrustRootPath,
+    );
   }
   if (config.provider === 'bubblewrap') return new BubblewrapSandbox();
   if (config.provider === 'seatbelt') return new SeatbeltSandbox();
