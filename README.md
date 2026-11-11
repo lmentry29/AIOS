@@ -56,6 +56,14 @@ present locally; on Linux, `bwrap` must be able to create a user namespace; on m
 `dispatch: false` and dispatch returns 503. See ADR-0019 and
 [`docs/engineering/trusted-host-composition-root.md`](docs/engineering/trusted-host-composition-root.md).
 
+Host sessions have a bounded lifetime and can be rotated or revoked. During an incident, an
+operator holding an exact `administer_sessions` grant can list, rotate, or revoke another
+session with `aios-host list-sessions`, `rotate-session`, or `revoke-session` and an
+owner-only token file. The CLI never takes token material on argv, emits a token only for the
+single rotation it performs, and its changes take effect in the running host and survive a
+restart. See [the session operator runbook](docs/security/session-operator-runbook.md) and
+[ADR-0030](docs/adr/ADR-0030-human-only-operator-session-administration.md).
+
 ## Design principles
 
 1. **Human accountability:** automation must not silently expand its own authority.

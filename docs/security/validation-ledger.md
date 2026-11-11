@@ -471,3 +471,107 @@ What is verified versus not:
   Seatbelt/Apple Containerization, Docker/gVisor, Landlock, aggregate cgroups, hard disk
   quotas, and external policy signing. These remain recorded residuals, not silently
   downgraded controls.
+
+## 2026-11-11 — Human-only operator session administration (`27ab654`)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. This pass tested the operator incident path through the compiled
+`aios-host` binary and a real host process, not a unit-level shim. The drill boots the real
+server, provisions a real durable policy, and drives the CLI as a child process.
+
+Commands actually run, in this order:
+
+```sh
+pnpm --filter @aios/host run build
+node tools/security/session-operator-drill.mjs
+pnpm --filter @aios/host exec vitest run tests/session-operator.test.ts \
+  tests/session-lifecycle.test.ts tests/identity.test.ts
+pnpm --filter @aios/founder exec vitest run tests/authorization.test.ts
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+node tools/security/collection-bound-drill.mjs
+node tools/security/session-operator-drill.mjs
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+```
+
+Observed results at code head `27ab654`:
+
+- Operator drill: **13 steps, exit 0**. Verbatim from the first full run; the second run in
+  the drill sweep reproduced the same steps with a fresh policy id and port:
+
+```json
+{"step":"provision","ok":true,"policy_id":"3367e0c6-253f-4363-b75c-54e117f18dff","sessions":3}
+{"step":"host_started","ok":true,"port":34845,"dispatch":false}
+{"step":"list_sessions","ok":true,"total":3,"digests_exposed":false}
+{"step":"denied_non_human","ok":true,"exit_code":3}
+{"step":"denied_unknown_token","ok":true,"exit_code":3}
+{"step":"rejects_unsafe_token_file","ok":true,"exit_code":2}
+{"step":"not_found","ok":true,"exit_code":4}
+{"step":"rotate_live","ok":true,"generation":2,"old_reason":"rotated_token","new_status":200}
+{"step":"rotation_replay_denied","ok":true,"http_status":401,"exit_code":3}
+{"step":"revoke_live","ok":true,"idempotent":true,"revoked_reason":"revoked_token","rotate_exit_code":5}
+{"step":"scoped_admin_denied","ok":true,"exit_code":3,"reason":"scope_binding_required"}
+{"step":"restart_recovery","ok":true,"rotated_denied":true,"revoked_denied":true,"new_generation":2}
+{"step":"no_token_leakage","ok":true,"journal":"clean","audit":"clean","cli_outputs":12}
+{"drill":"session-operator","ok":true,"steps":13}
+```
+
+- Focused host suites: **19 passed** (`session-operator` 4, `session-lifecycle` 6,
+  `identity` 9); founder `authorization.test.ts` **25 passed**.
+- Full workspace gate, forced with no cache: **46/46 tasks successful**; host **152 passed,
+  17 skipped** (169 total; the 17 skips are the live suites without `AIOS_BWRAP_DIR`);
+  founder **63**; core **51**; conformance **107**; integration **43**; objects **32**;
+  orchestration **30**; tools **9**; work-hierarchy **24**; containers **21**; learning **28**;
+  agents **6**.
+- Live bubblewrap suite: **17/17 passed**. Resource-limit drill: legitimate Perl exit 0 with
+  `resource_limits_applied:true`; memory bomb exit 1, `Out of memory!`, `timed_out:false`;
+  `Seccomp: 2`, filter SHA-256
+  `12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac`. Quota drill:
+  over-cap run stopped/discarded with 0 workspace entries and 0 matching processes;
+  under-cap 65,536 bytes; sequential 65,536 and 32,768 bytes. Seccomp drill: denied run
+  stopped with 0 workspace entries/processes; legitimate and next runs exit 0. Collection
+  drill: 1,000,000 invalid Actions produced one issue in 16 ms; 100,000 environment keys
+  produced one issue in 116 ms, both under a 64 MiB heap.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)`; `secret-scan: no
+  findings across 276 tracked files`.
+
+Observed operator properties:
+
+- `list-sessions` returned exactly the three granted sessions in order, total 3, with no
+  `token_sha256` field and no 64-hex string. A non-human agent session and an unknown token
+  were both exit `3` (`human_principal_required`, `unknown_token`); a group/world-readable
+  token file was exit `2` before any request; an ungranted missing UUID was exit `4` only
+  after authorization on that UUID.
+- Rotation through the compiled CLI returned one token and generation 2. The old token was
+  denied as `rotated_token` on the live path and through the CLI (exit `3`), while the new
+  token authenticated. Rotating the revoked executor session was exit `5`
+  `session_conflict`.
+- Revocation denied the executor on its next request (`revoked_token`), the repeat returned
+  `already_revoked:true` with exit `0`, and both denials survived a real SIGTERM and restart
+  of the host process, where the new generation still authenticated.
+- A scoped founder token could not use the admin surface (exit `3`
+  `scope_binding_required`), so session administration cannot be reached through a narrowed
+  token.
+- The operational journal contained `session_rotated` and `session_revoked` records, and the
+  authorization audit contained `administer_sessions` decisions; neither contained any
+  plaintext token from the drill. No CLI stdout/stderr other than the rotation result
+  contained one, and no CLI command line carried a token.
+
+What is verified versus not:
+
+- **Verified:** the documented CLI works against a live host; operator actions are
+  exact-granted and human-only; the list is filtered and digest-free; mutation commits before
+  acknowledgement through the same durable store the authenticator uses; refusal is
+  distinguishable by exit code; retired tokens stay retired across restart; and no token
+  material reached argv, logs, the operational journal, or the authorization audit.
+- **Not verified:** step-up/MFA or quorum for the operator grant, TLS or rate limiting on
+  loopback, multi-host session replication, external audit custody, and the existing sandbox
+  matrix gaps (Docker/gVisor/Seatbelt/Apple Containerization, Landlock, aggregate cgroups,
+  hard disk quotas, external policy signing). The operator token is a bearer credential: an
+  attacker who can read its owner-only file has the same authority. See ADR-0030, F-013, and
+  `docs/security/session-operator-runbook.md`.

@@ -120,6 +120,16 @@ A task/run/evidence-scoped token is checked in the real HTTP path before route l
 bound token cannot authorize a different task, run, or recomputed evidence digest. The
 run-scoped read route is `GET /v1/runs/:runId`.
 
+An operator can administer another principal's session through the exact, human-only
+`administer_sessions` action (ADR-0030). `GET /v1/admin/sessions` returns only sessions on
+which the caller holds that exact grant and never returns a token digest.
+`POST /v1/admin/sessions/:sessionId/rotate` and `/revoke` authorize the exact target before
+looking it up, so an ungranted UUID is denied rather than disclosed. Both routes commit
+through `DurableSessionStore`, the same authority the authenticator uses, so the retired
+token is denied on the next request in the running host and after restart. Revocation is
+terminal and idempotent (`already_revoked: true`); rotating a revoked or expired session is a
+409 conflict. The list is bounded by the 32-session configuration limit.
+
 The authenticated session is the only source of an actor identifier. Request bodies may not
 name their own actor: `/v1/intake` requires `created_by` and `owner_id` to equal the session
 principal, and `/v1/founder/decisions` requires `decided_by` (when present) to match it.
@@ -236,6 +246,11 @@ Loopback only, no CORS headers, `no-store` responses.
 |---|---|---|
 | GET | `/health` | Unauthenticated readiness; no configuration or secrets |
 | GET | `/v1/session` | Verified principal, session id, human flag |
+| POST | `/v1/session/rotate` | Requires a live session; retires the presented digest and returns one new token |
+| POST | `/v1/session/revoke` | Requires a live session; terminal; 200 idempotent when already revoked |
+| GET | `/v1/admin/sessions` | Human-only; exact `administer_sessions` per listed session; no token digests |
+| POST | `/v1/admin/sessions/:id/rotate` | Human-only; exact grant on the target before lookup; returns one new token |
+| POST | `/v1/admin/sessions/:id/revoke` | Human-only; exact grant before lookup; terminal and idempotent |
 | POST | `/v1/policies` | Human-only; exact `administer_policy` on every target; atomic publish and attach; 201 |
 | POST | `/v1/policies/:policyId/revoke` | Human-only; exact `revoke_policy` on every referenced target; complete target set; retires the version and reattaches the newest remaining version, or leaves the resource unattached; 200 |
 | GET | `/v1/tasks?limit=` | Lists only Tasks on which the session has `read_status` |
@@ -327,6 +342,34 @@ There is no detached policy signature in this trust model: authority is the veri
 plus the exact grant, and a caller-supplied signature field is rejected. A policy version
 cannot be rolled back by reattaching an older or retired policy; publish a new, higher
 version containing the desired rules.
+
+## Operator session administration
+
+`aios-host` exposes the incident path as three commands. Each reads the bearer token from an
+owner-only regular file (mode `0600` or stricter, no symlink, at most 4096 bytes) and sends it
+only as an `Authorization` header to the configured loopback bind. No command takes a token in
+argv, opens the journal, or takes a lock, so it is safe to run while the host is serving.
+
+```sh
+aios-host list-sessions   --config /abs/host.json --token-file /abs/operator.token
+aios-host rotate-session --config /abs/host.json --token-file /abs/operator.token --session-id <uuid>
+aios-host revoke-session --config /abs/host.json --token-file /abs/operator.token --session-id <uuid>
+```
+
+Each invocation prints one JSON object. `list-sessions` returns the grant-filtered public
+records (no digests); `rotate-session` is the only command whose output contains a token, and
+it contains exactly one; `revoke-session` reports session id, generation, `revoked_at`, and
+`already_revoked`. Stable exit codes: `0` success (including idempotent repeat revocation),
+`2` usage or unsafe local configuration, `3` denied, `4` not found, `5` retired/conflict, `6`
+transport or server failure. Failures write one bounded JSON object to stderr with no token or
+digest.
+
+The operator's own session must hold the exact grant on each target; the bootstrap principal
+has no implicit grant, and a scoped token cannot use the surface (`scope_binding_required`).
+Rotation hands the new token to the invoking operator, not to the target principal, so
+delivery is out of band and the response is the only copy. See
+[`docs/security/session-operator-runbook.md`](../security/session-operator-runbook.md) for the
+incident procedure, ordering, restart expectations, and remaining limits.
 
 ## Bootstrap sequence
 

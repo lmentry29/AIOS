@@ -56,7 +56,9 @@ than introduce a second database or a test-only in-memory authority.
    `revoked` and returns a bounded summary. The operation is idempotent for a token that is
    already revoked, but a new token for the same session does not resurrect the old digest.
    A replay of a revocation journal record cannot restore the token because the retired map
-   has no un-retire operation.
+   has no un-retire operation. These routes are self-service: they act on the caller's own
+   token. Operator-initiated administration of another principal's session is a separate,
+   human-only surface ratified by ADR-0030.
 
 5. **Bind scopes in the real authorization path.** A session may carry optional `task_id`,
    `run_id`, and `evidence_sha256` constraints. After authentication, the HTTP host checks the
@@ -108,4 +110,5 @@ rotation-then-replay, revocation-then-replay, cross-task/run/evidence replay, in
 across rotation, restart recovery, compaction, and snapshot-resurrection refusal. The
 2026-11-11 validation entry records the full gate, live bubblewrap suite, security drills,
 audit, and secret scan. See `docs/security/findings-ledger.md` (F-013) and
-`docs/security/validation-ledger.md`.
+`docs/security/validation-ledger.md`. The operator administration surface and its CLI are
+ADR-0030; `docs/security/session-operator-runbook.md` is the incident procedure.

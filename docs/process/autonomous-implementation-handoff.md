@@ -3,19 +3,22 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, durable host session lifecycle and F-013
-closure). Latest security code head: `b067501` (`feat(host): add durable session rotation and
-revocation`); its documentation checkpoint follows. Re-check this head rather than older CI
-lines below. F-009's digest mitigation, F-005's fail-closed regression, the bounded canonical
-collections, and the live bubblewrap controls remain in place from `24d2791`/`43e2dd6`.
+Last updated: 2026-11-11 (Freebuff Cloud session, human-only operator session administration
+over the durable host session lifecycle). Latest security code head: `27ab654` (`feat(host):
+add human-only operator session administration`), following `b067501` (durable session
+rotation/revocation and F-013 closure); its documentation checkpoint follows. Re-check this
+head rather than older CI lines below. F-009's digest mitigation, F-005's fail-closed
+regression, the bounded canonical collections, and the live bubblewrap controls remain in
+place from `24d2791`/`43e2dd6`.
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `b067501`; read
+- Verified security code head: `27ab654` (`feat(host): add human-only operator session administration`)
+- Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
+- Documentation checkpoint for this pass: the branch tip after `27ab654`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `7103957` with docs commit `0a1ae66`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
@@ -39,6 +42,7 @@ collections, and the live bubblewrap controls remain in place from `24d2791`/`43
   - `70f07b4` — fixed local execution, sandbox providers, independent verifier
   - `b5dc5d9` — durable hash-chained operational journal
   - `a7d930a` — durable-persistence evidence and handoff
+  - `27ab654` — human-only operator session administration and executable operator drill
 
 ## Environment notes
 
@@ -325,6 +329,60 @@ Operators can audit the full chain without redriving it.
 - 401 for no token, 403 for missing `read_status`, and 404 for a granted-but-unknown Task or
   Workflow.
 
+## Completed — human-only operator session administration (`27ab654`)
+
+ADR-0030 turns the ADR-0029 lifecycle into an incident tool instead of a set of rules the
+operator has to hand-call.
+
+### Live administration path
+
+- `administer_sessions` is a new exact `AccessAction`, human-only like
+  `administer_policy`/`revoke_policy`, with no wildcard, ownership, or bootstrap implication.
+  The durable decision audit and policy-registry allowlists accept it.
+- `GET /v1/admin/sessions` filters to sessions the caller can administer, never returns
+  `token_sha256`, and is bounded by the 32-session configuration limit.
+- `POST /v1/admin/sessions/:sessionId/rotate|revoke` authorizes the exact target before
+  lookup, then delegates to `DurableSessionStore.rotateById`/`revokeById`. Those plan against
+  the same in-memory state the authenticator uses and append the same journal records, so the
+  running host denies the retired token on its next request.
+- Rotation returns exactly one new token and never broadens scope; revocation is terminal and
+  idempotent (`already_revoked: true`); rotating a revoked or expired session is a 409
+  conflict.
+- A scoped token cannot use the admin surface because the route supplies no task/run binding,
+  so it fails `scope_binding_required`. The independent verifier identity and authorization
+  are untouched.
+
+### CLI transport
+
+- `aios-host list-sessions|rotate-session|revoke-session` reads the bearer token from an
+  owner-only regular file (no symlink, mode `0600` or stricter, at most 4096 bytes), never
+  argv. It opens no journal and takes no lock, so it works while the host is live.
+- Exit codes: `0` success, `2` usage/local configuration, `3` denied, `4` not found, `5`
+  retired/conflict, `6` transport/server. Failures are one bounded JSON object on stderr.
+- `list-sessions` and `revoke-session` never emit token material; `rotate-session` emits the
+  single new token.
+
+### Proof
+
+- `apps/host/tests/session-operator.test.ts` — 4 live HTTP tests: filtered digest-free list;
+  rotate with old-token denial, new-token acceptance, and restart; revoke with live denial,
+  restart, idempotent repeat, and 409 rotation; exit codes 3/4/2/5; non-human and scoped
+  denials; no token in stdout/stderr/journal.
+- `packages/founder/tests/authorization.test.ts` — exact human-only `administer_sessions`
+  grant and rejection of a non-human subject.
+- `tools/security/session-operator-drill.mjs` — 13 real steps against the compiled binary and
+  a real host process, including a SIGTERM restart and a journal/audit token-leak scan.
+- Validation ledger records: forced full gate 46/46, host 152 passed/17 skipped, founder 63,
+  core 51, live bubblewrap 17/17, all drills exit 0, audit 0 triaged, secret scan 276 files.
+
+### Not claimed
+
+- No step-up/MFA, approval quorum, rate limiting, or TLS was added. The operator token is a
+  bearer credential; its owner-only file is the boundary.
+- Rotation delivery is manual and one-time; restoring a revoked session requires configuration
+  re-provisioning and a restart.
+- The surface is single-host and single-process, like the rest of the journal.
+
 ## Verification actually executed at `7103957` and CI at `8c950e6`
 
 Local at commit time; CI is observed after the push, not asserted from local results.
@@ -485,7 +543,8 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 9. **Founder experience.** No UI; the HTTP API is the only surface and it intentionally
    rejects every `Origin`.
 10. **Operations.** Metrics/tracing/alerting, journal compaction and migrations, automated
-    backup/restore drill, threat model, incident response, deployment docs, SLOs.
+    backup/restore drill, threat model, broader incident response (a session-compromise
+    runbook now exists), deployment docs, SLOs.
 11. **Policy administration assurance.** Runtime publication and retirement have no detached
     policy signature, key rotation, external audit custody, or production recovery/rotation
     procedure. Current authority is the authenticated session plus the exact grant; do not
@@ -519,6 +578,10 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
+- Operator session administration is an exact human-only action over the live host; the CLI
+  is a transport with owner-only token-file input and no journal access. Revocation is
+  terminal and restart-durable, and the new token is delivered only to the invoking operator
+  (ADR-0030).
 - Permanent Memory stages require a recorded human approval bound to the record, transition,
   and content; the approval and promotion are committed as one durable journal record.
   This is organizational Learning Memory, not Founder Intelligence, and adds no vault write.
