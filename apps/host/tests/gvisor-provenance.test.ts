@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  assertReproducibleRootfs,
   digestRootfs,
   hashFile,
+  readGvisorRootfsBuildPin,
   readGvisorRuntimePin,
+  verifyGvisorRootfsBuildInputs,
   verifyPinnedArtifact,
 } from '../src/execution/provenance.js';
 
@@ -86,4 +89,90 @@ describe('gVisor provenance', () => {
       createHash('sha512').update('not the pinned archive').digest('hex'),
     );
   });
+
+  it('rejects a malformed or missing rootfs build pin', () => {
+    const base = directory('aios-rootfs-pin-');
+    expect(() => readGvisorRootfsBuildPin(join(base, 'missing.json')))
+      .toThrow(/rootfs build pin file does not exist/);
+    const path = join(base, 'pin.json');
+    writeFileSync(path, JSON.stringify({
+      ...rootfsPin(),
+      base_image: { ...rootfsPin().base_image, digest: 'sha256:not-a-digest' },
+    }), { mode: 0o600 });
+    expect(() => readGvisorRootfsBuildPin(path)).toThrow(/base_image\.digest/);
+  });
+
+  it('accepts pinned build inputs and rejects base, snapshot and package drift', () => {
+    const base = directory('aios-rootfs-inputs-');
+    const pin = rootfsPin();
+    const pinPath = join(base, 'pin.json');
+    writeFileSync(pinPath, JSON.stringify(pin), { mode: 0o600 });
+    const dockerfile = join(base, 'Dockerfile');
+    writeFileSync(dockerfile, rootfsDockerfile(pin), { mode: 0o600 });
+
+    const loaded = readGvisorRootfsBuildPin(pinPath);
+    expect(() => verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile)).not.toThrow();
+
+    writeFileSync(dockerfile, rootfsDockerfile(pin).replace(
+      `${pin.base_image.reference}@${pin.base_image.digest}`,
+      pin.base_image.reference,
+    ), { mode: 0o600 });
+    expect(() => verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile))
+      .toThrow(/pinned base image/);
+
+    writeFileSync(dockerfile, rootfsDockerfile(pin).replace(
+      pin.apt_snapshot.timestamp,
+      '20261109T000000Z',
+    ), { mode: 0o600 });
+    expect(() => verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile))
+      .toThrow(/snapshot/);
+
+    writeFileSync(dockerfile, rootfsDockerfile(pin).replace(
+      `coreutils=${pin.packages.coreutils}`,
+      'coreutils=9.1-2',
+    ), { mode: 0o600 });
+    expect(() => verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile))
+      .toThrow(/package coreutils/);
+  });
+
+  it('rejects a different canonical digest from two builds', () => {
+    expect(() => assertReproducibleRootfs(
+      { sha256: 'a'.repeat(64), entries: 10 },
+      { sha256: 'b'.repeat(64), entries: 10 },
+    )).toThrow(/not reproducible/);
+  });
 });
+
+function rootfsPin() {
+  return {
+    schema_version: 1 as const,
+    provider: 'gvisor' as const,
+    base_image: {
+      reference: 'debian:bookworm-slim',
+      digest: `sha256:${'1'.repeat(64)}`,
+      platform_digest_amd64: `sha256:${'2'.repeat(64)}`,
+    },
+    apt_snapshot: {
+      base_url: 'http://snapshot.debian.org/archive' as const,
+      timestamp: '20261110T000000Z',
+      suites: {
+        bookworm: 'debian' as const,
+        'bookworm-updates': 'debian' as const,
+        'bookworm-security': 'debian-security' as const,
+      },
+    },
+    packages: {
+      coreutils: '9.1-1',
+      perl: '5.36.0-7+deb12u4',
+      'util-linux': '2.38.1-5+deb12u3',
+    },
+    dockerfile: 'tools/security/docker-sandbox.Dockerfile',
+    excluded_paths: ['/etc/shadow', '/etc/gshadow'],
+    construction: 'test construction',
+  };
+}
+
+function rootfsDockerfile(pin: ReturnType<typeof rootfsPin>): string {
+  const timestamp = pin.apt_snapshot.timestamp;
+  return `FROM ${pin.base_image.reference}@${pin.base_image.digest}\nRUN apt-get -o Acquire::Check-Valid-Until=false update \\\n && apt-get install -y --no-install-recommends \\\n      coreutils=${pin.packages.coreutils} \\\n      perl=${pin.packages.perl} \\\n      util-linux=${pin.packages['util-linux']}; \\\n && rm -f /etc/shadow /etc/gshadow\n# ${pin.apt_snapshot.base_url}/debian/${timestamp} bookworm main\n# ${pin.apt_snapshot.base_url}/debian/${timestamp} bookworm-updates main\n# ${pin.apt_snapshot.base_url}/debian-security/${timestamp} bookworm-security main\n`;
+}

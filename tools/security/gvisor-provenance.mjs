@@ -29,10 +29,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
+  assertReproducibleRootfs,
   digestRootfs,
   hashFile,
   ProvenanceError,
+  readGvisorRootfsBuildPin,
   readGvisorRuntimePin,
+  verifyGvisorRootfsBuildInputs,
   verifyPinnedArtifact,
 } from '../../apps/host/dist/execution/provenance.js';
 
@@ -256,31 +259,79 @@ async function main() {
     return;
   }
 
+  if (command === 'verify-rootfs-pin') {
+    const sourcePath = resolve(required(parsed, 'source'));
+    const dockerfile = resolve(required(parsed, 'dockerfile'));
+    const loaded = readGvisorRootfsBuildPin(sourcePath);
+    if (resolve(loaded.pin.dockerfile) !== dockerfile) {
+      throw new ProvenanceError(
+        `The gVisor rootfs build pin names ${loaded.pin.dockerfile}, not ${dockerfile}.`,
+      );
+    }
+    verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile);
+    process.stdout.write(`${JSON.stringify({
+      base_image: `${loaded.pin.base_image.reference}@${loaded.pin.base_image.digest}`,
+      apt_snapshot: loaded.pin.apt_snapshot,
+      packages: loaded.pin.packages,
+      pin_sha256: loaded.pin_sha256,
+    })}\n`);
+    return;
+  }
+
   if (command === 'build-rootfs') {
     const image = required(parsed, 'image');
-    const sourcePath = required(parsed, 'source');
+    const sourcePath = resolve(required(parsed, 'source'));
     const dockerfile = resolve(required(parsed, 'dockerfile'));
     const output = resolve(required(parsed, 'output'));
     const manifestPath = resolve(required(parsed, 'manifest'));
-    const source = readSource(sourcePath);
-    if (typeof source.dockerfile === 'string' && resolve(source.dockerfile) !== dockerfile) {
+    const compareImage = typeof parsed['compare-image'] === 'string'
+      ? parsed['compare-image']
+      : undefined;
+    if (parsed['compare-image'] !== undefined && compareImage === undefined) {
+      throw new ProvenanceError('--compare-image requires an image name.');
+    }
+    if (compareImage === image) {
+      throw new ProvenanceError('--compare-image must name a separate image build.');
+    }
+    const loaded = readGvisorRootfsBuildPin(sourcePath);
+    if (resolve(loaded.pin.dockerfile) !== dockerfile) {
       throw new ProvenanceError(
-        `The gVisor rootfs source metadata names ${source.dockerfile}, not ${dockerfile}.`,
+        `The gVisor rootfs build pin names ${loaded.pin.dockerfile}, not ${dockerfile}.`,
       );
     }
+    verifyGvisorRootfsBuildInputs(loaded.pin, dockerfile);
+    const source = { ...loaded.pin, rootfs_build_pin_sha256: loaded.pin_sha256 };
     const imageId = run('docker', ['image', 'inspect', '--format', '{{.Id}}', image]).trim();
     const first = exportRootfs(image, output);
     let reproducible = null;
+    let rebuildImageId = null;
     if (parsed['verify-reproducible'] === true) {
       const secondOutput = `${output}-reproducibility-${randomUUID()}`;
       try {
         const second = exportRootfs(image, secondOutput);
-        if (second.sha256 !== first.sha256 || second.entries !== first.entries) {
-          throw new ProvenanceError(
-            `The gVisor rootfs export is not reproducible (first ${first.sha256}/${first.entries} entries, second ${second.sha256}/${second.entries}).`,
-          );
-        }
-        reproducible = { sha256: second.sha256, entries: second.entries };
+        assertReproducibleRootfs(first, second);
+        reproducible = {
+          sha256: second.sha256,
+          entries: second.entries,
+          method: 'same-image-second-export',
+        };
+      } finally {
+        rmSync(secondOutput, { recursive: true, force: true });
+      }
+    }
+    if (compareImage !== undefined) {
+      const secondOutput = `${output}-independent-${randomUUID()}`;
+      try {
+        const second = exportRootfs(compareImage, secondOutput);
+        assertReproducibleRootfs(first, second);
+        rebuildImageId = run('docker', ['image', 'inspect', '--format', '{{.Id}}', compareImage]).trim();
+        reproducible = {
+          sha256: second.sha256,
+          entries: second.entries,
+          method: 'independent-image-build',
+          image: compareImage,
+          image_id: rebuildImageId,
+        };
       } finally {
         rmSync(secondOutput, { recursive: true, force: true });
       }
@@ -289,6 +340,8 @@ async function main() {
       ...source,
       image,
       image_id: imageId,
+      rebuild_image: compareImage ?? null,
+      rebuild_image_id: rebuildImageId,
       dockerfile,
       dockerfile_sha256: hashFile(dockerfile, 'sha256'),
     }, {
@@ -300,13 +353,14 @@ async function main() {
       entries: manifest.entries,
       image,
       image_id: imageId,
+      rebuild_image_id: rebuildImageId,
       reproducible,
       manifest: manifestPath,
     })}\n`);
     return;
   }
 
-  throw new ProvenanceError('Usage: gvisor-provenance.mjs <verify-archive|fetch-runtime|digest-rootfs|verify-rootfs|build-rootfs> [options]');
+  throw new ProvenanceError('Usage: gvisor-provenance.mjs <verify-archive|fetch-runtime|digest-rootfs|verify-rootfs|verify-rootfs-pin|build-rootfs> [options]');
 }
 
 main().catch((error) => {

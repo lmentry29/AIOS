@@ -35,11 +35,20 @@ jobs:
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/resource-limit-drill.mjs
       # Filesystem, secret, network, capability, resource, orphan and verification attacks.
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/adversarial-drill.mjs
+      # Fail before any image build if the Dockerfile drifts from the pinned base,
+      # snapshot timestamp or exact package versions in gvisor-rootfs.json.
+      - name: Verify pinned gVisor rootfs inputs
+        run: node tools/security/gvisor-provenance.mjs verify-rootfs-pin --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile
       # Build the image locally so the Docker run does not depend on an implicit pull.
       - name: Build the Docker sandbox image
         run: docker build --pull -t aios-sandbox:local -f tools/security/docker-sandbox.Dockerfile tools/security
       # The same 21-case matrix through the explicit Docker provider and real verifier.
       - run: AIOS_SANDBOX_PROVIDER=docker AIOS_DOCKER_IMAGE=aios-sandbox:local node tools/security/adversarial-drill.mjs
+      # Build the same image a second time with no cache. The gVisor rootfs step
+      # exports both images and requires identical canonical content, not merely two
+      # exports of one image.
+      - name: Build independent gVisor rootfs image
+        run: docker build --pull --no-cache -t aios-sandbox:local-rebuild -f tools/security/docker-sandbox.Dockerfile tools/security
       # gVisor is opt-in; fetch the repository-pinned runtime and build a reproducible
       # OCI rootfs from the already-built test image. The Docker image build above is reused.
       - name: Install pinned gVisor runsc
@@ -62,7 +71,7 @@ jobs:
           grep -F 'pin file does not exist' "$RUNNER_TEMP/missing-pin.log"
           echo 'observed fail-closed provenance errors'
       - name: Build reproducible gVisor OCI rootfs
-        run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --verify-reproducible
+        run: node tools/security/gvisor-provenance.mjs build-rootfs --image aios-sandbox:local --compare-image aios-sandbox:local-rebuild --source tools/security/gvisor-rootfs.json --dockerfile tools/security/docker-sandbox.Dockerfile --output "$RUNNER_TEMP/gvisor-rootfs" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json"
       # Same 21-case matrix through the explicit gVisor provider and real verifier.
       - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" AIOS_GVISOR_ROOTFS_MANIFEST="$RUNNER_TEMP/gvisor-rootfs.manifest.json" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.

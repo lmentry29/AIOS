@@ -1,8 +1,26 @@
 {
   "schema_version": 1,
-  "source_image": "debian:bookworm-slim",
+  "provider": "gvisor",
+  "base_image": {
+    "reference": "debian:bookworm-slim",
+    "digest": "sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc",
+    "platform_digest_amd64": "sha256:c67e92c8099ba22853ab4cfda7cfb494d253d6012ca82dee98ba8976772af018"
+  },
+  "apt_snapshot": {
+    "base_url": "http://snapshot.debian.org/archive",
+    "timestamp": "20261110T000000Z",
+    "suites": {
+      "bookworm": "debian",
+      "bookworm-updates": "debian",
+      "bookworm-security": "debian-security"
+    }
+  },
+  "packages": {
+    "coreutils": "9.1-1",
+    "perl": "5.36.0-7+deb12u4",
+    "util-linux": "2.38.1-5+deb12u3"
+  },
   "dockerfile": "tools/security/docker-sandbox.Dockerfile",
-  "packages": ["perl", "coreutils", "util-linux"],
   "excluded_paths": ["/etc/shadow", "/etc/gshadow"],
-  "construction": "docker create --name <unique> aios-sandbox:local; docker export --output <tar> <container>; tar -xf <tar> -C <rootfs>"
+  "construction": "docker build --pull from the pinned base/snapshot; docker create --name <unique> <image>; docker export --output <tar> <container>; tar -xf <tar> -C <rootfs>"
 }
