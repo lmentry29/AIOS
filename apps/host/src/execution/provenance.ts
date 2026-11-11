@@ -17,6 +17,7 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
 } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -721,6 +722,41 @@ export function materializeVerifiedRuntime(
 }
 
 /**
+ * Copy a rootfs tree entry by entry so permission bits survive regardless of the Node
+ * version's `fs.cp` mode behavior. Ownership is the invoking user on both sides because the
+ * export used `--no-same-owner`; special files fail closed. Extended attributes are not copied
+ * and are caught by the digest comparison if the source carries any.
+ */
+function copyRootfsTree(source: string, target: string): void {
+  const mode = Number(lstatSync(source, { bigint: true }).mode & 0o7777n);
+  mkdirSync(target, { mode });
+  chmodSync(target, mode);
+  const walk = (from: string, to: string): void => {
+    for (const name of readdirSync(from)) {
+      const src = join(from, name);
+      const dst = join(to, name);
+      const stats = lstatSync(src);
+      const bits = stats.mode & 0o7777;
+      if (stats.isSymbolicLink()) {
+        symlinkSync(readlinkSync(src), dst);
+      } else if (stats.isDirectory()) {
+        mkdirSync(dst, { mode: bits });
+        chmodSync(dst, bits);
+        walk(src, dst);
+      } else if (stats.isFile()) {
+        copyFileSync(src, dst, fsConstants.COPYFILE_EXCL);
+        chmodSync(dst, bits);
+      } else {
+        throw new ProvenanceError(
+          `The gVisor rootfs contains a special file that cannot be materialized: ${src}.`,
+        );
+      }
+    }
+  };
+  walk(source, target);
+}
+
+/**
  * Copy a measured rootfs into a private, invocation-owned directory and require the copy to
  * measure identically. The runtime receives the copy, so runtime scratch state cannot mutate
  * the operator's rootfs and the executed tree is the tree this invocation measured.
@@ -749,13 +785,7 @@ export function materializeVerifiedRootfs(
     if (error instanceof ProvenanceError) throw error;
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  cpSync(root, target, {
-    recursive: true,
-    dereference: false,
-    errorOnExist: true,
-    force: false,
-    verbatimSymlinks: true,
-  });
+  copyRootfsTree(root, target);
   try {
     const digest = digestRootfs(target);
     const mismatched = digestMismatches(expected, digest, false);
