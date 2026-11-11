@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
 import type { FounderAuthorizationPort } from './index.js';
 import { vaultEvidenceSourceId } from './obsidian-evidence.js';
+import { createLoopbackFetcher } from './security/ssrf.js';
+import type { TaintLabel } from './security/taint.js';
 
 export interface LocalConnectorEvidenceOptions {
   /** Explicit-port IPv4 loopback URL for the authenticated local Obsidian++ API. */
@@ -22,6 +24,7 @@ export interface GmailEvidenceRecord {
   from: string;
   date: string;
   snippet: string;
+  taint?: readonly TaintLabel[];
 }
 
 export interface NotionApplicationEvidenceRecord {
@@ -36,6 +39,7 @@ export interface NotionApplicationEvidenceRecord {
   interview_date: string | null;
   contact: string;
   notes: string;
+  taint?: readonly TaintLabel[];
 }
 
 export interface FounderConnectorEvidenceReadPort {
@@ -117,12 +121,12 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
     }
     this.gmailResourceId = options.gmailResourceId;
     this.notionResourceId = options.notionResourceId;
-    this.fetcher = options.fetch ?? globalThis.fetch;
-    if (typeof this.fetcher !== 'function') throw new LocalConnectorEvidenceError('Fetch implementation is unavailable.');
     this.timeoutMs = options.timeoutMs ?? 10_000;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 100 || this.timeoutMs > 120_000) {
       throw new LocalConnectorEvidenceError('Local connector timeout is outside the supported range.');
     }
+    this.fetcher = options.fetch ?? createLoopbackFetcher(this.baseUrl, this.timeoutMs);
+    if (typeof this.fetcher !== 'function') throw new LocalConnectorEvidenceError('Fetch implementation is unavailable.');
     this.authorizationHeader = `Basic ${Buffer.from(`local:${options.password}`).toString('base64')}`;
   }
 
@@ -153,6 +157,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
         from: requiredText(item.from, 'sender', 998),
         date: requiredText(item.date, 'date', 128),
         snippet: requiredText(item.snippet, 'snippet', 8192),
+        taint: ['external_untrusted', 'prompt_injection_risk', 'connector_poisoning_risk'] as const,
       });
     });
   }
@@ -178,6 +183,7 @@ export class AuthorizedLocalConnectorEvidenceReader implements FounderConnectorE
         interview_date: nullableDate(item.interviewDate, 'interview date'),
         contact: requiredText(item.contact, 'contact', 500),
         notes: requiredText(item.notes, 'notes', 8192),
+        taint: ['external_untrusted', 'prompt_injection_risk', 'connector_poisoning_risk'] as const,
       });
     });
   }

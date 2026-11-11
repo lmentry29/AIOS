@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type { FounderAuthorizationPort } from '../src/index.js';
 import {
@@ -58,6 +60,11 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
     expect(results[0]?.source_type).toBe('gmail');
     expect(results[0]?.source_id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(results[0]?.snippet).toContain('interview');
+    expect(results[0]?.taint).toEqual([
+      'external_untrusted',
+      'prompt_injection_risk',
+      'connector_poisoning_risk',
+    ]);
   });
 
   it('denies Gmail and Notion before any HTTP request when resource authorization fails', async () => {
@@ -99,6 +106,7 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
     expect(results[0]?.source_id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(results[0]?.position).toBe('Sales Development Representative');
     expect(results[0]?.date_applied).toBe('2026-11-01');
+    expect(results[0]?.taint).toContain('connector_poisoning_risk');
   });
 
   it('rejects invalid actors, unsafe base URLs, duplicate resources, and invalid query input', async () => {
@@ -107,6 +115,8 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
       .toThrow(/loopback URL/);
     expect(() => new AuthorizedLocalConnectorEvidenceReader({ ...options, notionResourceId: options.gmailResourceId, fetch: fetcher }, { authorize: async () => true }))
       .toThrow(/distinct valid resource UUIDs/);
+    expect(() => new AuthorizedLocalConnectorEvidenceReader({ ...options, timeoutMs: 99, fetch: fetcher }, { authorize: async () => true }))
+      .toThrow(/timeout/);
     const h = reader(fetcher);
     await expect(h.instance.searchGmail('bad\nquery', 'human:founder')).rejects.toBeInstanceOf(LocalConnectorEvidenceError);
     await expect(h.instance.searchGmail('   ', 'human:founder')).rejects.toBeInstanceOf(LocalConnectorEvidenceError);
@@ -155,5 +165,48 @@ describe('AuthorizedLocalConnectorEvidenceReader', () => {
 
     const oversized = reader(vi.fn(async () => response({ results: Array.from({ length: 6 }, () => ({})) })) as unknown as typeof fetch);
     await expect(oversized.instance.searchGmail('test', 'human:founder')).rejects.toThrow(/invalid result collection/);
+  });
+
+  it('uses the pinned loopback transport by default and rejects provider redirects', async () => {
+    const server = createServer((request, res) => {
+      if (request.url?.startsWith('/api/connectors/gmail/search')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          results: [{
+            id: 'safe-default-1',
+            subject: 'Default transport',
+            from: 'provider@example.com',
+            date: 'Mon, 09 Nov 2026 10:00:00 +0000',
+            snippet: 'served by the safe client',
+          }],
+        }));
+        return;
+      }
+      if (request.url?.startsWith('/api/connectors/notion/applications')) {
+        res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data' });
+        res.end();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address() as AddressInfo;
+    try {
+      const instance = new AuthorizedLocalConnectorEvidenceReader({
+        ...options,
+        baseUrl: `http://127.0.0.1:${address.port}`,
+      }, { authorize: async () => true });
+      const records = await instance.searchGmail('default transport', 'human:founder');
+      expect(records[0]?.provider_id).toBe('safe-default-1');
+      expect(records[0]?.taint).toContain('external_untrusted');
+      await expect(instance.listNotionApplications('human:founder'))
+        .rejects.toThrow(/request failed or timed out/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

@@ -44,7 +44,7 @@ export function createLocalEvidenceRuntime(options: LocalEvidenceRuntimeOptions)
       baseUrl: options.obsidianBaseUrl ?? 'http://127.0.0.1:4444',
       password: options.obsidianPassword,
       vaultResourceId: options.vaultResourceId,
-      fetch: options.fetch ?? globalThis.fetch,
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       timeoutMs: options.timeoutMs ?? 10_000,
     }, authorization);
     const connectors = new AuthorizedLocalConnectorEvidenceReader({
@@ -52,7 +52,7 @@ export function createLocalEvidenceRuntime(options: LocalEvidenceRuntimeOptions)
       password: options.obsidianPassword,
       gmailResourceId: options.gmailResourceId,
       notionResourceId: options.notionResourceId,
-      fetch: options.fetch ?? globalThis.fetch,
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       timeoutMs: options.timeoutMs ?? 10_000,
     }, authorization);
     return {

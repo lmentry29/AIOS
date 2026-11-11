@@ -3,7 +3,13 @@ import type { ArtifactEntity as ArtifactEntityType, CanonicalEntity } from '@aio
 import { ArtifactEntity } from '@aios/core';
 import type { KnowledgeRecord, KnowledgeStage } from '@aios/learning';
 import { ObjectStore } from '@aios/objects';
-import type { AccessAction } from './authorization.js';
+import type { AccessAction } from './security/capability-inventory.js';
+import {
+  TaintSinkPolicy,
+  assertTaintSink,
+  taintMark,
+  type TaintLabel,
+} from './security/taint.js';
 import type { FounderEvidenceReadPort, VaultEvidenceRecord, VaultEvidenceWarning } from './obsidian-evidence.js';
 import type { FounderConnectorEvidenceReadPort, GmailEvidenceRecord, NotionApplicationEvidenceRecord } from './local-connectors.js';
 
@@ -60,6 +66,8 @@ export interface FounderEvidenceResponse {
   total_files: number;
   last_updated: string;
   vault_resource_id: string;
+  /** Labels describing external content in this response; absent when no label applies. */
+  taint?: readonly TaintLabel[];
 }
 
 function isActorReference(value: unknown): value is string {
@@ -80,6 +88,33 @@ function searchableText(value: unknown): string {
   if (typeof value === 'string') return value.toLocaleLowerCase();
   try { return (JSON.stringify(value) ?? '').toLocaleLowerCase(); }
   catch { return ''; }
+}
+
+/**
+ * The trusted host response is an explicit taint sink. It may display external content to
+ * the authenticated user, but a label added in the future without updating this policy is
+ * denied rather than silently rendered.
+ */
+const HOST_RESPONSE_TAINT_POLICY = new TaintSinkPolicy({
+  allowed_labels: {
+    host_response: [
+      'external_untrusted',
+      'prompt_injection_risk',
+      'connector_poisoning_risk',
+    ],
+  },
+});
+
+function assertHostResponseTaint(
+  records: readonly { source_id: string; taint?: readonly TaintLabel[] }[],
+): void {
+  const marks = records.filter((record) => (record.taint?.length ?? 0) > 0);
+  if (marks.length === 0) return;
+  const mark = taintMark(
+    marks.flatMap((record) => record.taint ?? []),
+    marks.map((record) => record.source_id),
+  );
+  assertTaintSink(mark, 'host_response', HOST_RESPONSE_TAINT_POLICY);
 }
 
 export class FounderInputError extends Error {
@@ -188,6 +223,8 @@ export class FounderInterface {
     const matchingEvidence = inventory.files.filter((record) => terms.every((term) =>
       searchableText([record.path, record.name, record.folder ?? '', record.frontmatter, record.content]).includes(term),
     ));
+    assertHostResponseTaint(matchingEvidence);
+    const taint = [...new Set(matchingEvidence.flatMap((record) => record.taint ?? []))];
     return {
       question,
       matching_evidence: matchingEvidence,
@@ -195,6 +232,7 @@ export class FounderInterface {
       total_files: inventory.total_files,
       last_updated: inventory.last_updated,
       vault_resource_id: inventory.vault_resource_id,
+      ...(taint.length === 0 ? {} : { taint }),
     };
   }
 
@@ -202,14 +240,18 @@ export class FounderInterface {
   async searchGmail(query: string, actorId: string): Promise<GmailEvidenceRecord[]> {
     if (!isActorReference(actorId)) throw new FounderInputError('Gmail search requires a valid authenticated actor identifier.');
     if (!this.connectors) throw new FounderInputError('Local Gmail connector is not configured.');
-    return this.connectors.searchGmail(query, actorId);
+    const records = await this.connectors.searchGmail(query, actorId);
+    assertHostResponseTaint(records);
+    return records;
   }
 
   /** Read the configured Notion job-application database through its separate resource grant. */
   async listNotionApplications(actorId: string): Promise<NotionApplicationEvidenceRecord[]> {
     if (!isActorReference(actorId)) throw new FounderInputError('Notion reads require a valid authenticated actor identifier.');
     if (!this.connectors) throw new FounderInputError('Local Notion connector is not configured.');
-    return this.connectors.listNotionApplications(actorId);
+    const records = await this.connectors.listNotionApplications(actorId);
+    assertHostResponseTaint(records);
+    return records;
   }
 
   async recordDecision(decision: FounderDecisionRecord, actorId: string): Promise<string> {
@@ -314,3 +356,6 @@ export * from './obsidian-evidence.js';
 export * from './local-connectors.js';
 export * from './file-policy-registry.js';
 export * from './local-runtime.js';
+export * from './security/taint.js';
+export * from './security/sensitive-path.js';
+export * from './security/ssrf.js';

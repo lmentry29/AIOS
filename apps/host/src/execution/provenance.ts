@@ -10,7 +10,6 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
   readSync,
   realpathSync,
   readdirSync,
@@ -21,6 +20,8 @@ import {
 } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fsyncDirectory } from '../persistence/fsync-directory.js';
+import { FileIntegrityError, readBoundedRegularFile } from '../security/file-integrity.js';
 
 /**
  * Provenance primitives for the gVisor runtime and its OCI rootfs.
@@ -178,21 +179,21 @@ export function hashFile(path: string, algorithm: 'sha256' | 'sha512'): string {
   return hash.digest('hex');
 }
 
+function readProvenanceFile(path: string, label: string, maxBytes: number): Buffer {
+  try {
+    return readBoundedRegularFile(path, label, maxBytes);
+  } catch (error) {
+    if (error instanceof FileIntegrityError) throw new ProvenanceError(error.message);
+    throw error;
+  }
+}
+
 export function readGvisorRuntimePin(pinPath: string): LoadedGvisorRuntimePin {
   const path = resolve(pinPath);
-  let stats: ReturnType<typeof lstatSync>;
-  try {
-    stats = lstatSync(path);
-  } catch {
-    throw new ProvenanceError(`The gVisor runtime pin file does not exist: ${path}.`);
-  }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new ProvenanceError(`The gVisor runtime pin must be a regular file, not a symlink: ${path}.`);
-  }
-
+  const contents = readProvenanceFile(path, 'gVisor runtime pin file', 8 * 1024 * 1024);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    parsed = JSON.parse(contents.toString('utf8')) as unknown;
   } catch (error) {
     throw new ProvenanceError(
       `The gVisor runtime pin is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
@@ -247,7 +248,7 @@ export function readGvisorRuntimePin(pinPath: string): LoadedGvisorRuntimePin {
       artifact: { url, sha512: artifactSha512 },
       runsc: { version, sha256: runscSha256 },
     },
-    pin_sha256: hashFile(path, 'sha256'),
+    pin_sha256: createHash('sha256').update(contents).digest('hex'),
     path,
   };
 }
@@ -266,19 +267,10 @@ export function verifyPinnedArtifact(archivePath: string, expectedSha512: string
 /** Read and validate the immutable inputs used to build the gVisor drill rootfs. */
 export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBuildPin {
   const path = resolve(pinPath);
-  let stats: ReturnType<typeof lstatSync>;
-  try {
-    stats = lstatSync(path);
-  } catch {
-    throw new ProvenanceError(`The gVisor rootfs build pin file does not exist: ${path}.`);
-  }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new ProvenanceError(`The gVisor rootfs build pin must be a regular file, not a symlink: ${path}.`);
-  }
-
+  const contents = readProvenanceFile(path, 'gVisor rootfs build pin file', 8 * 1024 * 1024);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    parsed = JSON.parse(contents.toString('utf8')) as unknown;
   } catch (error) {
     throw new ProvenanceError(
       `The gVisor rootfs build pin is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
@@ -379,7 +371,7 @@ export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBui
       excluded_paths: parsed.excluded_paths as string[],
       construction,
     },
-    pin_sha256: hashFile(path, 'sha256'),
+    pin_sha256: createHash('sha256').update(contents).digest('hex'),
     path,
   };
 }
@@ -387,16 +379,7 @@ export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBui
 /** Require the Dockerfile to use exactly the pinned base, snapshot and package versions. */
 export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerfilePath: string): void {
   const path = resolve(dockerfilePath);
-  let stats: ReturnType<typeof lstatSync>;
-  try {
-    stats = lstatSync(path);
-  } catch {
-    throw new ProvenanceError(`The gVisor rootfs Dockerfile does not exist: ${path}.`);
-  }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new ProvenanceError(`The gVisor rootfs Dockerfile must be a regular file, not a symlink: ${path}.`);
-  }
-  const contents = readFileSync(path, 'utf8');
+  const contents = readProvenanceFile(path, 'gVisor rootfs Dockerfile', 8 * 1024 * 1024).toString('utf8');
 
   const froms = [...contents.matchAll(/^FROM\s+(\S+)\s*$/gm)].map((match) => match[1]);
   // The platform digest is the manifest the amd64 build actually resolves to. Pinning the
@@ -547,6 +530,7 @@ export function promoteOwnedDirectory(directory: OwnedDirectory, destination: st
     throw new ProvenanceError(`The staged output was replaced during preparation: ${directory.path}.`);
   }
   renameSync(directory.path, target);
+  fsyncDirectory(parent);
 }
 
 function digestMismatches(first: RootfsDigestLike, second: RootfsDigestLike, timestamps: boolean): string[] {

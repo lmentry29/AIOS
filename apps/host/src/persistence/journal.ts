@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { fsyncDirectory } from './fsync-directory.js';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
@@ -148,20 +149,6 @@ function readVerifiedJournalFile(filePath: string, maxBytes: number): JournalRec
     previousHash = record.hash;
   }
   return records;
-}
-
-function fsyncDirectory(directory: string): void {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(directory, 'r');
-    fsyncSync(descriptor);
-  } catch {
-    // Directory fsync is unavailable on some filesystems; the file itself is already fsynced.
-  } finally {
-    if (descriptor !== undefined) {
-      try { closeSync(descriptor); } catch { /* best effort */ }
-    }
-  }
 }
 
 function writeFileAtomically(filePath: string, contents: string): void {

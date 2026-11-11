@@ -94,6 +94,7 @@ describe('AuthorizedVaultEvidenceReader', () => {
     expect(inventory.files).toHaveLength(1);
     expect(inventory.files[0]?.content).toBe('# Founder memory');
     expect(inventory.files[0]?.source_id).toBe(vaultEvidenceSourceId(vaultResourceId, '11 AI Memory/founder.md'));
+    expect(inventory.files[0]?.taint).toEqual(['external_untrusted', 'prompt_injection_risk']);
     expect(calls).toHaveLength(2);
     for (const call of calls) {
       expect(call.url.origin).toBe('http://127.0.0.1:4444');
@@ -127,6 +128,20 @@ describe('AuthorizedVaultEvidenceReader', () => {
     await expect(changedReader.list('human:founder')).rejects.toThrow(VaultEvidenceChangedError);
   });
 
+  it('rejects a credential-like note path even when it has a Markdown suffix', async () => {
+    const credentialPath = '.env.md';
+    const note = 'do not expose';
+    const fetcher = vi.fn(async () => response({
+      files: [metadata(credentialPath, note)],
+      warnings: [],
+      totalFiles: 1,
+      lastUpdated: '2026-11-09T12:00:00.000Z',
+    })) as unknown as typeof fetch;
+    const reader = new AuthorizedVaultEvidenceReader({ password, vaultResourceId, fetch: fetcher }, authorization);
+    await expect(reader.list('human:founder')).rejects.toThrow(/protected credential path/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects duplicate paths in an evidence inventory', async () => {
     const note = '# duplicate';
     const duplicateFetcher = vi.fn(async () => response({
@@ -158,6 +173,7 @@ describe('FounderInterface.queryEvidence', () => {
             content_hash: 'a'.repeat(64),
             content_bytes: 30,
             content: 'The founder approved Obsidian persistence.',
+            taint: ['external_untrusted', 'prompt_injection_risk'] as const,
           },
           {
             source_id: vaultEvidenceSourceId(vaultResourceId, '00 Home/other.md'),
@@ -191,6 +207,41 @@ describe('FounderInterface.queryEvidence', () => {
     expect(result.matching_evidence).toHaveLength(1);
     expect(result.matching_evidence[0]?.path).toBe('11 AI Memory/founder.md');
     expect(result.warnings).toHaveLength(1);
+    expect(result.taint).toEqual(['external_untrusted', 'prompt_injection_risk']);
     expect(evidence.list).toHaveBeenCalledWith('human:founder');
+  });
+
+  it('fails closed when a record carries an unknown taint label', async () => {
+    const evidence = {
+      list: vi.fn().mockResolvedValue({
+        vault_resource_id: vaultResourceId,
+        files: [{
+          source_id: vaultEvidenceSourceId(vaultResourceId, '00 Home/note.md'),
+          path: '00 Home/note.md',
+          name: 'note',
+          folder: '00 Home',
+          frontmatter: {},
+          frontmatter_valid: true,
+          frontmatter_error: null,
+          last_modified: '2026-11-09T12:00:00.000Z',
+          content_hash: 'c'.repeat(64),
+          content_bytes: 10,
+          content: 'tainted',
+          taint: ['unexpected_label'],
+        }],
+        warnings: [],
+        total_files: 1,
+        last_updated: '2026-11-09T12:00:00.000Z',
+      }),
+    };
+    const founder = new FounderInterface(
+      { list: () => [] },
+      { listByStage: () => [] },
+      { authorize: vi.fn().mockResolvedValue(false) },
+      { decisionCollectionId: randomUUID() },
+      undefined,
+      evidence as never,
+    );
+    await expect(founder.queryEvidence('tainted', 'human:founder')).rejects.toThrow(/unsupported label/);
   });
 });

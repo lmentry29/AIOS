@@ -6,8 +6,9 @@ import {
   sign as cryptoSign,
   verify as cryptoVerify,
 } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { assertNotSensitivePath, SensitivePathError } from '@aios/founder';
+import { FileIntegrityError, readBoundedRegularFile } from '../security/file-integrity.js';
 import {
   type TrustRoot,
   keyIdForPublicKey,
@@ -216,24 +217,33 @@ function validateArtifacts(value: unknown): BuildArtifact[] {
   return artifacts.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/** Reads a bounded regular artifact, rejecting symlinks, and returns its measured digest. */
+/** Reads a bounded regular artifact, rejecting symlinks and protected locations. */
 export function measureBuildArtifact(name: string, path: string): BuildArtifact {
   if (typeof name !== 'string' || !ARTIFACT_NAME.test(name)) {
     fail('MALFORMED_ATTESTATION', 'Artifact names must be bounded [A-Za-z0-9._:-] identifiers.');
   }
   if (typeof path !== 'string' || path.length === 0) fail('MALFORMED_ATTESTATION', 'Artifact path is required.');
   const resolved = resolve(path);
-  let stats: ReturnType<typeof lstatSync>;
   try {
-    stats = lstatSync(resolved);
-  } catch {
-    fail('ARTIFACT_MISSING', `Artifact ${name} does not exist: ${resolved}.`);
+    assertNotSensitivePath(name, 'Build artifact name');
+    assertNotSensitivePath(resolved, 'Build artifact path');
+  } catch (error) {
+    if (error instanceof SensitivePathError) {
+      fail('MALFORMED_ATTESTATION', `Artifact ${name} points at a protected credential location.`);
+    }
+    throw error;
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    fail('MALFORMED_ATTESTATION', `Artifact ${name} must be a regular file, not a symlink.`);
+  let contents: Buffer;
+  try {
+    contents = readBoundedRegularFile(resolved, `Artifact ${name}`, MAX_ARTIFACT_BYTES);
+  } catch (error) {
+    if (error instanceof FileIntegrityError) {
+      if (error.code === 'missing') fail('ARTIFACT_MISSING', `Artifact ${name} does not exist: ${resolved}.`);
+      fail('MALFORMED_ATTESTATION', `Artifact ${name} must be a bounded regular file, not a symlink.`);
+    }
+    throw error;
   }
-  if (stats.size > MAX_ARTIFACT_BYTES) fail('MALFORMED_ATTESTATION', `Artifact ${name} exceeds the size limit.`);
-  return { name, sha256: sha256(readFileSync(resolved)), size: stats.size };
+  return { name, sha256: sha256(contents), size: contents.byteLength };
 }
 
 function validateAttestationKey(value: unknown): BuildAttestationKey {
@@ -469,5 +479,7 @@ export function verifyBuildAttestation(options: {
 }
 
 export function loadBuildAttestation(path: string): BuildAttestation {
-  return parseBuildAttestation(readFileSync(path, 'utf8'));
+  return parseBuildAttestation(
+    readBoundedRegularFile(path, 'build attestation', MAX_ATTESTATION_BYTES).toString('utf8'),
+  );
 }

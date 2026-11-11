@@ -1,5 +1,8 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
-import { chmodSync, closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, fsyncSync } from 'node:fs';
+import { chmodSync, closeSync, openSync, renameSync, unlinkSync, writeFileSync, fsyncSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fsyncDirectory } from '../persistence/fsync-directory.js';
+import { readBoundedRegularFile } from '../security/file-integrity.js';
 import type { ArtifactEntity, TaskEntity } from '@aios/core';
 import type { ExecutionRecord } from '../persistence/execution-ledger.js';
 import type { JournalRecord } from '../persistence/journal.js';
@@ -760,7 +763,9 @@ export function verifyEvidenceBundle(options: {
 }
 
 export function loadEvidenceBundle(path: string): EvidenceBundle {
-  return parseEvidenceBundle(readFileSync(path, 'utf8'));
+  return parseEvidenceBundle(
+    readBoundedRegularFile(path, 'evidence bundle', MAX_BUNDLE_BYTES).toString('utf8'),
+  );
 }
 
 export function loadTrustRootForBundle(path: string): TrustRoot {
@@ -782,4 +787,5 @@ export function writeEvidenceBundle(path: string, bundle: EvidenceBundle): void 
   closeSync(descriptor);
   chmodSync(temporary, 0o600);
   renameSync(temporary, path);
+  fsyncDirectory(dirname(path));
 }

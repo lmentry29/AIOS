@@ -6,8 +6,7 @@ import {
   sign as cryptoSign,
   verify as cryptoVerify,
 } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readBoundedRegularFile } from '../security/file-integrity.js';
 
 /**
  * Detached-signature trust chain for gVisor provenance artifacts.
@@ -275,20 +274,11 @@ export function parseStrictJson(text: string, label: string): unknown {
 }
 
 function readCappedFile(path: string, label: string, maxBytes: number): Buffer {
-  const resolved = resolve(path);
-  let stats: ReturnType<typeof lstatSync>;
   try {
-    stats = lstatSync(resolved);
-  } catch {
-    throw new SigningError(`The ${label} does not exist: ${resolved}.`);
+    return readBoundedRegularFile(path, label, maxBytes);
+  } catch (error) {
+    throw new SigningError(error instanceof Error ? error.message : `The ${label} could not be read.`);
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new SigningError(`The ${label} must be a regular file, not a symlink: ${resolved}.`);
-  }
-  if (stats.size > maxBytes) {
-    throw new SigningError(`The ${label} exceeds the ${maxBytes}-byte limit: ${resolved}.`);
-  }
-  return readFileSync(resolved);
 }
 
 function validateSubject(subject: Record<string, unknown>, context: string): SignatureSubject {

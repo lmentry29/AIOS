@@ -507,4 +507,25 @@ describe('Authorization audit correlation and grant binding', () => {
     expect(await auth.authorize({ actor_id: 'human:other', action: 'execute', resource_id: resourceId }))
       .toBe(false);
   });
+
+  it('denies and audits an unknown capability instead of inferring authority', async () => {
+    const audit = new InMemoryAuthorizationAuditStore();
+    const auth = new AuthorizationService(
+      new StaticAccessPolicyStore([policy]),
+      async () => policyId,
+      audit,
+    );
+    expect(await auth.authorize({
+      actor_id: actorId,
+      action: 'read_everything' as never,
+      resource_id: resourceId,
+    })).toBe(false);
+    expect(audit.list()).toMatchObject([{
+      action: 'read_everything',
+      actor_id: actorId,
+      resource_id: resourceId,
+      decision: 'deny',
+      reason: 'invalid_request',
+    }]);
+  });
 });

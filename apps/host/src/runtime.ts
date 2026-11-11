@@ -292,7 +292,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
               baseUrl: config.obsidian.base_url,
               password: options.obsidianPassword ?? '',
               vaultResourceId: config.resources.vault,
-              fetch: options.fetch ?? globalThis.fetch,
+              ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             },
             boundary,
           )
@@ -304,7 +304,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
               password: options.obsidianPassword ?? '',
               gmailResourceId: config.resources.gmail,
               notionResourceId: config.resources.notion,
-              fetch: options.fetch ?? globalThis.fetch,
+              ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             },
             boundary,
           )

@@ -1,6 +1,12 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import type { FounderAuthorizationPort } from './index.js';
+import {
+  SensitivePathError,
+  assertNotSensitivePath,
+} from './security/sensitive-path.js';
+import { createLoopbackFetcher } from './security/ssrf.js';
+import type { TaintLabel } from './security/taint.js';
 
 export interface VaultEvidenceWarning {
   path: string;
@@ -23,6 +29,8 @@ export interface VaultEvidenceMetadata {
 
 export interface VaultEvidenceRecord extends VaultEvidenceMetadata {
   content: string;
+  /** External-content labels; callers must preserve them at every downstream sink. */
+  taint?: readonly TaintLabel[];
 }
 
 export interface VaultEvidenceInventory {
@@ -118,6 +126,14 @@ function safeVaultPath(value: unknown): string {
     || !value.toLowerCase().endsWith('.md')) {
     throw new VaultEvidenceError('Vault API returned an unsafe Markdown path.');
   }
+  try {
+    assertNotSensitivePath(value, 'Vault evidence path');
+  } catch (error) {
+    if (error instanceof SensitivePathError) {
+      throw new VaultEvidenceError('Vault API returned a protected credential path.');
+    }
+    throw error;
+  }
   return value;
 }
 
@@ -206,8 +222,6 @@ class ObsidianVaultEvidenceAdapter {
     }
     if (!isUuid(options.vaultResourceId)) throw new VaultEvidenceError('Vault resource ID must be a UUID.');
     this.vaultResourceId = options.vaultResourceId;
-    this.fetcher = options.fetch ?? globalThis.fetch;
-    if (typeof this.fetcher !== 'function') throw new VaultEvidenceError('Fetch implementation is unavailable.');
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxFiles = options.maxFiles ?? 500;
     this.maxFileBytes = options.maxFileBytes ?? 1_048_576;
@@ -220,6 +234,8 @@ class ObsidianVaultEvidenceAdapter {
       || !Number.isSafeInteger(this.concurrency) || this.concurrency < 1 || this.concurrency > 16) {
       throw new VaultEvidenceError('Vault evidence limits are outside the supported range.');
     }
+    this.fetcher = options.fetch ?? createLoopbackFetcher(this.baseUrl, this.timeoutMs);
+    if (typeof this.fetcher !== 'function') throw new VaultEvidenceError('Fetch implementation is unavailable.');
     this.authorization = `Basic ${Buffer.from(`local:${options.password}`).toString('base64')}`;
   }
 
@@ -266,7 +282,11 @@ class ObsidianVaultEvidenceAdapter {
     }
     const contentHash = createHash('sha256').update(payload.content, 'utf8').digest('hex');
     if (contentHash !== metadata.content_hash) throw new VaultEvidenceChangedError(safePath);
-    return deepFreeze({ ...metadata, content: payload.content });
+    return deepFreeze({
+      ...metadata,
+      content: payload.content,
+      taint: ['external_untrusted', 'prompt_injection_risk'] as const,
+    });
   }
 
   private async getJson(url: URL): Promise<unknown> {
