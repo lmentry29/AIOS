@@ -51,14 +51,15 @@ Founder Intelligence vault's own access controls.
 ## Explicit non-goals / residual risk
 
 - **Shared-kernel isolation.** bubblewrap and Docker do not survive a host-kernel exploit.
-  gVisor or a VM boundary is required for hostile multi-tenant workloads; neither is validated
-  in this repository yet.
+  gVisor is now measured (ADR-0032), but it is a user-space kernel, not a VM; a VM boundary is
+  still not validated in this repository.
 - **System-call attack surface.** bubblewrap now installs a generated seccomp deny-list
   (ADR-0027) that kills ptrace, mount/namespace, keyring/module, bpf/perf, io_uring,
   userfaultfd, and related syscalls. It is a deny-list, not a complete allow-list: unlisted
   syscall families remain callable, and the filter does not make the shared kernel safe.
-  Landlock is not active on the validation host, and Docker/Seatbelt/gVisor/Apple
-  Containerization remain unverified. A denied syscall is journaled as
+  Landlock is not active on the validation host; Docker and gVisor are measured
+  (ADR-0031/ADR-0032), while Seatbelt and Apple Containerization remain unverified. A denied
+  syscall is journaled as
   `sandbox_syscall_denied`; missing filter proof is `sandbox_filter_unavailable`.
 - **Resource exhaustion.** bubblewrap now installs per-process `RLIMIT_AS` (1.25 GiB),
   `RLIMIT_CPU` (the run deadline rounded up to whole seconds), and `RLIMIT_NPROC` (128) with

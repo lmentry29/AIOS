@@ -503,8 +503,8 @@ incident procedure, ordering, restart expectations, and remaining limits.
   key rotation, or protection against a compromised host process. Bubblewrap installs a
   generated seccomp deny-list before exec (ADR-0027) and per-process RLIMIT limits (ADR-0028),
   but still lacks aggregate cgroup accounting, has no active Landlock profile, and is suitable
-  only for trusted local commands; Docker,
-  Seatbelt, and gVisor remain unverified.
+  only for trusted local commands; Docker and gVisor are measured in CI
+  (ADR-0031/ADR-0032); Seatbelt remains unverified.
 - **Live integrations.** Vault, Gmail, and Notion readers are composed but untested against
   real services; per-note vault authorization remains collection-level.
 - **Founder experience.** The API is usable; there is no UI, and no Mission/Objective

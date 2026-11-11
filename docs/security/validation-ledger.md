@@ -16,7 +16,7 @@ User: unprivileged UID with an empty effective capability set (`CapEff: 00000000
 | Docker daemon | `docker info --format '{{.ServerVersion}}'` | permission denied on `/var/run/docker.sock` — **container boundary unverified** |
 | bubblewrap availability | extract `bubblewrap_0.9.0-1ubuntu0.3_amd64.deb`; `bwrap --version` | `bubblewrap 0.9.0` |
 | macOS Seatbelt | platform check | not macOS — **unverified** |
-| gVisor / Apple Containerization | not installed | **not integrated / unverified** |
+| gVisor / Apple Containerization | not installed at the first pass | gVisor measured later (ADR-0032); Apple Containerization unavailable |
 
 Live provider suite: `AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts` → **9 passed**.
 
@@ -189,9 +189,10 @@ Observed properties:
 
 Limits of this evidence: the filter is a **deny-list**, so unlisted syscalls remain available;
 Landlock is not active on this kernel; the arm64 profile table was generated but not live-run
-on this x86_64 host; Docker, Seatbelt, gVisor, and Apple Containerization remain unverified;
-the shared host kernel remains in scope; there is no aggregate cgroup CPU/memory accounting or
-hard disk quota. See ADR-0027 and F-007.
+on this x86_64 host; at this checkpoint Docker, Seatbelt, gVisor, and Apple Containerization were
+unverified; Docker and gVisor are now measured (ADR-0031/ADR-0032), while Seatbelt/Apple remain
+unavailable. The shared host kernel remains in scope; there is no aggregate cgroup CPU/memory
+accounting or hard disk quota. See ADR-0027 and F-007.
 
 ## 2026-11-10 — bubblewrap per-run resource limits (F-003)
 
@@ -248,8 +249,9 @@ Limits of this evidence: these are **per-process** kernel limits, not cgroup agg
 accounting. Up to 128 descendants can each reserve the 1.25 GiB address-space cap, RLIMIT_AS
 is not RSS, and CPU limits are per-process. The existing F-007 deny-list still kills Node/libuv
 at startup because libuv probes `io_uring_setup`; the drill uses Perl, which does not probe
-io_uring. Docker, gVisor, Seatbelt, and Apple Containerization remain unverified or
-unavailable; the shared kernel remains in scope. See ADR-0028 and F-003.
+io_uring. At this checkpoint Docker, gVisor, Seatbelt, and Apple Containerization were unverified
+or unavailable; Docker and gVisor are now measured (ADR-0031/ADR-0032), while Seatbelt/Apple
+remain unavailable. The shared kernel remains in scope. See ADR-0028 and F-003.
 
 ## 2026-11-10 — Zod advisory closure and blocked-finding mitigations (`24d2791`)
 
@@ -762,8 +764,10 @@ permission denied while trying to connect to the docker API at unix:///var/run/d
 ```
 
 The measured Docker run was therefore executed by GitHub Actions, not locally. The drill
-reported the runner kernel `7.0.0-1017-azure`; the job did not separately print the Docker
-engine version or assert whether its daemon was rootful or rootless.
+reported the runner kernel `7.0.0-1017-azure`; that job did not separately print the Docker
+engine version or assert whether its daemon was rootful or rootless. The later `54344f1` run
+closes that metadata gap: engine `28.0.4`, `rootless:false` (see the gVisor/engine section
+below).
 
 Commands actually run locally at code head `40438a5`:
 
@@ -844,8 +848,9 @@ recorded separately; the daemon is trusted for its active-profile report.
 
 What this does not establish:
 
-- Rootless Docker, subuid/subgid mapping, rootless cgroup delegation, or the runner daemon's
-  rootful/rootless mode. The local host remains Docker-unavailable.
+- Rootless Docker, subuid/subgid mapping, or rootless cgroup delegation. The measured daemon at
+  `54344f1` was rootful, so rootless mode is not established. The local host remains
+  Docker-unavailable.
 - A per-process `RLIMIT_AS` for Docker. The CLI rejects `--ulimit as`; the measured memory
   control is the aggregate 512 MiB cgroup, not bubblewrap's 1.25 GiB address-space rlimit.
 - Signed or digest-pinned image provenance. The CI image is a local `debian:bookworm-slim`
@@ -867,3 +872,118 @@ records the selection and threat-model delta; F-006 is fixed for the measured CI
 remaining Docker work is rootless-mode measurement, image signing/pinning, and a run on an
 operator-controlled daemon. `main` must remain untouched, PR #1 must remain draft/unmerged,
 and only `community/open-source-foundation` may be pushed.
+
+## 2026-11-11 — gVisor provider and measured Docker engine (`54344f1`)
+
+The gVisor adapter is now a real explicit provider: `provider: gvisor` plus an absolute,
+non-symlink, non-`/` `rootfs` builds a generated OCI bundle and runs
+`runsc --rootless --network=none run`. It does not use `runsc do`, which would expose the host
+rootfs read-only. The workload gets a read-only controlled rootfs, one writable workspace bind,
+private PID/network/IPC/UTS/mount namespaces, empty capabilities, `noNewPrivileges`, and OCI
+`RLIMIT_AS=536870912`, deadline-aligned `RLIMIT_CPU`, `RLIMIT_NPROC=128`, and
+`RLIMIT_NOFILE=1024`. The provider records a `gvisor-sentry` boundary and a
+`gvisor-oci-rlimit` mechanism, not a fake seccomp object. Missing boundary evidence raises
+`SandboxIsolationUnavailableError`, journals `sandbox_isolation_unavailable`, and is rejected by
+the independent verifier. Cleanup attempts `runsc kill --all` and `runsc delete --force` on every
+path. Selection is explicit: Linux `auto` remains bubblewrap, Docker still requires `image`, and
+gVisor still requires `rootfs`; no failure falls back to another provider. See ADR-0032.
+
+### CI measurement
+
+CI at `54344f1`: Security run `42946929104`, live job `130281855560`, kernel
+`7.0.0-1017-azure`. The job's Docker image build and drill were steps 12 and 13; gVisor install,
+rootfs export, and drill were steps 14–16. All were successful. The Docker drill reported:
+
+```json
+{"name":"docker","version":"28.0.4","rootless":false,"security_options":["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]}
+```
+
+The gVisor drill reported:
+
+```json
+{"name":"runsc","version":"release-20261102.0","rootless":true}
+```
+
+Both drills produced **21/21** cases and the result `all adversarial cases denied or contained`.
+The Docker result supersedes the earlier 40438a5 evidence for engine metadata; it does not
+supersede the Docker 21-case assertions. The measured Docker daemon was **rootful**; rootless
+Docker, subuid/subgid mapping, and rootless cgroup delegation remain unmeasured. The local host
+still cannot reach `/var/run/docker.sock`.
+
+### Per-case gVisor results from CI
+
+| # | Attack | Observed result |
+|---|---|---|
+| 1 | Host file read (`/etc/shadow`) | exit 1; no shadow content; `controlled OCI rootfs (no host bind)` |
+| 2 | Path traversal (`../../etc/shadow`, `/workspace/../etc/shadow`, `/proc/1/root/etc/shadow`) | exit 1; no shadow content |
+| 3 | Symlink chain to `/etc/shadow` | exit 1; no shadow content; `stderr_sha256 f4519b2c…` |
+| 4 | Hardlink `/etc/shadow` into `/workspace` | `rc=1`; no host-file link created |
+| 5 | Task cwd `../../etc` and absolute cwd | rejected before spawn; no marker file |
+| 6 | Writes to `/etc`, `/usr`, `/root` | exit 2; no `wrote:` marker; host paths unchanged |
+| 7 | Host environment secret | absent from `/usr/bin/env` and `/proc/self/environ`; only `LANG=C` |
+| 8 | Host `/tmp` secret via `..`, `/proc/1/root`, and `/tmp` | secret bytes absent |
+| 9 | TCP connect to a real host loopback listener | exit 1; listener accepted 0 connections |
+| 10 | Raw socket without capabilities | exit 2; no success output |
+| 11 | Capability/mount/chroot escalation | `CapEff: 0`; mount exit 1 (`EPERM`, no survivor); chroot exit 125, `Operation not permitted` |
+| 12 | CPU exhaustion | deadline termination, `SIGKILL`, `timedOut:true`, 3,007 ms; CPU limit 3 s, PID limit 128 |
+| 13 | Fork/PID exhaustion | 127 children, 128 namespaced processes, 0 marked survivors |
+| 14 | Cancellation orphan cleanup | `cancelled:true`; 0 marked survivors |
+| 15 | Timeout orphan cleanup | `timedOut:true`; 0 marked survivors |
+| 16 | Disk exhaustion (64 KiB cap) | quota error; 0 workspace entries; 0 marked survivors |
+| 17 | Instruction smuggling | exact argv SHA-256; 89-byte env literal; output `safe`; hostile text absent |
+| 18 | Forged executor result | rejected: `The executor result does not match the durable attempt evidence.` |
+| 19 | Self-issued verification | rejected before running; verifier must be independent |
+| 20 | Artifact tampering | verifier exit 1; `accepted:false` |
+| 21 | Stale attempt-1 evidence after attempt 2 | stale rejected; latest attempt accepted |
+
+The gVisor mount case required a provider-specific probe correction: gVisor's Sentry returns
+`EPERM` for `mount(2)` instead of killing the process. The original probe printed
+`mount-survived` unconditionally after the syscall, which was misleading even though the syscall
+was denied. The gVisor branch now checks the return value and exits 1 with the denial; a
+successful mount still prints the marker and fails the case. No bubblewrap or Docker assertion
+was changed, and no case was relaxed to accept a successful mount.
+
+### Local checks at the same tree
+
+Commands actually run locally at code head `54344f1`:
+
+```sh
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/adversarial-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_GVISOR_ROOTFS=/tmp/aios-gvisor-rootfs-clean PATH="/tmp/gvisor-install:$PATH" \
+  AIOS_SANDBOX_PROVIDER=gvisor node tools/security/adversarial-drill.mjs
+```
+
+Observed: full workspace gate **46/46** tasks, **0 cached**; host **158 passed / 17 skipped**
+(the 17 are live suites without `AIOS_BWRAP_DIR`); live bubblewrap **17/17**; bubblewrap
+adversarial **21/21**; resource-limit drill exit **0**; gVisor adversarial **21/21** with
+`runsc release-20261102.0`, rootless true. The local gVisor rootfs was a disposable, minimal
+~67 MiB controlled rootfs with `/etc/shadow` absent and no host-root bind; CI exported its rootfs
+from the same Debian Docker image used for the Docker drill. Both exercised the production
+provider, executor, managed port, durable ledger, and verifier; no test double stood in for
+sandboxing or verification.
+
+### What the gVisor run does not establish
+
+- Rootless gVisor uses a single-UID mapping; multi-UID image contents, rootless Docker-style
+  subuid/subgid, and netstack are not measured. The measured network mode is `--network=none`.
+- The OCI rlimits are enforced by the Sentry; there is no host cgroup aggregate for the
+  workload. The workspace disk control remains the executor's 25 ms sampler, not a hard quota.
+- `runsc` is pinned and SHA-512-verified in CI, but the runtime and rootfs are not Sigstore
+  signed or digest-attested by this repository. The operator owns rootfs provenance.
+- gVisor is a user-space kernel, not a VM; the Sentry/gofer still use the host kernel. A
+  Sentry or host-kernel vulnerability remains in scope.
+- The CPU burner ended by deadline `SIGKILL`, not a distinct `SIGXCPU`; the OCI CPU rlimit was
+  separately probed.
+- Case 1 proves the controlled rootfs lacks `/etc/shadow`; it does not prove an arbitrary
+  operator-supplied rootfs is trustworthy or that a hostile host `/etc` bind is absent.
+- Seatbelt and Apple Containerization remain unavailable/unverified. Docker rootless mode and
+  signed/digest-pinned Docker images remain unverified.
+
+At the same code head, `ci` run `42946929409`, `conformance` run `42946929289`, and
+`schema-check` run `42946929280` were green. The final documentation checkpoint is the branch tip
+after `54344f1`; read `git log --oneline -3` for that docs SHA and re-check the exact-head
+workflow runs rather than treating this line as covering a later tree.

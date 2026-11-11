@@ -1,8 +1,9 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest measured security code head: `40438a5` (explicit Docker provider and measured
-21-case Docker matrix, following `29eb496`); its documentation checkpoint follows. The historical heads below
+evidence from observed CI. Latest measured security code head: `54344f1` (explicit gVisor
+provider and measured 21-case Docker/gVisor CI matrix, following `40438a5`); its documentation
+checkpoint follows. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
 the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
@@ -18,12 +19,13 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Measured security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; measured Docker provider work landed in `dbee5c7`, with the CLI repair in `75f7371`). The final documentation commit reverts an unverifiable exact-seccomp-path probe; its code behavior is the measured `40438a5` path.
+- Measured security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors, drill/CI integration, and Docker engine metadata).
+- Prior security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; measured Docker provider work landed in `dbee5c7`, with the CLI repair in `75f7371`).
 - Prior security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
 - Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `40438a5`; read
+- Documentation checkpoint for this pass: the branch tip after `54344f1`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `4422229` with docs commit `aa86a4e`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
@@ -104,8 +106,9 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   the resource work, covering host-file reads, workspace symlink escape, network interfaces,
   environment clearing, PID-namespace privacy, writes outside the workspace, effective
   capabilities, background-workload cleanup, and memory/limits. Docker was measured separately
-  in CI at `40438a5` (21/21); Seatbelt, gVisor, and Apple Containerization remain unverified or
-  unavailable and are labelled as such in `docs/security/sandbox-matrix.md`.
+  in CI at `54344f1` (21/21); gVisor was measured locally and in CI at the same head (21/21).
+  Seatbelt and Apple Containerization remain unverified or unavailable and are labelled as such
+  in `docs/security/sandbox-matrix.md`.
 - Timeout and cancellation now kill the provider's whole process group (with a direct-child
   fallback), covered by real parent/grandchild tests.
 - Living security documentation lives in `docs/security/`: threat model, provider matrix,
@@ -116,6 +119,32 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   completed attempt, the recorded executor principal, and a matching result digest, and
   records the execution ID and attempt in its decision evidence. Forged, unattempted, and
   wrong-principal results are rejected before the verification command runs.
+
+## gVisor and measured Docker engine (2026-11-11)
+
+- Explicit `provider: gvisor` plus an absolute, real, non-symlink, non-`/` `rootfs` builds a
+  generated OCI bundle and runs `runsc --rootless --network=none run`; it does not use
+  `runsc do` or the host rootfs. The workload has a read-only rootfs, one workspace bind,
+  private namespaces, empty capabilities, `noNewPrivileges`, and OCI `RLIMIT_AS` 512 MiB,
+  deadline-aligned `RLIMIT_CPU`, `RLIMIT_NPROC` 128, and `RLIMIT_NOFILE` 1024 (ADR-0032).
+- gVisor records a `gvisor-sentry` boundary and `gvisor-oci-rlimit` mechanism, not a fabricated
+  seccomp object. Missing proof raises `SandboxIsolationUnavailableError`, journals
+  `sandbox_isolation_unavailable`, and is rejected by the independent verifier. Cleanup runs
+  `runsc kill --all` and `runsc delete --force` on every exit path.
+- CI at `54344f1` (Security run `42946929104`, live job `130281855560`) passed Docker and gVisor
+  **21/21**. Docker measured engine **28.0.4**, `rootless:false`, security options `name=apparmor`,
+  `name=seccomp,profile=builtin`, `name=cgroupns`; gVisor measured
+  `runsc release-20261102.0`, rootless `true`; kernel `7.0.0-1017-azure`. gVisor install/rootfs
+  export/drill were steps 14–16; Docker image build/drill steps 12–13.
+- Local checks at `54344f1`: full gate **46/46**, 0 cached; host **158 passed / 17 skipped**;
+  bubblewrap live **17/17**; bubblewrap adversarial **21/21**; gVisor **21/21** against a local
+  minimal ~67 MiB rootfs. The local Docker daemon remains unreachable; Docker is CI-measured.
+- Residuals are explicit: gVisor rootfs/runtime are operator-supplied and not signed; rootless
+  gVisor is single-UID, no netstack/save-restore, and has no host cgroup; disk remains the 25 ms
+  sampler; CPU ended by deadline `SIGKILL`; gVisor is not a VM. Docker rootless mode, signed
+  images, and a local/operator-controlled daemon remain unverified. Seatbelt/Apple
+  Containerization remain unavailable/unverified. Bubblewrap remains the Linux default because
+  it is the smallest unprivileged boundary and needs no daemon, image, or external runtime.
 
 ## Current package and application maturity
 
@@ -205,6 +234,13 @@ retry/backoff loop, and no live external-provider verification.
   rotate/revoke-by-id routes; the CLI is a transport with owner-only token-file input and
   stable exit codes. Revocation is terminal and restart-durable; rotation delivers one new
   token to the operator. Login/MFA, TLS, rate limiting, and external audit custody remain
+  open.
+- ADR-0031/ADR-0032 — **Accepted (2026-11-11)**: explicit Docker and gVisor providers over
+  the same executor, durable ledger, managed port, and independent verifier. Docker adds
+  aggregate cgroups and a read-only container rootfs but trusts a privileged daemon and measured
+  rootful mode; gVisor adds a user-space Sentry boundary, OCI rlimits, and a rootless runtime but
+  requires an operator-supplied rootfs and has no host cgroup. Both fail closed; Linux `auto`
+  remains bubblewrap. Rootless Docker, signed images/rootfs, and local-daemon measurement remain
   open.
 - ADR-0012 — **Proposed**: capability mediation remains the intended general model, but the
   first slice intentionally uses only fixed `local.exec`; provider selection is not exposed.
@@ -307,7 +343,8 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    CPU/PID limits. Bubblewrap has a generated seccomp deny-list and per-process RLIMIT
    enforcement (ADR-0027/ADR-0028) but no aggregate cgroup accounting, no active Landlock, and
    remains trusted-local only. Docker has measured aggregate cgroups but no per-process
-   `RLIMIT_AS`; rootless Docker, Seatbelt, gVisor, and Apple Containerization remain unverified.
+   `RLIMIT_AS`; rootless Docker, Seatbelt, and Apple Containerization remain unverified, while
+   gVisor is measured in ADR-0032 with operator rootfs/runtime and no-host-cgroup residuals.
    Node/libuv is currently killed by the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
@@ -345,9 +382,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 1. Exercise runtime policy publication and retirement in a production-like deployment with a
    real non-bootstrap operator, independent audit consumer, and restart/recovery drill; local
    tests are not operational deployment proof.
-2. Test rootless Docker, Seatbelt, gVisor, and Apple Containerization on capable hosts and
-   record the actual results, including cancellation and the explicit Docker container kill.
-   Re-run the measured Docker CI matrix when the runner, image, or Docker engine changes.
+2. Test rootless Docker, Seatbelt, and Apple Containerization on capable hosts and record the
+   actual results, including cancellation and the explicit Docker container kill. Re-run the
+   measured Docker and gVisor CI matrices when the runner, image, runtime, rootfs, or engine
+   changes.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.
 4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
    crashes, cancelling generation 2, and workspace reuse across generations.

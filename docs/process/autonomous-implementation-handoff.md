@@ -3,32 +3,33 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, explicit Docker provider and measured
-21-case Docker matrix after the adversarial drill). Latest measured security code head:
-`40438a5` (the Docker provider landed in `dbee5c7`, with CLI repairs in `75f7371` and
-`40438a5`),
-following `29eb496`, `550d0e5`, `27ab654`, and `b067501`; its documentation checkpoint
-follows. Re-check this head rather than older CI lines below. F-009's digest mitigation,
-F-005's fail-closed regression, the bounded canonical collections, and the live bubblewrap
-controls remain in place from `24d2791`/`43e2dd6`.
+Last updated: 2026-11-11 (Freebuff Cloud session, explicit gVisor provider and measured
+21-case Docker/gVisor CI matrix after the adversarial drill). Latest measured security code head:
+`54344f1` (the gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors,
+drill/CI integration, and Docker engine metadata), following `40438a5`, `29eb496`, `550d0e5`,
+`27ab654`, and `b067501`; its documentation checkpoint follows. Re-check this head rather than
+older CI lines below. F-009's digest mitigation, F-005's fail-closed regression, the bounded
+canonical collections, and the live bubblewrap controls remain in place from
+`24d2791`/`43e2dd6`.
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Measured security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; the Docker provider landed in `dbee5c7`; CLI repairs in `75f7371` and `40438a5`). The final documentation commit reverts an unverifiable exact-seccomp-path probe; its code behavior is the measured `40438a5` path.
+- Measured security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider/OCI bundle/rootfs validation/fail-closed errors/drill/CI and Docker engine metadata).
+- Prior security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; the Docker provider landed in `dbee5c7`; CLI repairs in `75f7371` and `40438a5`).
 - Prior security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
 - Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `40438a5`; read
+- Documentation checkpoint for this pass: the branch tip after `54344f1`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `7103957` with docs commit `0a1ae66`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
   PR #1 is mergeable/clean.
-- This handoff is a docs-only verification commit after the merge head; read
-  `git log --oneline -4` for the exact tip. Push only `community/open-source-foundation`;
+- This handoff is the documentation checkpoint after the measured security head; read
+  `git log --oneline -3` for the exact tip. Push only `community/open-source-foundation`;
   do not push `main` and do not merge PR #1.
 - Prior commits in this session:
   - `7103957` — authorized runtime policy publication with atomic replacement
@@ -55,6 +56,7 @@ controls remain in place from `24d2791`/`43e2dd6`.
   - `dbee5c7` — explicit Docker sandbox provider, custom seccomp, CI Docker image/drill, regressions
   - `75f7371` — remove Docker CLI-rejected `--ulimit as`; keep cgroup memory and CPU rlimit
   - `40438a5` — correct Docker bind mount syntax and pin the exact mount argument
+  - `54344f1` — explicit gVisor provider, generated OCI bundle/rootfs validation, fail-closed Sentry evidence, 21-case Docker/gVisor CI matrix, and measured Docker engine/rootless metadata
 
 ## Environment notes
 
@@ -66,13 +68,45 @@ controls remain in place from `24d2791`/`43e2dd6`.
   in this worktree, so use `pnpm -r run <task>` locally. GitHub Actions is unaffected.
 - Docker CLI is present but the daemon is not reachable to this user
   (`permission denied ... /var/run/docker.sock`); `podman` and `sandbox-exec` are absent.
-  Docker was measured in GitHub Actions; bubblewrap was measured locally and in CI. Seatbelt
-  remains unavailable. Every provider fails closed when its probe fails.
+  Docker was measured in GitHub Actions; bubblewrap was measured locally and in CI; gVisor was
+  measured locally against a disposable `/tmp/aios-gvisor-rootfs-clean` and in CI from the
+  Docker-exported rootfs. Seatbelt remains unavailable. Every provider fails closed when its
+  probe fails.
+- **gVisor local setup is disposable.** `runsc` lives at `/tmp/gvisor-install/runsc` and the
+  minimal rootfs at `/tmp/aios-gvisor-rootfs-clean`; both may disappear after a VM restart.
+  CI reproduces them from the pinned release and Docker image export. Recreate before re-running
+  the gVisor drill rather than treating stale `/tmp` paths as evidence.
 - GitHub Actions passed `ci` (run `42887224979`), `conformance` (run `42887225101`), and
   `schema-check` (run `42887224921`) at merge head `8c950e6`; PR #1 is mergeable/clean. Earlier
   heads `8cd427a`/`c64ba42` and docs tip `e65688e` also passed. The docs-only verification
   commit after `8c950e6` has its own checks; re-check it rather than treating this line as
   covering a later tree.
+
+## Completed — gVisor provider and cross-provider selection (`54344f1`)
+
+- `apps/host/src/execution/sandbox.ts` adds `GvisorSandbox`: an explicit `provider: gvisor`
+  plus absolute, real, non-symlink, non-`/` `rootfs`, a generated OCI bundle, and
+  `runsc --rootless --network=none run`. It never uses `runsc do`, never binds the host root,
+  and never falls back from a failed probe.
+- The OCI process has a read-only rootfs, one workspace bind, private PID/network/IPC/UTS/mount
+  namespaces, PID 1, empty capabilities, `noNewPrivileges`, `RLIMIT_AS` 512 MiB,
+  deadline-aligned `RLIMIT_CPU`, `RLIMIT_NPROC` 128, and `RLIMIT_NOFILE` 1024. The Sentry
+  boundary is recorded as `gvisor-sentry`; limits as `gvisor-oci-rlimit`. A missing boundary is
+  `sandbox_isolation_unavailable` and is verifier-rejected. Cleanup runs `runsc kill --all` and
+  `runsc delete --force` on every exit path.
+- The drill accepts `AIOS_SANDBOX_PROVIDER=gvisor` + `AIOS_GVISOR_ROOTFS`; the Security workflow
+  installs pinned `runsc 20261102.0` (SHA-512 verified), exports a rootfs from the Docker image,
+  and runs the drill as plain `run:`. Bubblewrap/Docker steps, assertions, pins, and timeouts are
+  untouched.
+- Measured at `54344f1`: Security run `42946929104`, live job `130281855560`; Docker and gVisor
+  both **21/21**. Docker `28.0.4`, `rootless:false` (rootful; apparmor/builtin seccomp/cgroupns);
+  gVisor `runsc release-20261102.0`, rootless true; kernel `7.0.0-1017-azure`. Local gVisor
+  **21/21** against a minimal ~67 MiB rootfs; local gate **46/46**; host **158 passed / 17
+  skipped**; bubblewrap live **17/17** and adversarial **21/21**.
+- Residuals: operator-owned unsigned rootfs/runtime; rootless single-UID, no netstack/save-restore;
+  no host cgroup; disk sampler; CPU deadline `SIGKILL`; not a VM. Docker rootless, signed images,
+  and a local daemon remain unverified. ADR-0032 records the decision; F-006/F-007/F-016 were
+  updated and F-017 added. Bubblewrap remains the Linux default.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -548,16 +582,16 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   escape, or verifier-key compromise. Bubblewrap now installs a generated seccomp deny-list
   with live denial drills (ADR-0027) and per-process RLIMIT enforcement (ADR-0028), but has no
   aggregate cgroup accounting, no active Landlock, and is labelled kernel-namespace/trusted-local
-  only. Docker is measured in CI (ADR-0031); Seatbelt/gVisor remain unverified.
+  only. Docker and gVisor are measured (ADR-0031/ADR-0032); Seatbelt remains unverified.
 - **Not signed:** verifier decisions have no Ed25519/TUF provenance. The trust anchor is a
   host-configured distinct principal plus a separately executed command.
 
 ## Remaining engineering blockers, in priority order
 
-1. **Remaining sandbox verification.** Run rootless Docker, Seatbelt, gVisor, and Apple
-   Containerization on capable hosts, including cancellation/container-kill behavior, mount
-   permissions, network denial, PID/memory limits, and hostile command probes. Re-run the Docker
-   CI matrix when the runner, image, or engine changes.
+1. **Remaining sandbox verification.** Run rootless Docker, Seatbelt, and Apple Containerization
+   on capable hosts, including cancellation/container-kill behavior, mount permissions, network
+   denial, PID/memory limits, and hostile command probes. Re-run the Docker and gVisor CI
+   matrices when the runner, image, runtime, rootfs, or engine changes.
 2. **Verifier provenance.** Add key generation/distribution/rotation and kernel-side
    signature verification, or explicitly retain the current host-configured trust model.
 3. **Execution re-drive quality.** Resume/retry are implemented and authorized per ADR-0022,
@@ -614,6 +648,8 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 - Mission and infrastructure remain proposed because the field-level models are unsourced.
 - `@aios/*` packages remain private; no npm publication (ADR-0020).
 - Operational state is the journal; Founder Intelligence remains in Obsidian (ADR-0014).
+- Docker and gVisor are explicit providers over the same executor/ledger/verifier contract,
+  with no fallback and no silent downgrade; Linux `auto` remains bubblewrap (ADR-0031/0032).
 - Operator session administration is an exact human-only action over the live host; the CLI
   is a transport with owner-only token-file input and no journal access. Revocation is
   terminal and restart-durable, and the new token is delivered only to the invoking operator
@@ -761,9 +797,9 @@ recorded a legitimate Perl run at exit 0 with `resource_limits_applied:true`, an
 bomb at exit 1 with `Out of memory!`, `timed_out:false`, while the filter still reported
 `Seccomp: 2`. Residual: per-process, not cgroup aggregate; up to 128 descendants can each
 reserve 1.25 GiB; RLIMIT_AS is not RSS. Node/libuv probes `io_uring_setup` and is killed by the
-F-007 filter at startup, so the drill uses Perl. Docker is now measured in CI (ADR-0031);
-gVisor/Seatbelt/Apple Containerization remain unverified. See ADR-0028, F-003, and the
-validation ledger.
+F-007 filter at startup, so the drill uses Perl. Docker and gVisor are now measured
+(ADR-0031/ADR-0032); Seatbelt/Apple Containerization remain unverified. See ADR-0028, F-003,
+and the validation ledger.
 
 ## Completed — Zod advisory closure and blocked-finding mitigations (`24d2791`)
 
@@ -786,8 +822,10 @@ validation remains blocked on hardware.
 
 Evidence: full gate **46/46 tasks**; host **132 passed/17 skipped**; core **47**, founder
 **62**; live bwrap **17/17**; resource-limit, quota, and seccomp drills all exit 0; secret scan
-**272 tracked files, no findings**. Docker, gVisor, Seatbelt, and Apple Containerization remain
-unverified. See F-005/F-009/F-014, the validation ledger, and the ADR-0009 amendment.
+**272 tracked files, no findings**. At this checkpoint Docker, gVisor, Seatbelt, and Apple
+Containerization remained unverified; Docker and gVisor are now measured (ADR-0031/ADR-0032),
+while Seatbelt/Apple remain unavailable. See F-005/F-009/F-014, the validation ledger, and the
+ADR-0009 amendment.
 
 ## Completed — bounded canonical collections (`8ca3e9c`)
 
@@ -853,8 +891,8 @@ provider, `LocalCommandExecutor`, `ManagedExecutionPort`, durable `ExecutionLedg
 
 ### Not claimed
 
-- Docker is measured in CI (ADR-0031); Seatbelt, gVisor, and Apple Containerization remain
-  unverified/unavailable. Rootless Docker was not measured.
+- Docker and gVisor are measured (ADR-0031/ADR-0032); Seatbelt and Apple Containerization
+  remain unverified/unavailable. Rootless Docker was not measured.
 - The CPU case was stopped at the deadline, not by a distinct `RLIMIT_CPU` signal; the memory
   bomb remains covered by `resource-limit-drill.mjs`; disk enforcement is the 25 ms sampler,
   not a hard quota. The artifact case relies on the Task's independent verification command;
