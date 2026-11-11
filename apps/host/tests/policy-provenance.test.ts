@@ -12,10 +12,12 @@ import {
   type AuthorizationDecisionAudit,
 } from '@aios/founder';
 import {
+  createTrustRoot,
   createTrustRootFromKeys,
   generateSigningKey,
   type TrustRoot,
 } from '../src/execution/artifact-signing.js';
+import { loadVerifierDecisionSigner } from '../src/execution/verifier-decision.js';
 import { PolicyProvenanceAuthority } from '../src/policy-provenance.js';
 import { assertSeparatePolicyAndVerifierKeys } from '../src/runtime.js';
 import { createPolicyAuthority } from './policy-provenance-fixture.js';
@@ -107,6 +109,85 @@ describe('policy bundle provenance', () => {
     const provenance = { ...requireProvenance(signed), schema_version: 2 };
     expect((await fixture.authority.verifyPolicy({ ...signed, provenance })).reason)
       .toBe('schema_unsupported');
+  });
+
+  it('rejects cross-subject signature confusion between policy and decision envelopes', async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-cross-subject-')));
+    const signedPolicy = await fixture.authority.signPolicy(policy());
+    const signedDecision = await fixture.authority.signDecision(decision());
+    const policyProvenance = requireProvenance(signedPolicy);
+    const decisionProvenance = signedDecision.provenance;
+    if (!decisionProvenance) throw new Error('Expected decision provenance.');
+
+    expect((await fixture.authority.verifyPolicy({
+      ...signedPolicy,
+      provenance: decisionProvenance,
+    })).reason).toBe('subject_mismatch');
+    expect((await fixture.authority.verifyDecision({
+      ...signedDecision,
+      provenance: policyProvenance,
+    })).reason).toBe('subject_mismatch');
+  });
+
+  it('rejects a verifier-decision envelope as policy or authorization-decision provenance', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'aios-cross-verifier-'));
+    const policyFixture = createPolicyAuthority(directory);
+    const signedPolicy = await policyFixture.authority.signPolicy(policy());
+    const signedDecision = await policyFixture.authority.signDecision(decision());
+
+    const verifierDirectory = mkdtempSync(join(tmpdir(), 'aios-cross-verifier-key-'));
+    const key = generateSigningKey();
+    const keyPath = join(verifierDirectory, 'verifier.pem');
+    const rootPath = join(verifierDirectory, 'verifier-root.json');
+    writeFileSync(keyPath, key.private_key_pem, { mode: 0o600 });
+    const now = Date.now();
+    writeFileSync(rootPath, JSON.stringify(createTrustRoot({
+      key_id: key.key_id,
+      public_key_pem: key.public_key_pem,
+      not_before: new Date(now - 60_000).toISOString(),
+      not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+    })), { mode: 0o600 });
+    const signer = loadVerifierDecisionSigner({
+      private_key_file: keyPath,
+      trust_root_file: rootPath,
+      key_id: key.key_id,
+    });
+    const verifierProvenance = signer.sign({
+      schema_version: 1,
+      task_id: randomUUID(),
+      execution_id: randomUUID(),
+      attempt: 1,
+      bound_result_sha256: 'a'.repeat(64),
+      verifier_id: randomUUID(),
+      accepted: true,
+      reason: 'Verification command exited with the expected code 0.',
+      evidence: ['verifier:cross-envelope'],
+    });
+
+    expect((await policyFixture.authority.verifyPolicy({
+      ...signedPolicy,
+      provenance: verifierProvenance as unknown as AccessPolicy['provenance'],
+    })).reason).toBe('malformed');
+    expect((await policyFixture.authority.verifyDecision({
+      ...signedDecision,
+      provenance: verifierProvenance as unknown as AuthorizationDecisionAudit['provenance'],
+    })).reason).toBe('malformed');
+  });
+
+  it('signs and verifies the detached audit head and rejects a changed head', () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-audit-head-')));
+    const head = {
+      schema_version: 1 as const,
+      sequence: 2,
+      record_count: 2,
+      head_hash: 'a'.repeat(64),
+    };
+    const provenance = fixture.authority.signAuditHead(head);
+    expect(fixture.authority.verifyAuditHead(provenance)).toEqual({ valid: true });
+    expect(fixture.authority.verifyAuditHead({ ...provenance, head_hash: 'b'.repeat(64) })).toEqual({
+      valid: false,
+      reason: 'payload_mismatch',
+    });
   });
 
   it('rejects key-id substitution and a valid signature from a different trust root', async () => {

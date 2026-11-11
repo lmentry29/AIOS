@@ -297,6 +297,19 @@ export class AppendOnlyJournal {
     return this.loaded.map((record) => structuredClone(record));
   }
 
+  /**
+   * Re-reads and fully verifies the journal file against the in-memory chain.
+   *
+   * `read()` is the loaded recovery snapshot. Consumers that enforce a separate durable
+   * high-water mark must use this method so an out-of-band truncation, insertion, or
+   * rewrite that happens while the host is running cannot be mistaken for the accepted
+   * in-memory history.
+   */
+  verifyOnDisk(): readonly JournalRecord[] {
+    this.assertOpen();
+    return readVerifiedJournalFile(this.filePath, this.maxBytes);
+  }
+
   append(kind: string, payload: unknown): JournalRecord {
     this.assertOpen();
     if (typeof kind !== 'string' || kind.length === 0 || kind.length > 120) {

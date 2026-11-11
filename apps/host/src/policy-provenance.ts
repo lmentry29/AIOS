@@ -36,6 +36,27 @@ import { readBoundedRegularFile } from './security/file-integrity.js';
 export const POLICY_PROVENANCE_SCHEMA_VERSION = 1 as const;
 export const POLICY_PROVENANCE_SUBJECT_POLICY = 'policy_bundle' as const;
 export const POLICY_PROVENANCE_SUBJECT_DECISION = 'authorization_decision' as const;
+export const AUDIT_HEAD_SCHEMA_VERSION = 1 as const;
+
+/** The local, monotonic head statement signed by the pinned policy key. */
+export interface AuditHeadBody {
+  schema_version: typeof AUDIT_HEAD_SCHEMA_VERSION;
+  sequence: number;
+  record_count: number;
+  head_hash: string;
+}
+
+export interface AuditHeadProvenance extends AuditHeadBody {
+  key_id: string;
+  signed_at: string;
+  payload_sha256: string;
+  signature: string;
+}
+
+export interface AuditHeadSigner {
+  signAuditHead(body: AuditHeadBody): AuditHeadProvenance;
+  verifyAuditHead(value: unknown): PolicyProvenanceVerification;
+}
 
 const MAX_PRIVATE_KEY_BYTES = 8 * 1024;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -98,6 +119,29 @@ function assertWindow(key: TrustedKey, at: Date, label: string): void {
 
 function failure(reason: FailureReason): PolicyProvenanceVerification {
   return { valid: false, reason };
+}
+
+function isAuditHeadBody(value: unknown): value is AuditHeadBody {
+  return isRecord(value)
+    && value.schema_version === AUDIT_HEAD_SCHEMA_VERSION
+    && Number.isSafeInteger(value.sequence) && (value.sequence as number) >= 0
+    && Number.isSafeInteger(value.record_count) && (value.record_count as number) >= 0
+    && value.sequence === value.record_count
+    && typeof value.head_hash === 'string' && SHA256_HEX.test(value.head_hash);
+}
+
+function auditHeadPayload(body: AuditHeadBody, provenance: {
+  key_id: string;
+  signed_at: string;
+}): Record<string, unknown> {
+  return {
+    schema_version: AUDIT_HEAD_SCHEMA_VERSION,
+    sequence: body.sequence,
+    record_count: body.record_count,
+    head_hash: body.head_hash,
+    key_id: provenance.key_id,
+    signed_at: provenance.signed_at,
+  };
 }
 
 function policyPayload(policy: AccessPolicy, provenance: {
@@ -195,7 +239,7 @@ export interface PolicyProvenanceAuthorityOptions {
  * Loads the owner-only private key and the pinned trust root, proving they correspond
  * before the host starts accepting policy content.
  */
-export class PolicyProvenanceAuthority implements PolicyProvenancePort {
+export class PolicyProvenanceAuthority implements PolicyProvenancePort, AuditHeadSigner {
   private constructor(
     private readonly privateKey: KeyObject | undefined,
     private readonly trustRoot: TrustRoot,
@@ -306,6 +350,81 @@ export class PolicyProvenanceAuthority implements PolicyProvenancePort {
         this.now(),
         true,
       );
+    } catch {
+      return failure('verification_error');
+    }
+  }
+
+  /**
+   * Signs the audit journal's current head. This is deliberately detached from the
+   * per-record decision signatures: deleting a trailing record leaves the old head
+   * signature intact, so the removal becomes observable instead of merely producing a
+   * shorter internally consistent chain.
+   */
+  signAuditHead(body: AuditHeadBody): AuditHeadProvenance {
+    if (this.privateKey === undefined) throw new PolicyProvenanceError('No policy signing key is loaded.');
+    if (!isAuditHeadBody(body)) throw new PolicyProvenanceError('The audit head statement is invalid.');
+    const signedAt = this.now();
+    if (!Number.isFinite(signedAt.getTime())) {
+      throw new PolicyProvenanceError('The policy signing clock is invalid.');
+    }
+    const key = keyFromTrustRoot(this.trustRoot, this.keyId);
+    assertWindow(key, signedAt, 'signing');
+    const payload = auditHeadPayload(body, {
+      key_id: this.keyId,
+      signed_at: signedAt.toISOString(),
+    });
+    const serialized = canonicalJson(payload);
+    return {
+      ...body,
+      key_id: this.keyId,
+      signed_at: signedAt.toISOString(),
+      payload_sha256: sha256(serialized),
+      signature: cryptoSign(null, Buffer.from(serialized, 'utf8'), this.privateKey)
+        .toString('base64'),
+    };
+  }
+
+  verifyAuditHead(value: unknown): PolicyProvenanceVerification {
+    try {
+      if (!isRecord(value) || !isAuditHeadBody(value)) return failure('malformed');
+      if (typeof value.key_id !== 'string' || !SHA256_HEX.test(value.key_id)
+        || typeof value.signed_at !== 'string' || !ISO_TIMESTAMP.test(value.signed_at)
+        || typeof value.payload_sha256 !== 'string' || !SHA256_HEX.test(value.payload_sha256)
+        || typeof value.signature !== 'string' || value.signature.length === 0) {
+        return failure('malformed');
+      }
+      let key: TrustedKey;
+      try {
+        key = keyFromTrustRoot(this.trustRoot, value.key_id);
+      } catch {
+        return failure('key_unknown');
+      }
+      if (key.status !== 'trusted') return failure('key_revoked');
+      const signedAt = Date.parse(value.signed_at);
+      const now = this.now().getTime();
+      if (!Number.isFinite(signedAt) || !Number.isFinite(now)) return failure('malformed');
+      if (signedAt > now + MAX_FUTURE_SKEW_MS) return failure('malformed');
+      if (signedAt < Date.parse(key.not_before)) return failure('key_not_yet_valid');
+      if (signedAt > Date.parse(key.not_after)) return failure('key_expired');
+      const payload = auditHeadPayload(value, {
+        key_id: value.key_id,
+        signed_at: value.signed_at,
+      });
+      const serialized = canonicalJson(payload);
+      if (sha256(serialized) !== value.payload_sha256) return failure('payload_mismatch');
+      let valid = false;
+      try {
+        valid = cryptoVerify(
+          null,
+          Buffer.from(serialized, 'utf8'),
+          createPublicKey(key.public_key_pem),
+          Buffer.from(value.signature, 'base64'),
+        );
+      } catch {
+        return failure('signature_invalid');
+      }
+      return valid ? { valid: true } : failure('signature_invalid');
     } catch {
       return failure('verification_error');
     }

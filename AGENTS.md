@@ -55,8 +55,9 @@ passing build.
    matching and re-verified on audit reads; verifier decisions are bound to the durable
    execution attempt, and the host refuses to compose the policy signing key as a verifier
    key. This is still not a production security boundary: production key custody, external
-   audit custody/monotonic checkpoints, and a purpose-bound trust-root key-role schema are
-   absent. Do not change authorization semantics without an amending ADR.
+   audit custody, protection against a coordinated whole-store audit rollback, and a
+   purpose-bound trust-root key-role schema are absent. A local signed authorization-audit
+   high-water mark detects truncation and reordering while the current head remains. Do not change authorization semantics without an amending ADR.
 7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
    ADR-0012 is Proposed and establishes capability mediation as the intended
    requester-facing principle, but its replacement runtime contract and Capability

@@ -16,6 +16,7 @@ import { createTrustRoot, generateSigningKey } from '../src/execution/artifact-s
 import { loadVerifierDecisionSigner, type VerifierDecisionSigner } from '../src/execution/verifier-decision.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { DurableAuthorizationAuditStore } from '../src/persistence/authorization-audit-store.js';
+import { PolicyProvenanceAuthority } from '../src/policy-provenance.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
 import { createHostServer, type HostHttpServer } from '../src/server.js';
 import {
@@ -1116,6 +1117,9 @@ describe('trusted host HTTP surface', () => {
 
     const audit = new DurableAuthorizationAuditStore({
       directory: harness.runtime.config.operational_store.directory,
+      headSigner: PolicyProvenanceAuthority.verificationOnly({
+        trust_root_file: harness.policyAuthority.config.trust_root_file,
+      }),
     });
     try {
       expect(audit.list().length).toBeGreaterThan(0);

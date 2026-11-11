@@ -357,7 +357,8 @@ verified against the pinned trust root (ADR-0034). The host signs every publishe
 every decision; a caller-supplied provenance field is replaced by the host signer rather than
 trusted. A policy version cannot be rolled back by reattaching an older or retired policy;
 publish a new, higher version containing the desired rules. Production key custody and
-rollback/monotonic-checkpoint protection remain open.
+protection against a coordinated whole-store audit rollback remain open; the local signed
+audit high-water mark detects truncation and reordering while the current head remains.
 
 ## Operator session administration
 
@@ -500,8 +501,10 @@ incident procedure, ordering, restart expectations, and remaining limits.
 - **Policy administration assurance.** Runtime publication and retirement are exact-granted
   and human-only, with atomic replacement/retirement, detached bundle/decision signatures and
   overlapping rotation verification (ADR-0034). Production key custody, an operated
-  recovery/revocation ceremony, external audit custody, rollback/monotonic-checkpoint
-  protection, and reattachment of an older or retired version remain open; recovery from a
+  recovery/revocation ceremony, external audit custody, protection against a coordinated
+  whole-store audit rollback, and reattachment of an older or retired version remain open;
+  the local signed audit high-water mark detects truncation/reordering while the current
+  head remains; recovery from a
   bad policy is a new higher-version publication or a retirement. The registry is
   single-process, local-disk only, and its state is v2 — an older host cannot read it.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the

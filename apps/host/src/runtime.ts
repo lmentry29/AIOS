@@ -247,6 +247,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   try {
     const auditStore = new DurableAuthorizationAuditStore({
       directory: config.operational_store.directory,
+      headSigner: policyProvenance,
     });
     authorizationAudit = auditStore;
     const authorization = new AuthorizationService(

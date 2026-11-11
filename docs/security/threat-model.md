@@ -94,13 +94,13 @@ Founder Intelligence vault's own access controls.
 - **Journal archives.** Compaction archives are integrity-checked but neither encrypted nor
   signed; an attacker who can rewrite the archive and its digest can forge history. Retention
   and custody remain operator responsibilities (ADR-0025).
-- **Authorization-audit rollback.** `authorization-audit.jsonl` has a SHA-256 sequence chain
-  and every record has detached provenance, but the chain is unkeyed and has no local
-  monotonic checkpoint. A same-UID attacker who rewrites the file and recomputes the chain
-  can remove a suffix, reorder/insert signed records, or roll back to an earlier consistent
-  prefix. The host detects ordinary edits and out-of-sequence records; it cannot detect a
-  rewritten valid prefix. External audit custody or a monotonic witness is required and is
-  recorded as blocked (F-030, CL-006).
+- **Authorization-audit rollback.** `authorization-audit.jsonl` has a SHA-256 sequence chain,
+  signed records and a signed local high-water head that is re-read on open, append and audit
+  read. This detects suffix removal, insertion/reordering and rollback to an older prefix
+  while the current head remains. A same-UID attacker who rewrites both the journal and the
+  signed head to an older valid pair, or deletes both, is outside local-only monotonicity;
+  external audit custody or a monotonic witness is required and is recorded as blocked
+  (F-030 residual, CL-006).
 - **Identity and provenance lifecycle.** Host session tokens now have bounded expiry,
   rotation, revocation, and task/run/evidence scope binding (ADR-0029). Policies and
   authorization decisions carry detached local signatures verified against the pinned trust

@@ -67,18 +67,21 @@ verifiers, and reserved-environment filtering. Replay and cross-Task cases asser
 verification command is not run when binding fails.
 
 Measured locally after the whole-chain pass: full uncached gate 46/46 tasks, 0 cached; host
-279 passed / 17 skipped across 28 passing files; orchestration 31/31; founder 95/95;
-integration 43; conformance 107. The new verifier replay test is in
-`verifier-decision.test.ts` (4 tests), and the kernel expectation test is in
-`orchestration.test.ts` (12 tests). No existing test or check was weakened.
+287 passed / 17 skipped across 28 passing files; focused policy provenance 14/14;
+orchestration 31/31; founder 95/95; integration 43; conformance 107. The verifier replay test
+is in `verifier-decision.test.ts` (4 tests), the kernel expectation test is in
+`orchestration.test.ts` (12 tests), and the audit-head boundary tests are in
+`authorization-audit-store.test.ts` (11 tests total). No existing test or check was weakened.
 
 ## Remaining open
 
 - The ledger and verification decision remain host-process state; detached signing makes
   persisted decisions tamper-evident but a compromised host can still sign. There is no
   cross-process attestation or external audit custody. The operational and authorization
-  journals are hash-chained (ADR-0015) but not independently witnessed; an attacker who can
-  rewrite a consistent prefix cannot be detected without a monotonic checkpoint (F-030).
+  journals are hash-chained (ADR-0015). The authorization journal now has a signed local
+  head that detects suffix removal, insertion/reordering and rollback while that head is
+  present; a same-UID attacker who rewrites both journal and head to an older valid pair
+  remains outside the local boundary and needs an external monotonic witness (F-030).
 - The trust root has no per-key purpose field. Host composition now requires distinct policy
   and verifier keys, but a purpose-bound root remains an architecture decision (F-029).
 - Production gVisor/verifier trust-root/key provisioning is blocked on an operator-held

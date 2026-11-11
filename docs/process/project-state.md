@@ -1,7 +1,7 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Current security branch base: `20760f5` (signed policy and authorization-decision provenance);
+evidence from observed CI. Prior security branch base: `3c87a4d` (whole-provenance fixes); the audit-head boundary pass is the current branch tip;
 the whole-provenance red-team pass is recorded at the end of this file. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
@@ -18,7 +18,7 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Active implementation branch: `security/openjarvis-defensive-integration`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Current security branch base: `20760f5` (`feat(security): sign policy bundles and authorization decisions`); the whole-provenance red-team pass is recorded at the end of this file.
+- Prior security branch base: `3c87a4d` (`fix(security): bind the whole provenance chain at its seams`); the audit-head boundary pass is recorded at the end of this file, and the branch tip is the final audit-head commit.
 - Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic CI rootfs manifest, fail-closed tamper/missing-pin probes, and provenance evidence).
 - Pinned-input code commit: `103b521` (`feat(security): pin gVisor rootfs build inputs`; base digest, Debian snapshot, exact packages, input guard, independent image build, and drift regressions).
 - Prior security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors, drill/CI integration, and Docker engine metadata).
@@ -332,7 +332,7 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   permanent entry, a durable authorization-audit journal whose allow/deny records survive
   restart in order with request correlation, and authorized runtime retirement that falls back
   to a retained version and then denies when none remains.
-- Authorization audit: **6 store tests** plus host restart/grant cases, including five
+- Authorization audit: **11 store tests** plus host restart/grant cases, including five
   runtime policy-publication and four retirement cases. Allow and deny records include request id, principal,
   action, resource, policy/version, fixed reason, and the decisive rule; reopen preserves
   order and integrity, tamper and torn-tail handling are covered, and a failed append denies
@@ -426,9 +426,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    infrastructure inventory, or secret broker exists.
 5. **Identity/policy lifecycle.** Bearer sessions, a durable policy registry, exact-granted
    runtime publication and retirement, signed policy bundles/decisions, and a durable
-   hash-chained decision audit exist. There is no user-facing login, production policy-key
-   custody/recovery ceremony, independent external audit custody, or rollback/monotonic
-   checkpoint. Registry state is v2 and has no downgrade path. The offline `publish-policy`
+   hash-chained decision audit with a signed local high-water mark exist. There is no
+   user-facing login, production policy-key custody/recovery ceremony, independent external
+   audit custody, or protection against a coordinated whole-store rollback by a same-UID
+   writer. Registry state is v2 and has no downgrade path. The offline `publish-policy`
    and `revoke-policy` CLIs remain the bootstrap paths. Session administration is
    exact-granted and human-only, but there is no step-up, approval quorum, or rate limiting
    for the operator grant.
@@ -463,9 +464,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 6. Build a secret broker before any provider credential is introduced.
 7. Keep PR #1 draft; do not merge or push `main`.
 8. Operate the ADR-0034 policy-key rotation/revocation ceremony with production custody and
-   external audit retention. Local signatures and rotation verification are implemented;
-   production key custody, external audit custody, rollback/monotonic checkpoints, and
-   recovery from key compromise remain open.
+   external audit retention. Local signatures, rotation verification and a local signed
+   authorization-audit head are implemented; production key custody, external audit custody,
+   protection against a coordinated whole-store audit rollback, and recovery from key
+   compromise remain open.
 
 ## Local verifier decision signing (2026-11-11)
 
@@ -573,16 +575,17 @@ Rotation is overlapping: old decisions verify while their key remains trusted, a
 key does not invalidate the old audit trail, and an unknown key id is never accepted. The
 operator ceremony (stop host, generate key, write overlapping root, update config, restart,
 publish under the new key, retain old public keys) is recorded in ADR-0034; production key
-custody, external audit custody, trusted timestamps, and rollback/monotonic-checkpoint
-protection remain open.
+custody, external audit custody, trusted timestamps, and protection against coordinated
+whole-store audit rollback remain open. The local signed audit high-water mark detects
+suffix truncation, insertion/reordering and prefix rollback while the current head remains.
 
-Tests: `apps/host/tests/policy-provenance.test.ts` (9) covers mutation, signature reuse,
+Tests: `apps/host/tests/policy-provenance.test.ts` (13) covers mutation, signature reuse,
 schema confusion, key-id substitution, wrong trust root, revoked/expired keys, overlapping
 rotation, unsigned policies, and decision tampering. `http-host.test.ts` (59) adds a
 kernel-intake test that injects an unsigned policy directly into the registry and receives
 `orchestration_rejected` with `policy_provenance_missing` before the Task exists. At this
-head: full host suite **279 passed / 17 skipped** across 28 passing files; focused policy
-provenance **11/11**; forced uncached workspace gate **46/46 tasks, 0 cached**, exit 0.
+head: full host suite **287 passed / 17 skipped** across 28 passing files; focused policy
+provenance **14/14**; forced uncached workspace gate **46/46 tasks, 0 cached**, exit 0.
 
 ## Whole-provenance red-team pass (2026-11-11)
 
@@ -598,16 +601,21 @@ Three reachable defects were fixed fail-closed and guarded by mutation-proven te
 - F-029: host composition rejects the policy signing key as the verifier signing key or as a
   key in the verifier trust root. A purpose-bound trust-root schema remains blocked.
 
-F-030 is **blocked, not fixed**: the authorization-audit SHA-256 chain detects ordinary edits
-and out-of-sequence records, but a same-UID attacker who rewrites the file and recomputes the
-chain can truncate, reorder or roll back a consistent prefix. There is no local monotonic
-checkpoint or external audit witness; `--expect-head` covers the operational evidence bundle,
-not `authorization-audit.jsonl`. Production key custody, remote attestation, a purpose-bound
-trust root, live connectors, macOS/rootless-Docker measurement and UI/scheduler/approval work
-remain blocked as classified in `docs/process/completion-ledger.md`.
+F-030 is **partially fixed locally**: `DurableAuthorizationAuditStore` now keeps a signed
+`authorization-audit.head.json` high-water mark and re-reads the journal on open, append and
+audit read. Suffix truncation, rollback to an older prefix, appended records and recomputed
+reordering are detected while the current head remains; the audit route returns 409
+`audit_integrity`. The whole-store rollback remains **blocked**: a same-UID attacker who
+rewrites both the journal and the signed head to an older valid pair, or deletes both, is
+outside local-only monotonicity. `--expect-head` covers the operational evidence bundle, not
+`authorization-audit.jsonl`; an external audit witness remains the owner action (CL-006).
+Production key custody, remote attestation, a purpose-bound trust root, live connectors,
+macOS/rootless-Docker measurement and UI/scheduler/approval work remain blocked as classified
+in `docs/process/completion-ledger.md`.
 
-Evidence at this pass: focused policy provenance 11/11; verifier-decision 4/4;
-orchestration 31/31; founder 95/95; host 279 passed / 17 skipped; forced uncached workspace
+Evidence at this pass: focused policy provenance 14/14; verifier-decision 4/4;
+orchestration 31/31; founder 95/95; host 287 passed / 17 skipped; forced uncached workspace
 gate 46/46 tasks, 0 cached, exit 0; secret scan and `git diff --check` clean. Mutation probes
-for F-027, F-028 and F-029 each went red for the intended assertion when the guard was removed,
-then green after restore; the kernel-binding probe rebuilt `@aios/orchestration` on both sides.
+for F-027, F-028, F-029 and the local F-030 head comparisons each went red for the intended
+assertion when the guard was removed, then green after restore; the kernel-binding probe
+rebuilt `@aios/orchestration` on both sides.

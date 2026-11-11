@@ -1372,8 +1372,9 @@ provisioned and are not claimed.
   not changed by this pass.
 - Still open: production trust-root/key provisioning and custody, an owner-operated
   production rotation/revocation ceremony, external audit custody, trusted timestamps,
-  rollback/monotonic-checkpoint protection, remote attestation, and recovery from private-key
-  compromise. This is local tamper evidence, not a remote trust service.
+  coordinated whole-store audit rollback protection (a local signed audit head is
+  implemented), remote attestation, and recovery from private-key compromise. This is local
+  tamper evidence, not a remote trust service.
 
 ## Whole-provenance red-team pass (2026-11-11)
 
@@ -1392,19 +1393,23 @@ provisioned and are not claimed.
   signing key as the verifier signing key and rejects the policy key in the verifier trust
   root. The trust-root schema still has no per-key purpose; production purpose-bound roots,
   custody and rotation ceremony remain blocked.
-- F-030 blocked, not fixed: the authorization-audit hash chain detects ordinary edits and
-  out-of-sequence records, but a same-UID attacker who rewrites the file and recomputes the
-  unkeyed chain can truncate, reorder or roll back a consistent prefix. No local monotonic
-  checkpoint or external audit witness exists; `evidence-bundle --expect-head` covers the
-  operational journal export, not `authorization-audit.jsonl`.
+- F-030 partially fixed locally: `DurableAuthorizationAuditStore` now writes a signed
+  `authorization-audit.head.json` high-water mark and re-reads the journal on open, append and
+  audit read. Suffix truncation, rollback to an older prefix, appended records and recomputed
+  reordering are detected while the current head remains; `GET /v1/audit/authorization` maps
+  a `JournalError` to 409 `audit_integrity`. Whole-store rollback remains **blocked**: a
+  same-UID attacker who rewrites both files to an older valid pair, or deletes both, is
+  outside local-only monotonicity; `evidence-bundle --expect-head` covers the operational
+  journal export, not `authorization-audit.jsonl` (CL-006).
 - Mutation probes: F-027 guard removed -> focused test **1 failed / 10 skipped**, exit 1;
-  restored -> **11/11**, exit 0. F-028 verifier expectation removed -> **1 failed / 3
-  skipped**, exit 1; restored -> **4/4**, exit 0. F-028 kernel expectation fields removed ->
+  restored final suite **14/14**, exit 0. F-028 verifier expectation removed -> **1 failed /
+  3 skipped**, exit 1; restored -> **4/4**, exit 0. F-028 kernel expectation fields removed ->
   `@aios/orchestration` rebuilt, **1 failed / 11 skipped**, exit 1; restored/rebuilt ->
   **31/31**, exit 0. F-029 key-id check disabled -> **1 failed / 10 skipped**, exit 1;
-  restored -> **11/11**, exit 0.
-- Exact suites: focused policy provenance **11/11**; verifier-decision **4/4**;
-  `@aios/orchestration` **31/31**; `@aios/founder` **95/95**; `@aios/host` **279 passed / 17
+  restored final suite **14/14**, exit 0. F-030 both head comparisons disabled -> four
+  boundary tests **4 failed / 7 passed**, exit 1; restored -> **11/11**, exit 0.
+- Exact suites: focused policy provenance **14/14**; verifier-decision **4/4**;
+  `@aios/orchestration` **31/31**; `@aios/founder` **95/95**; `@aios/host` **287 passed / 17
   skipped** across 28 passing files and 3 skipped files.
 - Full forced uncached workspace gate:
   `turbo run lint typecheck build test --force --cache-dir="$PWD/.turbo/cache"` -> **46/46

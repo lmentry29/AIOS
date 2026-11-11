@@ -3,18 +3,18 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, whole-provenance red-team pass). Latest
-security code head: `20760f5` (`feat(security): sign policy bundles and authorization
-decisions`), following the trust-root lifecycle and local-provenance commits. The forced
-uncached gate, host/orchestration suites, mutation probes and the blocked audit-rollback
-boundary are recorded below. Re-check this head rather than older CI lines. F-009's digest mitigation, F-005's fail-closed regression, the bounded
+Last updated: 2026-11-11 (Freebuff Cloud session, audit-head boundary pass). Latest security
+code head: the commit containing this handoff (see `git log -1`), following the
+whole-provenance commit `3c87a4d`. The forced
+uncached gate, host/orchestration suites, mutation probes and the local audit-head boundary
+with the remaining whole-store rollback are recorded below. Re-check this head rather than older CI lines. F-009's digest mitigation, F-005's fail-closed regression, the bounded
 canonical collections, and the live bubblewrap controls remain in place from
 `24d2791`/`43e2dd6`.
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
-- Branch: `community/open-source-foundation`
+- Branch: `security/openjarvis-defensive-integration`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
 - Measured security code head: `378e7d6` (`fix(security): normalize gVisor rootfs build state`; pinned base/snapshot/packages, independent no-cache rebuild comparison, and path-level mismatch diagnostics).
 - Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic rootfs manifest, fail-closed probes, and evidence plumbing).
@@ -679,7 +679,8 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
     external trust root (ADR-0034), with verification, overlapping rotation, revocation and
     old-decision verification implemented and tested. Production key custody, an
     owner-operated production rotation/revocation ceremony, external audit custody, and
-    rollback/monotonic checkpoint protection remain open. Current authority is the
+    coordinated whole-store audit rollback protection remain open; the local signed audit
+    high-water mark detects truncation/reordering while the current head remains. Current authority is the
     authenticated session, the exact grant, **and** the verified policy signature. Registry
     state is v2 and downgrade is unsupported.
 
@@ -757,7 +758,7 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   the exact `read_evidence` grant on the protected decision collection.
 - If the audit append fails, `AuthorizationService` returns deny even for an otherwise
   matching allow; no phantom decision is recorded. Tests:
-  `apps/host/tests/authorization-audit-store.test.ts` (6),
+  `apps/host/tests/authorization-audit-store.test.ts` (11),
   `packages/founder/tests/authorization.test.ts` (22 total), and the restart/grant cases in
   `apps/host/tests/http-host.test.ts` (41 HTTP total). Full workspace at that commit:
   **495 passed**.
@@ -784,7 +785,7 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   later protected reads and the audit prefix reads back in order. Serialized policy and
   audit files contain no bearer token or `Bearer` text.
 - Historical limits at this checkpoint: no detached policy signature, key rotation,
-  external audit custody, or policy rollback by reattaching an older version. ADR-0034 later
+  external audit custody, coordinated whole-store audit rollback, or policy rollback by reattaching an older version. ADR-0034 later
   adds local detached bundle/decision signatures and overlapping rotation verification;
   external custody and rollback protection remain open. Rollback is a new higher version with
   the restored rules. Runtime retirement is added under `4422229`. The registry remains
@@ -1089,16 +1090,17 @@ key as the verifier signing key or to leave it in the verifier trust root. Each 
 focused test and a mutation probe: guard removed -> test red for the intended reason; guard
 restored -> test green.
 
-F-030 remains **blocked**: `authorization-audit.jsonl` has an unkeyed SHA-256 chain and no
-local monotonic checkpoint. An attacker who can rewrite the file and recompute the chain can
-truncate, reorder or roll back a consistent prefix. Ordinary edits and out-of-sequence
-records are detected, and every record is signature-verified on read, but local-only code
-cannot establish monotonicity against a same-UID writer. External audit custody or a
-monotonic witness is the owner action. The operational evidence bundle's `--expect-head` is
-not a substitute for the authorization journal.
+F-030 is **partially fixed locally**: `DurableAuthorizationAuditStore` writes a signed
+`authorization-audit.head.json` high-water mark and re-reads the journal on open, append and
+audit read. Suffix truncation, rollback to an older prefix, appended records and recomputed
+reordering are detected while the current head remains; the audit route returns 409
+`audit_integrity`. A same-UID attacker who rewrites both the journal and the signed head to
+an older valid pair, or deletes both, is still outside local-only monotonicity; external
+audit custody or a monotonic witness is the owner action (CL-006). The operational evidence
+bundle's `--expect-head` is not a substitute for the authorization journal.
 
-Measured locally: focused policy provenance 11/11; verifier-decision 4/4; orchestration
-31/31; founder 95/95; host 279 passed / 17 skipped; forced uncached workspace gate 46/46
+Measured locally: focused policy provenance 14/14; verifier-decision 4/4; orchestration
+31/31; founder 95/95; host 287 passed / 17 skipped; forced uncached workspace gate 46/46
 tasks, 0 cached; secret scan and `git diff --check` clean. The purpose-bound trust-root
 schema, production key custody, remote attestation, revocation-time history semantics, live
 connectors, macOS/rootless-Docker measurement, UI/CSRF, scheduler/approval and release work

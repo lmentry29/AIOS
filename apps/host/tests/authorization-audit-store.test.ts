@@ -1,7 +1,7 @@
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AuthorizationDecisionAudit } from '@aios/founder';
 import { DurableAuthorizationAuditStore } from '../src/persistence/authorization-audit-store.js';
@@ -42,6 +42,57 @@ function deny(overrides: Partial<AuthorizationDecisionAudit> = {}): Authorizatio
     timestamp: new Date().toISOString(),
     ...overrides,
   };
+}
+
+const AUDIT_HEAD = 'authorization-audit.head.json';
+const ZERO_HASH = '0'.repeat(64);
+
+function canonicalJson(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item) ?? 'null').join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalJson(record[key])] as const)
+      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
+      .map(([key, json]) => `${JSON.stringify(key)}:${json}`);
+    return `{${entries.join(',')}}`;
+  }
+  if (value === undefined) return undefined;
+  return JSON.stringify(value) as string;
+}
+
+function journalRecordHash(record: Record<string, unknown>): string {
+  return createHash('sha256').update(canonicalJson(record) ?? '').digest('hex');
+}
+
+function readJournal(directory: string): Array<Record<string, unknown>> {
+  return readFileSync(join(directory, 'authorization-audit.jsonl'), 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function rehashJournal(records: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  let previousHash = ZERO_HASH;
+  records.forEach((record, index) => {
+    record.sequence = index + 1;
+    record.previous_hash = previousHash;
+    const { hash: _hash, ...unsigned } = record;
+    record.hash = journalRecordHash(unsigned);
+    previousHash = record.hash as string;
+  });
+  return records;
+}
+
+function writeJournal(directory: string, records: Array<Record<string, unknown>>): void {
+  writeFileSync(
+    join(directory, 'authorization-audit.jsonl'),
+    `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+    { mode: 0o600 },
+  );
 }
 
 describe('DurableAuthorizationAuditStore', () => {
@@ -126,7 +177,67 @@ describe('DurableAuthorizationAuditStore', () => {
     reopened.close();
   });
 
+  it('rejects removal of trailing records against the durable high-water mark', async () => {
+    const directory = stateDirectory();
+    const store = new DurableAuthorizationAuditStore({ directory });
+    await store.append(allow());
+    await store.append(deny());
+    store.close();
+
+    writeJournal(directory, readJournal(directory).slice(0, 1));
+    expect(() => new DurableAuthorizationAuditStore({ directory })).toThrow(/record count/);
+  });
+
+  it('rejects rollback to an older internally consistent prefix', async () => {
+    const directory = stateDirectory();
+    const store = new DurableAuthorizationAuditStore({ directory });
+    await store.append(allow());
+    await store.append(deny());
+    const prefix = readJournal(directory);
+    await store.append(allow());
+    store.close();
+
+    writeJournal(directory, prefix);
+    expect(() => new DurableAuthorizationAuditStore({ directory })).toThrow(/record count/);
+  });
+
+  it('rejects an appended record that is absent from the high-water mark', async () => {
+    const directory = stateDirectory();
+    const store = new DurableAuthorizationAuditStore({ directory });
+    await store.append(allow());
+    await store.append(deny());
+    store.close();
+
+    const records = readJournal(directory);
+    const inserted = { ...records[0], sequence: 3, previous_hash: records[1]?.hash };
+    writeJournal(directory, rehashJournal([...records, inserted]));
+    expect(() => new DurableAuthorizationAuditStore({ directory })).toThrow(/record count/);
+  });
+
+  it('rejects a reordered journal whose chain was recomputed but whose head differs', async () => {
+    const directory = stateDirectory();
+    const store = new DurableAuthorizationAuditStore({ directory });
+    await store.append(allow());
+    await store.append(deny());
+    store.close();
+
+    const records = readJournal(directory);
+    writeJournal(directory, rehashJournal([records[1] as Record<string, unknown>, records[0] as Record<string, unknown>]));
+    expect(() => new DurableAuthorizationAuditStore({ directory })).toThrow(/head hash/);
+  });
+
+  it('rejects a non-empty journal with no durable head anchor', async () => {
+    const directory = stateDirectory();
+    const store = new DurableAuthorizationAuditStore({ directory });
+    await store.append(allow());
+    store.close();
+
+    rmSync(join(directory, AUDIT_HEAD));
+    expect(() => new DurableAuthorizationAuditStore({ directory })).toThrow(/head is missing/);
+  });
+
   it('keeps raw credentials out of the serialized journal', async () => {
+
     const directory = stateDirectory();
     const store = new DurableAuthorizationAuditStore({ directory });
     await store.append(allow());

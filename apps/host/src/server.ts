@@ -28,6 +28,7 @@ import {
 } from './identity.js';
 import { parseRuntimePolicyPublication, parseRuntimePolicyRevocation } from './policy-admin.js';
 import { ExecutionConflictError } from './persistence/execution-ledger.js';
+import { JournalError } from './persistence/journal.js';
 import { DispatchConflictError, type StartedRun } from './persistence/operational-store.js';
 import { withRequestId } from './request-context.js';
 import type { HostRuntime } from './runtime.js';
@@ -1169,7 +1170,19 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         // bootstrap-implied read path exists.
         await requireAllowed(host, session, 'read_evidence', host.config.decision_collection_id);
         const limit = auditLimit(url);
-        const records = host.authorizationAudit.list();
+        let records: ReturnType<HostRuntime['authorizationAudit']['list']>;
+        try {
+          records = host.authorizationAudit.list();
+        } catch (error) {
+          if (error instanceof JournalError) {
+            throw new HostHttpError(
+              409,
+              'audit_integrity',
+              'Authorization audit head or hash chain failed verification.',
+            );
+          }
+          throw error;
+        }
         for (const record of records) {
           const verified = await host.policyProvenance.verifyDecision(record);
           if (!verified.valid) {
