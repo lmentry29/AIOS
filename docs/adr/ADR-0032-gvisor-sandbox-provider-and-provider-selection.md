@@ -200,9 +200,10 @@ hashing. A Sigstore-signed release and immutable runtime mount remain future wor
   refused, and cleanup is restricted to the staging inode the invocation created.
 - The pinned `runsc` is executed from a private copy of the measured runtime tree (binary plus
   `gvisor-bin` Sentry sidecars, with symlinks/special files rejected) and re-checked immediately
-  before spawn; the rootfs is re-measured after execution and any difference rejects the result.
-  This does not defend against a same-UID host writer, which remains inside the host trust
-  boundary.
+  before spawn. The rootfs is copied into an invocation-owned directory and the copy must
+  measure identically before execution, so runtime scratch writes cannot mutate the operator
+  rootfs. This does not defend against a same-UID host writer, which remains inside the host
+  trust boundary.
 - Local verification at the amendment head: host build exit 0; focused provenance/provider
   tests **28/28**; full host suite **183 passed / 17 skipped**; tool syntax check exit 0. The
   Docker-based independent-image and platform-index checks remain CI-only because no local

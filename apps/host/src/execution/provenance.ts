@@ -590,19 +590,6 @@ export function assertReproducibleRootfs(
   }
 }
 
-/**
- * Require the rootfs handed to the runtime to be unchanged after execution. A change means
- * the result is not bound to the artifact whose digest was attested, so it is rejected.
- */
-export function assertRootfsUnchanged(before: RootfsDigestLike, after: RootfsDigestLike): void {
-  const mismatched = digestMismatches(before, after, true);
-  if (mismatched.length > 0) {
-    throw new ProvenanceError(
-      `The gVisor rootfs changed while the sandbox was running (${mismatched.join('; ')}); the result is not bound to the verified artifact.`,
-    );
-  }
-}
-
 /** Resolve the executable the provider will actually launch, without trusting PATH for the hash. */
 export function resolveExecutable(name: string): string {
   const searchPath = process.env.PATH ?? '';
@@ -727,6 +714,57 @@ export function materializeVerifiedRuntime(
         size: finalStats.size,
       },
     };
+  } catch (error) {
+    rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
+ * Copy a measured rootfs into a private, invocation-owned directory and require the copy to
+ * measure identically. The runtime receives the copy, so runtime scratch state cannot mutate
+ * the operator's rootfs and the executed tree is the tree this invocation measured.
+ *
+ * Timestamps are not compared because a copy does not preserve directory mtimes; content,
+ * entry count, ownership, permission bits and extended attributes must match exactly. Node's
+ * copy does not preserve extended attributes, so a rootfs that carries them fails closed here
+ * instead of executing a tree that differs from the measured one.
+ */
+export function materializeVerifiedRootfs(
+  source: string,
+  expected: RootfsDigestLike,
+  directory: OwnedDirectory,
+): { path: string; digest: RootfsDigest } {
+  const root = resolve(source);
+  assertPrivateDirectory(directory);
+  const stats = lstatSync(root);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new ProvenanceError(`The verified gVisor rootfs must be a real directory: ${root}.`);
+  }
+  const target = join(directory.path, 'rootfs');
+  try {
+    lstatSync(target);
+    throw new ProvenanceError(`The private rootfs path already exists: ${target}.`);
+  } catch (error) {
+    if (error instanceof ProvenanceError) throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  cpSync(root, target, {
+    recursive: true,
+    dereference: false,
+    errorOnExist: true,
+    force: false,
+    verbatimSymlinks: true,
+  });
+  try {
+    const digest = digestRootfs(target);
+    const mismatched = digestMismatches(expected, digest, false);
+    if (mismatched.length > 0) {
+      throw new ProvenanceError(
+        `The materialized gVisor rootfs does not match the verified rootfs (${mismatched.join('; ')}).`,
+      );
+    }
+    return { path: target, digest };
   } catch (error) {
     rmSync(target, { recursive: true, force: true });
     throw error;

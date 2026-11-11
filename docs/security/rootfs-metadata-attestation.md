@@ -99,10 +99,10 @@ would leave the resolved platform manifest unpinned.
   what runs.
 - `assertMaterializedExecutableUnchanged` re-checks inode, size, writability and SHA-256
   immediately before execution. The remaining window is confined to a directory only the
-  invoking user can write; a same-UID attacker is inside the host trust boundary.
-- The rootfs is measured before execution and re-measured after it. A difference rejects the
-  result with `SandboxIsolationUnavailableError`; the outcome is not attributed to the
-  verified tree.
+  invoking user can write; a same-UID attacker is inside the host trust boundary.- The rootfs is measured, then copied into an invocation-owned directory; the copy must measure
+  identically before execution and is the tree the runtime receives. `runsc` writes runtime
+  scratch state into its rootfs, so this keeps the operator tree unmodified and makes the
+  executed tree the measured tree.
 
 ## Remaining omissions and residuals
 

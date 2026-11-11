@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -19,10 +20,10 @@ import {
   assertDestinationAbsent,
   assertMaterializedExecutableUnchanged,
   assertReproducibleRootfs,
-  assertRootfsUnchanged,
   createOwnedStagingDirectory,
   digestRootfs,
   hashFile,
+  materializeVerifiedRootfs,
   materializeVerifiedRuntime,
   promoteOwnedDirectory,
   readGvisorRootfsBuildPin,
@@ -258,13 +259,25 @@ describe('gVisor provenance', () => {
       .toThrow(/not reproducible.*timestamps_sha256/);
   });
 
-  it('rejects a rootfs that changed after it was measured', () => {
-    const rootfs = directory('aios-rootfs-changed-');
-    writeFileSync(join(rootfs, 'file'), 'before', { mode: 0o600 });
-    const before = digestRootfs(rootfs);
-    writeFileSync(join(rootfs, 'extra'), 'after', { mode: 0o600 });
-    expect(() => assertRootfsUnchanged(before, digestRootfs(rootfs)))
-      .toThrow(/changed while the sandbox was running/);
+  it('materializes an invocation-owned rootfs copy and refuses a changed tree', () => {
+    const parent = directory('aios-rootfs-copy-');
+    const source = join(parent, 'source');
+    mkdirSync(join(source, 'bin'), { recursive: true });
+    writeFileSync(join(source, 'bin', 'tool'), 'payload', { mode: 0o755 });
+    symlinkSync('/bin/tool', join(source, 'bin', 'link'));
+    const expected = digestRootfs(source);
+    const stage = createOwnedStagingDirectory(parent, 'private-');
+    const copy = materializeVerifiedRootfs(source, expected, stage);
+    expect(copy.path).not.toBe(source);
+    expect(copy.digest.sha256).toBe(expected.sha256);
+    expect(readlinkSync(join(copy.path, 'bin', 'link'))).toBe('/bin/tool');
+
+    writeFileSync(join(source, 'bin', 'tool'), 'changed', { mode: 0o755 });
+    const changed = createOwnedStagingDirectory(parent, 'private-');
+    expect(() => materializeVerifiedRootfs(source, expected, changed))
+      .toThrow(/does not match the verified rootfs/);
+    removeOwnedDirectory(changed);
+    removeOwnedDirectory(stage);
   });
 
   it('materializes the verified runtime tree and rejects replaced or unsafe copies', () => {

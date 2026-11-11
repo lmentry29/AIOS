@@ -1152,9 +1152,9 @@ workflows for that commit complete.
   copied into a private `0700` directory (executable `0500`); the copy is rejected if it contains
   a symlink or special file, the copied `runsc` is hashed, and the copy is executed. `runsc`
   resolves sidecars relative to its own binary, so the whole runtime tree moves with it. Inode,
-  size, writability and SHA-256 are re-checked immediately before spawn, and the rootfs is
-  re-measured after execution; a difference rejects the result with
-  `SandboxIsolationUnavailableError`.
+  size, writability and SHA-256 are re-checked immediately before spawn. The rootfs is copied
+  into an invocation-owned directory and the copy must measure identically before execution;
+  the runtime receives the copy, so its scratch writes cannot mutate the operator rootfs.
 - **Archive hardening.** A symlinked `runsc` or `gvisor-bin` is rejected, chmod never follows a
   symlink in the extracted tree, extraction uses `--no-same-owner`, and manifests are written
   atomically.

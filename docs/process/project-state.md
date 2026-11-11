@@ -169,8 +169,8 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   no-cache images to produce the same manifest-v2 digest and rejects same-image comparison.
   Runtime and rootfs outputs are staged in unique directories and promoted atomically; the
   manifest attests uid/gid, permission bits, mtime and extended attributes (`--require-xattrs`
-  in CI); the runtime executes from a private measured copy and the rootfs is re-measured after
-  execution.
+  in CI); the runtime executes from a private measured copy and the rootfs executes from an
+  invocation-owned copy that must measure identically.
 - CI at `378e7d6` (Security run `42956393498`, live job `130312417881`) passed: pin guard step 12;
   Docker build/drill steps 13–14 (**21/21**); independent image build step 15; install step 16
   measured `runsc release-20261102.0`, binary

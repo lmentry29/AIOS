@@ -161,7 +161,9 @@ describe('gvisor provider', () => {
         expect(captured.args).toContain('--network=none');
         expect(captured.args).toContain('run');
         expect(captured.args).not.toContain('do');
-        expect(captured.config.root).toEqual({ path: fake.rootfs, readonly: true });
+        expect(captured.config.root.readonly).toBe(true);
+        expect(captured.config.root.path).not.toBe(fake.rootfs);
+        expect(captured.config.root.path.startsWith(tmpdir())).toBe(true);
         expect(captured.config.process.args).toEqual(['/bin/echo', 'hello world']);
         expect(captured.config.process.cwd).toBe('/workspace');
         expect(captured.config.process.noNewPrivileges).toBe(true);
@@ -212,7 +214,7 @@ describe('gvisor provider', () => {
     });
   });
 
-  it('rejects a rootfs that changes while the sandbox runs', async () => {
+  it('executes an invocation-owned rootfs copy and leaves the operator tree untouched', async () => {
     const fake = fakeRunsc();
     await withPath(fake.directory, async () => {
       const provider = createSandboxProvider({
@@ -220,15 +222,24 @@ describe('gvisor provider', () => {
         rootfs: fake.rootfs,
         gvisorPinPath: fake.pinPath,
       });
-      const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-mutation-'));
-      await expect(provider.run({
+      const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-rootfs-copy-'));
+      const result = await provider.run({
         argv: ['/bin/true'],
         workspaceDirectory: workspace,
         cwd: '.',
         timeoutMs: 3_000,
         maxOutputBytes: 1024,
         env: { AIOS_FAKE_MUTATE: '1' },
-      })).rejects.toThrow(/could not be re-verified after execution.*changed while the sandbox was running/);
+      });
+      expect(result.provenance?.rootfs.sha256).toBe(digestRootfs(fake.rootfs).sha256);
+      const captured = JSON.parse(readFileSync(fake.capture, 'utf8')) as {
+        config: { root: { path: string } };
+      };
+      expect(captured.config.root.path).not.toBe(fake.rootfs);
+      expect(captured.config.root.path.startsWith(tmpdir())).toBe(true);
+      // The runtime mutated only the per-invocation copy.
+      expect(existsSync(join(fake.rootfs, 'intruder'))).toBe(false);
+      expect(existsSync(captured.config.root.path)).toBe(false);
     });
   });
 

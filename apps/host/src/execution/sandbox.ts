@@ -12,10 +12,10 @@ import {
 } from '../errors.js';
 import {
   assertMaterializedExecutableUnchanged,
-  assertRootfsUnchanged,
   createOwnedStagingDirectory,
   digestRootfs,
   hashFile,
+  materializeVerifiedRootfs,
   materializeVerifiedRuntime,
   ProvenanceError,
   readGvisorRuntimePin,
@@ -60,8 +60,6 @@ export interface SandboxProvenanceEvidence {
     content_sha256?: string;
     timestamps_sha256?: string;
     xattrs?: 'captured' | 'unavailable';
-    /** True only after the rootfs was re-measured identically following execution. */
-    reverified_after_run?: boolean;
   };
 }
 
@@ -893,6 +891,19 @@ class GvisorSandbox implements SandboxProvider {
     }
     const workdir = gvisorWorkdir(spec.cwd);
     const cpuSeconds = bubblewrapCpuSeconds(spec.timeoutMs);
+    // Execute an invocation-owned copy that must measure identically. runsc writes runtime
+    // scratch state into the rootfs it is given, so handing it the operator's tree would both
+    // mutate that tree and make a post-run comparison meaningless.
+    const rootfsDirectory = createOwnedStagingDirectory(tmpdir(), 'aios-gvisor-rootfs-');
+    let rootfsPath: string;
+    try {
+      rootfsPath = materializeVerifiedRootfs(rootfs, provenance.rootfs, rootfsDirectory).path;
+    } catch (error) {
+      removeOwnedDirectory(rootfsDirectory);
+      throw new SandboxIsolationUnavailableError(
+        `The gVisor rootfs could not be materialized for execution: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
     const bundleDirectory = mkdtempSync(join(tmpdir(), 'aios-gvisor-bundle-'));
     const stateDirectory = mkdtempSync(join(tmpdir(), 'aios-gvisor-state-'));
     const containerName = `aios-${randomUUID()}`;
@@ -917,7 +928,7 @@ class GvisorSandbox implements SandboxProvider {
           { type: 'RLIMIT_NOFILE', soft: 1024, hard: 1024 },
         ],
       },
-      root: { path: rootfs, readonly: true },
+      root: { path: rootfsPath, readonly: true },
       hostname: 'aios-gvisor',
       mounts: [
         {
@@ -963,15 +974,6 @@ class GvisorSandbox implements SandboxProvider {
           ...(spec.signal === undefined ? {} : { signal: spec.signal }),
         },
       );
-      // Bind the result to the artifact whose digest was attested: if the rootfs changed
-      // while the sandbox ran, the outcome cannot be attributed to the verified tree.
-      try {
-        assertRootfsUnchanged(provenance.rootfs, digestRootfs(rootfs));
-      } catch (error) {
-        throw new SandboxIsolationUnavailableError(
-          `The gVisor rootfs could not be re-verified after execution: ${error instanceof Error ? error.message : 'unknown error'}`,
-        );
-      }
       const stderr = result.stderr.toString('utf8');
       const runtimeFailure = /^(?:running|creating|starting) container:/m.test(stderr)
         || /^runsc:/m.test(stderr);
@@ -984,10 +986,7 @@ class GvisorSandbox implements SandboxProvider {
         provider: this.id,
         assurance: this.assurance,
         ...(this.engine === undefined ? {} : { engine: this.engine }),
-        provenance: {
-          ...provenance,
-          rootfs: { ...provenance.rootfs, reverified_after_run: true },
-        },
+        provenance,
         boundary: {
           mechanism: 'gvisor-sentry',
           applied: boundaryApplied,
@@ -1011,6 +1010,7 @@ class GvisorSandbox implements SandboxProvider {
       await this.cleanup(verified.executable.path, stateDirectory, containerName);
       rmSync(bundleDirectory, { recursive: true, force: true });
       rmSync(stateDirectory, { recursive: true, force: true });
+      removeOwnedDirectory(rootfsDirectory);
     }
   }
 

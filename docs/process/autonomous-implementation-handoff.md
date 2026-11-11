@@ -136,7 +136,7 @@ canonical collections, and the live bubblewrap controls remain in place from
   `build-rootfs --compare-image`; the latter rejects same-image comparison and differing
   digests. Outputs are staged and promoted atomically; the manifest is v2 (ownership, permission
   bits, mtime and extended attributes); the runtime executes from a private measured copy and the
-  rootfs is re-measured after execution.
+  rootfs executes from an invocation-owned copy that must measure identically.
 - `tools/security/adversarial-drill.mjs` requires `AIOS_GVISOR_ROOTFS_MANIFEST`, compares the
   provider's rootfs digest/entries to it, records the manifest, and puts provenance digests on
   every case. Security workflow steps 12 and 15–19 validate the pin, rebuild the image
