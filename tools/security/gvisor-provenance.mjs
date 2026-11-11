@@ -163,6 +163,12 @@ function writeManifest(path, manifest) {
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 }
 
+function describeRootfsDifference(first, second) {
+  const result = spawnSync('diff', ['-rq', first, second], { encoding: 'utf8' });
+  const detail = (result.stdout || result.stderr || '').trim().split('\n').slice(0, 12).join(' | ');
+  return detail.length === 0 ? '' : ` Differing paths: ${detail}`;
+}
+
 function exportRootfs(image, destination) {
   if (existsSync(destination)) {
     throw new ProvenanceError(`Refusing to overwrite an existing gVisor rootfs: ${resolve(destination)}.`);
@@ -309,7 +315,7 @@ async function main() {
       const secondOutput = `${output}-reproducibility-${randomUUID()}`;
       try {
         const second = exportRootfs(image, secondOutput);
-        assertReproducibleRootfs(first, second);
+        assertReproducibleRootfs(first, second, describeRootfsDifference(output, secondOutput));
         reproducible = {
           sha256: second.sha256,
           entries: second.entries,
@@ -323,7 +329,7 @@ async function main() {
       const secondOutput = `${output}-independent-${randomUUID()}`;
       try {
         const second = exportRootfs(compareImage, secondOutput);
-        assertReproducibleRootfs(first, second);
+        assertReproducibleRootfs(first, second, describeRootfsDifference(output, secondOutput));
         rebuildImageId = run('docker', ['image', 'inspect', '--format', '{{.Id}}', compareImage]).trim();
         reproducible = {
           sha256: second.sha256,

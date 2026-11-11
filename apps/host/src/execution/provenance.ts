@@ -405,10 +405,10 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
 }
 
 /** Require two measured rootfs exports to agree exactly. */
-export function assertReproducibleRootfs(first: RootfsDigest, second: RootfsDigest): void {
+export function assertReproducibleRootfs(first: RootfsDigest, second: RootfsDigest, detail = ''): void {
   if (first.sha256 !== second.sha256 || first.entries !== second.entries) {
     throw new ProvenanceError(
-      `The gVisor rootfs export is not reproducible (first ${first.sha256}/${first.entries} entries, second ${second.sha256}/${second.entries}).`,
+      `The gVisor rootfs export is not reproducible (first ${first.sha256}/${first.entries} entries, second ${second.sha256}/${second.entries}).${detail}`,
     );
   }
 }

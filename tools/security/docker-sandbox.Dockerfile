@@ -29,8 +29,9 @@ RUN set -eux; \
       coreutils=9.1-1 \
       perl=5.36.0-7+deb12u4 \
       util-linux=2.38.1-5+deb12u3; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt /var/log/apt /var/log/dpkg.log \
-      /var/log/alternatives.log /tmp/* /var/tmp/* /etc/shadow /etc/gshadow
+    rm -rf /var/lib/apt/lists/* /var/lib/apt/extended_states /var/cache/* /var/log/* \
+      /var/lib/dpkg/lock* /var/lib/dpkg/triggers/Lock /tmp/* /var/tmp/* \
+      /etc/shadow /etc/gshadow
 
 # The host always supplies argv; this is only a defensive default.
 CMD ["/bin/true"]
