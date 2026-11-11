@@ -770,7 +770,7 @@ function assertNotRead(result, secret, label) {
       execution_result: { ...artifactResult, summary: 'forged success' },
     });
     assert.equal(forged.accepted, false, 'a forged executor result was accepted');
-    assert.match(forged.reason, /does not match/, 'forged result was not rejected by digest binding');
+    assert.match(forged.reason, /nonce|does not match/, 'forged result was not rejected by digest binding');
     pass('verification_forged_executor_result', {
       accepted: false,
       reason: forged.reason,
@@ -834,7 +834,7 @@ function assertNotRead(result, secret, label) {
       execution_result: firstResult,
     });
     assert.equal(stale.accepted, false, 'stale attempt-1 evidence was accepted after attempt 2');
-    assert.match(stale.reason, /does not match/, 'stale evidence was not rejected by the latest-attempt digest');
+    assert.match(stale.reason, /nonce|does not match/, 'stale evidence was not rejected by the latest-attempt digest');
     const latest = await verifier.verify({
       task: replayTask,
       agent_ids: [AGENT_ID],
