@@ -33,6 +33,8 @@ jobs:
       - run: pnpm turbo build
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" pnpm --filter @aios/host exec vitest run tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/resource-limit-drill.mjs
+      # Filesystem, secret, network, capability, resource, orphan and verification attacks.
+      - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.
       - run: node tools/security/session-operator-drill.mjs
 
