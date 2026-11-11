@@ -251,6 +251,7 @@ process.exit(1);
       expect(args[args.indexOf('--memory') + 1]).toBe('536870912');
       expect(args).toContain('--cpus');
       expect(args[args.indexOf('--cpus') + 1]).toBe('1');
+      expect(args[args.indexOf('--mount') + 1]).toBe(`type=bind,src=${workspace},dst=/workspace`);
       expect(args).toContain('--ulimit');
       // Docker's CLI rejects RLIMIT_AS; aggregate cgroup memory is the enforced
       // memory boundary and is inspected separately.

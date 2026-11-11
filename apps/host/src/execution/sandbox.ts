@@ -278,7 +278,8 @@ class DockerSandbox implements SandboxProvider {
       '--memory-swap', String(DOCKER_MEMORY_BYTES),
       '--cpus', String(DOCKER_CPU_LIMIT),
       '--ulimit', `cpu=${cpuSeconds}:${cpuSeconds}`,
-      '--mount', `type=bind,src=${workspace},dst=/workspace,rw`,
+      // Read-write is the default; Docker rejects a bare `rw` mount field.
+      '--mount', `type=bind,src=${workspace},dst=/workspace`,
       '--workdir', workdir,
       ...(user === undefined ? [] : ['--user', user]),
       '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
