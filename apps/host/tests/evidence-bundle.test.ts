@@ -271,6 +271,32 @@ describe('offline evidence bundles', () => {
     }))).toBe('REPLAY');
   });
 
+  it('seeded byte mutations never become a different verified bundle', () => {
+    const { bundle, trustRoot } = setup();
+    const original = JSON.stringify(bundle);
+    let rejected = 0;
+    let accepted = 0;
+    for (let iteration = 0; iteration < 200; iteration += 1) {
+      const position = Math.floor((iteration * 2654435761) % original.length);
+      const mutated = iteration % 3 === 0
+        ? `${original.slice(0, position)}${String.fromCharCode(32 + (iteration % 95))}${original.slice(position + 1)}`
+        : iteration % 3 === 1
+          ? `${original.slice(0, position)}${original.slice(position + 2)}`
+          : `${original.slice(0, position)}${original.slice(position, position + 2)}${original.slice(position)}`;
+      try {
+        const verified = verifyEvidenceBundle({ bundle: mutated, trust_root: trustRoot });
+        accepted += 1;
+        expect(verified.head_hash).toBe(bundle.header.source.head_hash);
+        expect(verified.bundle_sha256).toBe(bundle.bundle_sha256);
+      } catch (error) {
+        expect(error).toBeInstanceOf(EvidenceBundleError);
+        rejected += 1;
+      }
+    }
+    expect(rejected).toBeGreaterThan(150);
+    expect(accepted + rejected).toBe(200);
+  });
+
   it('accepts a bundle in a separate process and rejects a tampered one with the documented exit code', () => {
     const { bundle, trustRoot } = setup();
     const directory = mkdtempSync(join(tmpdir(), 'aios-bundle-cli-'));

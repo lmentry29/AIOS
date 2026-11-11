@@ -211,6 +211,32 @@ describe('signed build provenance', () => {
     }))).toBe('ARTIFACT_EXTRA');
   });
 
+  it('seeded byte mutations never authorize a different build', () => {
+    const { attestation, trustRoot, artifacts } = fixture();
+    const original = JSON.stringify(attestation);
+    let rejected = 0;
+    let accepted = 0;
+    for (let iteration = 0; iteration < 200; iteration += 1) {
+      const position = Math.floor((iteration * 2246822519) % original.length);
+      const mutated = iteration % 3 === 0
+        ? `${original.slice(0, position)}${String.fromCharCode(32 + (iteration % 95))}${original.slice(position + 1)}`
+        : iteration % 3 === 1
+          ? `${original.slice(0, position)}${original.slice(position + 2)}`
+          : `${original.slice(0, position)}${original.slice(position, position + 2)}${original.slice(position)}`;
+      try {
+        const verified = verifyBuildAttestation({ attestation: mutated, trust_root: trustRoot, actual_artifacts: artifacts });
+        accepted += 1;
+        expect(verified.source.commit).toBe(COMMIT);
+        expect(verified.artifacts).toEqual(attestation.artifacts);
+      } catch (error) {
+        expect(error).toBeInstanceOf(BuildAttestationError);
+        rejected += 1;
+      }
+    }
+    expect(rejected).toBeGreaterThan(150);
+    expect(accepted + rejected).toBe(200);
+  });
+
   it('accepts in a separate process and rejects a forged attestation', () => {
     const { attestation, trustRoot, artifacts, expected, root } = fixture();
     const attestationPath = join(root, 'attestation.json');

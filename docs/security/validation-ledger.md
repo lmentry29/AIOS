@@ -1288,3 +1288,16 @@ provisioned and are not claimed.
   conformance 107; orchestration 30.
 - Not claimed: SLSA level, in-toto/Sigstore conformance, OIDC builder identity, external
   custody, production key provisioning, macOS/rootless-Docker measurement.
+
+## Adversarial assurance expansion (2026-11-11)
+
+- New `apps/host/tests/adversarial-properties.test.ts`: 300 seeded strict-JSON mutations with
+  canonical round-trip, 100 canonical-hash permutations, 30 symlink workspace-accounting cases
+  and 24 partial-staging/promotion fault-injection cases.
+- Seeded mutation fuzzing over signed evidence bundles and build attestations: 200 mutations
+  each, asserting no accepted mutation changes the verified head/build.
+- Focused suites: 29 passed. Full uncached gate: 46/46 tasks, 0 cached; host 247 passed /
+  17 skipped; integration 43; conformance 107; orchestration 30.
+- Control-bypass demonstration: removing either signature check failed its targeted test;
+  restoring it produced the green gate. Coverage matrix and unmeasured classes are in
+  `docs/security/adversarial-assurance.md`.

@@ -91,3 +91,13 @@ the signature, key lifecycle, expected source/builder/workflow, exact artifact s
 checkpoint. Deterministic tests cover forged signature, unknown/revoked/expired keys, wrong
 commit/repository/builder/workflow, artifact digest/missing/extra, splice, replay, unknown
 schema and duplicate-key JSON. This is not an OIDC, Sigstore, SLSA or in-toto conformance claim.
+
+## F-025 — adversarial coverage was not consolidated or fuzzed end to end
+
+**Status:** covered where the runtime exists; connector/tool/memory/LLM classes are explicitly
+unmeasured.
+
+Strict parsers, signed evidence, build attestations, symlink accounting and atomic staging now
+have seeded mutation/property tests and fault injection in the gate. Two signature controls were
+temporarily removed to show their tests fail, then restored. The coverage matrix records each
+class as covered or unmeasured; no macOS/rootless-Docker extrapolation is made.
