@@ -183,7 +183,7 @@ describe('docker provider command construction', () => {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const argsFile = ${JSON.stringify(argsFile)};
-if (args[0] === 'info') { console.log('test-daemon'); process.exit(0); }
+if (args[0] === 'info') { console.log(JSON.stringify({ ServerVersion: '29.1.3', SecurityOptions: ['name=seccomp,profile=builtin'] })); process.exit(0); }
 if (args[0] === 'image') { console.log('sha256:test'); process.exit(0); }
 if (args[0] === 'create') {
   fs.writeFileSync(argsFile, args.join('\\n'));
@@ -239,6 +239,7 @@ process.exit(1);
       expect(result.exitCode).toBe(0);
       expect(result.filter).toMatchObject({ applied: true });
       expect(result.limits).toMatchObject({ applied: true, mechanism: 'docker-cgroup' });
+      expect(result.engine).toMatchObject({ name: 'docker', version: '29.1.3', rootless: false });
       const args = readFileSync(argsFile, 'utf8').trim().split('\n');
       expect(args[0]).toBe('create');
       expect(args).toContain('--network=none');

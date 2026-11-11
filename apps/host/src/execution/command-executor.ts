@@ -6,6 +6,7 @@ import {
   HostExecutionError,
   HostUnavailableError,
   SandboxFilterUnavailableError,
+  SandboxIsolationUnavailableError,
   SandboxResourceLimitUnavailableError,
   SandboxSyscallDeniedError,
   WorkspaceQuotaExceededError,
@@ -17,7 +18,8 @@ import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
 const MAX_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_BYTES = 1_048_576;
-const BOUNDARY_PROVIDERS = new Set(['bubblewrap', 'docker']);
+const FILTER_PROVIDERS = new Set(['bubblewrap', 'docker']);
+const BOUNDARY_PROVIDERS = new Set([...FILTER_PROVIDERS, 'gvisor']);
 
 function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -43,7 +45,7 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
  * so a command cannot inject credentials or untrusted text into the durable journal.
  */
 export class LocalCommandExecutor implements AgentExecutionPort {
-  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean } | undefined;
+  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean; isolationFailure?: boolean; resourceLimitFailure?: boolean } | undefined;
   private readonly active = new Map<string, AbortController>();
 
   constructor(
@@ -133,9 +135,17 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (result.cancelled) {
       throw new TaskCancelledError(task.entity_id);
     }
-    // Every production boundary must provide proof that its system-call filter was active
+    // gVisor's boundary is its user-space Sentry, not a host seccomp filter. Require its
+    // distinct boundary proof; do not let a gVisor run borrow a filter claim it never made.
+    if (this.provider.id === 'gvisor' && result.boundary?.applied !== true) {
+      this.workspaces.discard(task.entity_id);
+      throw new SandboxIsolationUnavailableError(
+        `The gVisor Sentry boundary was not active for this run: ${result.boundary?.reason ?? 'no boundary evidence'}.`,
+      );
+    }
+    // Every filter-based boundary must provide proof that its system-call filter was active
     // before exec. Missing or failed evidence is a denial, never an unfiltered success.
-    if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.filter?.applied !== true) {
+    if (FILTER_PROVIDERS.has(this.provider.id) && result.filter?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxFilterUnavailableError(
         `The system-call filter was not active for this run: ${result.filter?.reason ?? 'no filter evidence'}.`,
@@ -194,6 +204,21 @@ export class LocalCommandExecutor implements AgentExecutionPort {
             `resource_limit_processes:${result.limits.processes}`,
             `resource_limits_applied:${result.limits.applied}`,
           ]),
+      ...(result.boundary === undefined
+        ? []
+        : [
+            `sandbox_boundary:${result.boundary.mechanism}`,
+            `sandbox_boundary_applied:${result.boundary.applied}`,
+            `sandbox_boundary_version:${result.boundary.version}`,
+            `sandbox_boundary_rootless:${result.boundary.rootless}`,
+          ]),
+      ...(result.engine === undefined
+        ? []
+        : [
+            `sandbox_engine:${result.engine.name}`,
+            `sandbox_engine_version:${result.engine.version}`,
+            `sandbox_engine_rootless:${result.engine.rootless === null ? 'unknown' : result.engine.rootless}`,
+          ]),
     ];
 
     return {
@@ -228,6 +253,11 @@ export class LocalCommandExecutor implements AgentExecutionPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
+        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.isolationFailure === true) {
+          throw new SandboxIsolationUnavailableError(
+            `Local execution is unavailable because the sandbox boundary failed: ${this.availability.reason}`,
+          );
+        }
         if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.filterFailure === true) {
           throw new SandboxFilterUnavailableError(
             `Local execution is unavailable because the system-call filter failed: ${this.availability.reason}`,
@@ -242,7 +272,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       }
       return;
     }
-    let check: { available: boolean; reason: string; filterFailure?: boolean; resourceLimitFailure?: boolean };
+    let check: { available: boolean; reason: string; filterFailure?: boolean; isolationFailure?: boolean; resourceLimitFailure?: boolean };
     try {
       check = await this.provider.check();
     } catch {
@@ -250,6 +280,11 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {
+      if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.isolationFailure === true) {
+        throw new SandboxIsolationUnavailableError(
+          `Local execution is unavailable because the sandbox boundary failed: ${check.reason}`,
+        );
+      }
       if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.filterFailure === true) {
         throw new SandboxFilterUnavailableError(
           `Local execution is unavailable because the system-call filter failed: ${check.reason}`,

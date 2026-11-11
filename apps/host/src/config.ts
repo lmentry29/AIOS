@@ -75,7 +75,7 @@ export interface HostConfig {
   execution?: HostExecutionConfig;
 }
 
-export type SandboxProviderKind = 'auto' | 'bubblewrap' | 'seatbelt' | 'docker';
+export type SandboxProviderKind = 'auto' | 'bubblewrap' | 'seatbelt' | 'docker' | 'gvisor';
 
 /**
  * Fixed execution and verification wiring. Both commands are conceptually the same
@@ -92,6 +92,8 @@ export interface HostExecutionConfig {
   provider: SandboxProviderKind;
   /** Container image used by the Docker provider. Required for `docker`. */
   image?: string;
+  /** Absolute OCI rootfs used by gVisor. Required for `gvisor`. */
+  rootfs?: string;
   /** Upper bound applied to every execution and verification command. */
   default_timeout_ms: number;
   /** Upper bound applied to captured stdout and stderr per stream. */
@@ -198,6 +200,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     'verifier_id',
     'provider',
     'image',
+    'rootfs',
     'default_timeout_ms',
     'max_output_bytes',
     'workspace_max_bytes',
@@ -218,8 +221,8 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     fail('execution.verifier_id', 'must differ from execution.agent_id');
   }
   if (raw.provider !== 'auto' && raw.provider !== 'bubblewrap'
-    && raw.provider !== 'seatbelt' && raw.provider !== 'docker') {
-    fail('execution.provider', 'must be auto, bubblewrap, seatbelt, or docker');
+    && raw.provider !== 'seatbelt' && raw.provider !== 'docker' && raw.provider !== 'gvisor') {
+    fail('execution.provider', 'must be auto, bubblewrap, seatbelt, docker, or gvisor');
   }
   const provider = raw.provider;
 
@@ -235,6 +238,18 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
   }
   if (provider !== 'docker' && image !== undefined) {
     fail('execution.image', 'is only valid with provider docker');
+  }
+
+  let rootfs: string | undefined;
+  if (raw.rootfs !== undefined) {
+    rootfs = requireString(raw.rootfs, 'execution.rootfs', 4096);
+    if (!isAbsolute(rootfs)) fail('execution.rootfs', 'must be an absolute path');
+  }
+  if (provider === 'gvisor' && rootfs === undefined) {
+    fail('execution.rootfs', 'is required when provider is gvisor');
+  }
+  if (provider !== 'gvisor' && rootfs !== undefined) {
+    fail('execution.rootfs', 'is only valid with provider gvisor');
   }
 
   let defaultTimeoutMs = 60_000;
@@ -279,6 +294,7 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
     verifier_id: verifierId,
     provider,
     ...(image === undefined ? {} : { image }),
+    ...(rootfs === undefined ? {} : { rootfs: resolve(rootfs) }),
     default_timeout_ms: defaultTimeoutMs,
     max_output_bytes: maxOutputBytes,
     workspace_max_bytes: workspaceMaxBytes,

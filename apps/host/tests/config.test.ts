@@ -104,6 +104,28 @@ describe('host configuration', () => {
     })).execution?.max_concurrent_tasks).toBe(4);
   });
 
+  it('parses explicit gVisor provider wiring and rejects ambiguous rootfs selection', () => {
+    const base = {
+      workspace_directory: join(tmpdir(), 'aios-workspaces'),
+      agent_id: '11111111-1111-4111-8111-111111111111',
+      verifier_id: '22222222-2222-4222-8222-222222222222',
+    };
+    expect(parseHostConfig(validConfig({
+      execution: { ...base, provider: 'gvisor', rootfs: '/tmp/aios-gvisor-rootfs' },
+    })).execution).toMatchObject({
+      provider: 'gvisor',
+      rootfs: '/tmp/aios-gvisor-rootfs',
+    });
+    expect(() => parseHostConfig(validConfig({ execution: { ...base, provider: 'gvisor' } })))
+      .toThrow(/rootfs/);
+    expect(() => parseHostConfig(validConfig({
+      execution: { ...base, provider: 'docker', image: 'node:22-alpine', rootfs: '/tmp/rootfs' },
+    }))).toThrow(/rootfs/);
+    expect(() => parseHostConfig(validConfig({
+      execution: { ...base, provider: 'bubblewrap', rootfs: '/tmp/rootfs' },
+    }))).toThrow(/rootfs/);
+  });
+
   it('rejects an execution verifier that is also the executor and unsafe provider wiring', () => {
     const base = {
       workspace_directory: join(tmpdir(), 'aios-workspaces'),

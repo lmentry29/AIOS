@@ -38,16 +38,19 @@ import { DurableOperationalStore } from '../../apps/host/dist/persistence/operat
 
 const requestedProvider = process.env.AIOS_SANDBOX_PROVIDER ?? 'bubblewrap';
 assert.ok(
-  requestedProvider === 'bubblewrap' || requestedProvider === 'docker',
-  'AIOS_SANDBOX_PROVIDER must be bubblewrap or docker',
+  requestedProvider === 'bubblewrap' || requestedProvider === 'docker' || requestedProvider === 'gvisor',
+  'AIOS_SANDBOX_PROVIDER must be bubblewrap, docker, or gvisor',
 );
 const bwrapDirectory = process.env.AIOS_BWRAP_DIR;
 const dockerImage = process.env.AIOS_DOCKER_IMAGE;
+const gvisorRootfs = process.env.AIOS_GVISOR_ROOTFS;
 if (requestedProvider === 'bubblewrap') {
   assert.ok(bwrapDirectory, 'AIOS_BWRAP_DIR must point at a directory containing bwrap');
   process.env.PATH = `${bwrapDirectory}:${process.env.PATH ?? ''}`;
-} else {
+} else if (requestedProvider === 'docker') {
   assert.ok(dockerImage, 'AIOS_DOCKER_IMAGE must name a locally present Docker image');
+} else {
+  assert.ok(gvisorRootfs, 'AIOS_GVISOR_ROOTFS must name a controlled OCI rootfs');
 }
 
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -59,6 +62,7 @@ const config = {
   verifier_id: VERIFIER_ID,
   provider: requestedProvider,
   ...(dockerImage === undefined ? {} : { image: dockerImage }),
+  ...(gvisorRootfs === undefined ? {} : { rootfs: gvisorRootfs }),
   default_timeout_ms: 15_000,
   max_output_bytes: 65_536,
   workspace_max_bytes: 1024 * 1024,
@@ -67,6 +71,7 @@ const config = {
 const provider = createSandboxProvider({
   provider: requestedProvider,
   ...(dockerImage === undefined ? {} : { image: dockerImage }),
+  ...(gvisorRootfs === undefined ? {} : { rootfs: gvisorRootfs }),
 });
 const availability = await provider.check();
 assert.equal(
@@ -149,7 +154,11 @@ function assertNotRead(result, secret, label) {
     exit_code: result.exitCode,
     filter_sha256: result.filter?.sha256,
     workspace: directory,
-    host_system_mount: requestedProvider === 'bubblewrap' ? 'host system bind' : 'none',
+    host_system_mount: requestedProvider === 'bubblewrap'
+      ? 'host system bind'
+      : requestedProvider === 'docker'
+        ? 'none'
+        : 'controlled OCI rootfs (no host bind)',
   });
 }
 
@@ -384,8 +393,14 @@ function assertNotRead(result, secret, label) {
   });
   assert.match(capabilities.stdout.toString('utf8'), /CapEff:\s*0+$/m, 'sandbox retained effective capabilities');
 
+  const mountProbe = requestedProvider === 'gvisor'
+    // gVisor's Sentry denies mount with EPERM rather than killing the process. Check the
+    // syscall return explicitly so a denial is not misreported as survival; a successful
+    // mount still prints the marker and exits zero.
+    ? `my $r = syscall(${MOUNT_SYSCALL}, 0, 0, 0, 0, 0); if ($r == 0) { print "mount-survived\\n"; exit 0 } exit 1;`
+    : `syscall(${MOUNT_SYSCALL}, 0, 0, 0, 0, 0); print "mount-survived\\n";`;
   const mount = await provider.run({
-    argv: ['/usr/bin/perl', '-e', `syscall(${MOUNT_SYSCALL}, 0, 0, 0, 0, 0); print "mount-survived\\n";`],
+    argv: ['/usr/bin/perl', '-e', mountProbe],
     workspaceDirectory: workspace(),
     timeoutMs: 5_000,
     maxOutputBytes: 4096,
@@ -396,7 +411,7 @@ function assertNotRead(result, secret, label) {
       mount.exitCode === 128 + 31 || mount.signal === 'SIGSYS',
       'mount syscall was not killed by the filter',
     );
-  } else {
+  } else if (requestedProvider === 'docker') {
     // Docker may deny mount with SIGSYS (custom profile) or EPERM (capability drop).
     // Either is a denial; the workload must never see the syscall return.
     assert.ok(mount.exitCode !== 0, 'mount syscall unexpectedly returned in the Docker boundary');
@@ -406,6 +421,11 @@ function assertNotRead(result, secret, label) {
         || /Operation not permitted|EPERM/i.test(mount.stderr.toString('utf8')),
       'mount syscall failed for an unexpected reason',
     );
+  } else {
+    // The gVisor probe exits 1 only when mount returned non-zero. A successful mount is
+    // exit 0 with the marker, and process death is also non-zero; both are still denials.
+    assert.ok(mount.exitCode !== 0, 'mount syscall unexpectedly returned in the gVisor boundary');
+    assert.equal(mount.exitCode, 1, 'gVisor mount probe did not report a clean EPERM denial');
   }
   assert.ok(!mount.stdout.toString('utf8').includes('mount-survived'), 'mount syscall returned');
 
@@ -442,10 +462,14 @@ function assertNotRead(result, secret, label) {
   assert.match(limitOutput, /^3$/m, 'RLIMIT_CPU was not aligned to the 3 s deadline');
   if (requestedProvider === 'bubblewrap') {
     assert.match(limitOutput, /^Max processes\s+128\s+128\s+processes/m, 'RLIMIT_NPROC was not 128');
-  } else {
+  } else if (requestedProvider === 'docker') {
     assert.equal(limits.limits?.applied, true, 'Docker limit probe did not record applied evidence');
     assert.equal(limits.limits?.mechanism, 'docker-cgroup');
     assert.equal(limits.limits?.processes, 128, 'Docker PID limit was not recorded as 128');
+  } else {
+    assert.equal(limits.limits?.applied, true, 'gVisor limit probe did not record applied evidence');
+    assert.equal(limits.limits?.mechanism, 'gvisor-oci-rlimit');
+    assert.equal(limits.limits?.processes, 128, 'gVisor process limit was not recorded as 128');
   }
 
   const burner = await provider.run({
@@ -747,6 +771,7 @@ process.stdout.write(`${JSON.stringify({
   provider: provider.id,
   kernel: readFileSync('/proc/sys/kernel/osrelease', 'utf8').trim(),
   availability,
+  engine: availability.engine ?? null,
   cases,
   result: 'all adversarial cases denied or contained',
 })}\n`);

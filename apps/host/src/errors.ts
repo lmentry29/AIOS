@@ -72,6 +72,14 @@ export class SandboxFilterUnavailableError extends HostExecutionError {
   }
 }
 
+/** The selected provider's actual isolation boundary could not be proven active. */
+export class SandboxIsolationUnavailableError extends HostExecutionError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SandboxIsolationUnavailableError';
+  }
+}
+
 /** The per-run memory/CPU/process limits could not be installed. */
 export class SandboxResourceLimitUnavailableError extends HostExecutionError {
   constructor(message: string) {
