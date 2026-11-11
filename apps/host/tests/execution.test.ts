@@ -209,10 +209,7 @@ if (args[0] === 'inspect') {
       Memory: 536870912,
       MemorySwap: 536870912,
       NanoCpus: 1000000000,
-      Ulimits: [
-        { Name: 'as', Soft: 1342177280, Hard: 1342177280 },
-        { Name: 'cpu', Soft: cpu, Hard: cpu },
-      ],
+      Ulimits: [{ Name: 'cpu', Soft: cpu, Hard: cpu }],
     },
     Mounts: [{ Type: 'bind', Source: source, Destination: '/workspace', RW: true }],
     State: { ExitCode: 0, Running: false },
@@ -255,7 +252,9 @@ process.exit(1);
       expect(args).toContain('--cpus');
       expect(args[args.indexOf('--cpus') + 1]).toBe('1');
       expect(args).toContain('--ulimit');
-      expect(args.some((entry) => entry.startsWith('as='))).toBe(true);
+      // Docker's CLI rejects RLIMIT_AS; aggregate cgroup memory is the enforced
+      // memory boundary and is inspected separately.
+      expect(args.some((entry) => entry.startsWith('as='))).toBe(false);
       expect(args.some((entry) => entry.startsWith('cpu='))).toBe(true);
       expect(args).toContain('--entrypoint');
       expect(args[args.indexOf('--entrypoint') + 1]).toBe('/bin/echo');

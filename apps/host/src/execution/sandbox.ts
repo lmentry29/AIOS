@@ -62,9 +62,13 @@ export const BWRAP_MEMORY_MAX_BYTES = 1280 * 1024 * 1024;
 /** RLIMIT_NPROC applied to the sandboxed UID. */
 export const BWRAP_MAX_PROCESSES = 128;
 
-/** Docker's aggregate memory ceiling, with swap disabled by an equal memory-swap value. */
+/**
+ * Docker's aggregate memory ceiling, with swap disabled by an equal memory-swap value.
+ * The Docker CLI has no RLIMIT_AS (`--ulimit as` is rejected), so this cgroup limit is
+ * the enforced memory boundary; bubblewrap retains its per-process RLIMIT_AS.
+ */
 export const DOCKER_MEMORY_BYTES = 512 * 1024 * 1024;
-/** Docker's aggregate PID ceiling; the per-process RLIMIT_NPROC is installed as well. */
+/** Docker's aggregate PID ceiling; the container cgroup counts every process. */
 export const DOCKER_MAX_PROCESSES = 128;
 /** Docker's aggregate CPU quota. The deadline-aligned RLIMIT_CPU is installed too. */
 export const DOCKER_CPU_LIMIT = 1;
@@ -273,7 +277,6 @@ class DockerSandbox implements SandboxProvider {
       '--memory', String(DOCKER_MEMORY_BYTES),
       '--memory-swap', String(DOCKER_MEMORY_BYTES),
       '--cpus', String(DOCKER_CPU_LIMIT),
-      '--ulimit', `as=${BWRAP_MEMORY_MAX_BYTES}:${BWRAP_MEMORY_MAX_BYTES}`,
       '--ulimit', `cpu=${cpuSeconds}:${cpuSeconds}`,
       '--mount', `type=bind,src=${workspace},dst=/workspace,rw`,
       '--workdir', workdir,
@@ -387,7 +390,6 @@ class DockerSandbox implements SandboxProvider {
       ['memory limit', host.Memory === DOCKER_MEMORY_BYTES],
       ['swap disabled', host.MemorySwap === DOCKER_MEMORY_BYTES],
       ['CPU quota', host.NanoCpus === DOCKER_NANO_CPUS],
-      ['address-space rlimit', hasUlimit('as', BWRAP_MEMORY_MAX_BYTES)],
       ['CPU rlimit', hasUlimit('cpu', cpuSeconds)],
       [
         'workspace only mount',
