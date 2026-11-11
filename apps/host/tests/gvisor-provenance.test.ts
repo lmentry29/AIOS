@@ -88,6 +88,50 @@ describe('gVisor provenance', () => {
     }
   });
 
+  it('reads extended attributes without following symlinks and fails closed on reader errors', () => {
+    const rootfs = directory('aios-rootfs-xattr-reader-');
+    writeFileSync(join(rootfs, 'file'), 'x', { mode: 0o600 });
+    symlinkSync('/etc/hostname', join(rootfs, 'link'));
+    const fake = directory('aios-getfattr-');
+    const log = join(fake, 'argv.log');
+    const script = join(fake, 'getfattr');
+    const reader = (listing: string, status = 0): void => {
+      writeFileSync(
+        script,
+        `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(log)}\n${listing}\nexit ${status}\n`,
+        { mode: 0o755 },
+      );
+    };
+    const original = process.env.PATH;
+    process.env.PATH = `${fake}:${original ?? ''}`;
+    try {
+      reader(`printf '# file: ./file\\nuser.aios="one"\\n'`);
+      const captured = digestRootfs(rootfs, { xattrs: 'required' });
+      expect(captured.xattrs).toBe('captured');
+      const argv = readFileSync(log, 'utf8');
+      expect(argv).toContain('-h');
+      expect(argv).not.toContain('-m');
+
+      reader(`printf '# file: ./file\\nuser.aios="two"\\n'`);
+      expect(digestRootfs(rootfs, { xattrs: 'required' }).sha256).not.toBe(captured.sha256);
+
+      // A symlink that cannot carry the attribute is an empty set, not a partial listing.
+      reader(
+        `printf '# file: ./file\\nuser.aios="two"\\n'; printf 'getfattr: ./link: Operation not supported\\n' >&2`,
+        1,
+      );
+      expect(digestRootfs(rootfs, { xattrs: 'required' }).xattrs).toBe('captured');
+
+      reader(`printf 'getfattr: ./file: Permission denied\\n' >&2`, 1);
+      expect(() => digestRootfs(rootfs, { xattrs: 'required' })).toThrow(/Permission denied/);
+
+      reader(`printf 'not an attribute listing\\n'`);
+      expect(() => digestRootfs(rootfs, { xattrs: 'required' })).toThrow(/could not be parsed/);
+    } finally {
+      process.env.PATH = original;
+    }
+  });
+
   it('changes the rootfs digest when content or a symlink target changes', () => {
     const rootfs = directory('aios-rootfs-content-');
     writeFileSync(join(rootfs, 'file'), 'one', { mode: 0o644 });

@@ -63,7 +63,12 @@ so a reader never has to infer whether extended attributes were part of the meas
 ## Extended attributes
 
 Node exposes no extended-attribute API. `digestRootfs` reads them through `getfattr`
-(`-R -d -m '*'`) and hashes the attribute lines per entry after sorting. If the reader is
+(`-R -h -d`, sorted per entry) and hashes the attribute lines. `-h` prevents dereferencing
+symlinks, so an absolute symlink target inside the rootfs cannot expose host attributes. A
+non-zero reader exit is a hard failure unless every reported error is `Operation not
+supported`, which is how GNU getfattr reports entries (notably symlinks on ext4/overlayfs)
+that cannot carry the attributes at all; those entries are attested with an empty attribute
+set. Any other error, including a permission failure, aborts the measurement. If the reader is
 missing:
 
 - `xattrs: 'auto'` (default) records `xattrs: "unavailable"` in the digest and manifest, so

@@ -1137,8 +1137,12 @@ workflows for that commit complete.
   setuid/setgid/sticky), owner uid/gid, file size, file-content SHA-256, symlink target and
   extended attributes into `sha256`/`metadata_sha256`, with mtime in a separate
   `timestamps_sha256`; the v1 content algorithm is retained as `content_sha256`. Extended
-  attributes are read with `getfattr`; an absent reader records `xattrs: "unavailable"` and
-  `required` fails closed. Rationale and omissions: `docs/security/rootfs-metadata-attestation.md`.
+  attributes are read with `getfattr -R -h -d`: `-h` prevents dereferencing symlinks and `-m`
+  is omitted because GNU getfattr treats it as a regular expression. `Operation not supported`
+  is the only tolerated reader error, so a symlink is attested with an empty attribute set
+  while a permission or parse failure aborts the measurement. An absent reader records
+  `xattrs: "unavailable"` and `required` fails closed. Rationale and omissions:
+  `docs/security/rootfs-metadata-attestation.md`.
 - **Platform digest enforcement.** The Dockerfile uses the `linux/amd64` manifest digest
   `c67e92c8…` under the recorded index `734a72b3…`; the pin verifier rejects a tag or the index
   digest in `FROM`. `verify-platform-digest` selects the single amd64 entry from the raw pinned
@@ -1155,8 +1159,10 @@ workflows for that commit complete.
 ### Local verification
 
 - `pnpm --filter @aios/host build`: exit 0.
-- `vitest run tests/gvisor-provenance.test.ts tests/gvisor.test.ts`: **27/27** passed.
-- Full host suite: **182 passed / 17 skipped** (the skips are live-provider suites without an
+- `vitest run tests/gvisor-provenance.test.ts tests/gvisor.test.ts`: **28/28** passed,
+  including a deterministic fake-reader test for the `-h` flag, attribute capture, the
+  `Operation not supported` case and fail-closed reader errors.
+- Full host suite: **183 passed / 17 skipped** (the skips are live-provider suites without an
   environment).
 - `node --check tools/security/gvisor-provenance.mjs`: exit 0.
 

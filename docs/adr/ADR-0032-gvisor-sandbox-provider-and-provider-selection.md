@@ -203,9 +203,11 @@ hashing. A Sigstore-signed release and immutable runtime mount remain future wor
   rejects the result. This does not defend against a same-UID host writer, which remains inside
   the host trust boundary.
 - Local verification at the amendment head: host build exit 0; focused provenance/provider
-  tests **27/27**; full host suite **182 passed / 17 skipped**; tool syntax check exit 0. The
+  tests **28/28**; full host suite **183 passed / 17 skipped**; tool syntax check exit 0. The
   Docker-based independent-image and platform-index checks remain CI-only because no local
-  Docker daemon is available.
+  Docker daemon is available. The extended-attribute reader is invoked as `getfattr -R -h -d`;
+  `-h` prevents symlink dereference into the host, and `Operation not supported` is the only
+  tolerated reader error (empty set for symlinks) while other errors abort.
 
 ### Earlier CI at `54344f1`
 

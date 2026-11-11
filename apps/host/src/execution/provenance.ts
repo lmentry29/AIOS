@@ -735,7 +735,10 @@ interface XattrTable {
  * asks for `required` and fails closed instead of silently omitting attestation.
  */
 function readXattrTable(root: string): XattrTable {
-  const result = spawnSync(XATTR_READER, ['-R', '-d', '-m', '*', '.'], {
+  // `-h` is required: without it getfattr dereferences symlinks and would read host
+  // attributes through absolute symlink targets inside the rootfs. `-m` is not used
+  // because GNU getfattr treats it as a regular expression, not a glob.
+  const result = spawnSync(XATTR_READER, ['-R', '-h', '-d', '.'], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -747,8 +750,19 @@ function readXattrTable(root: string): XattrTable {
     throw new ProvenanceError(`The extended-attribute reader failed: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const detail = (result.stderr || '').trim().split('\n')[0] ?? 'no output';
-    throw new ProvenanceError(`The extended-attribute reader exited ${result.status ?? 'unknown'}: ${detail.slice(0, 200)}`);
+    // GNU getfattr reports `Operation not supported` for entries that cannot carry the
+    // requested attributes (symlinks on ext4/overlayfs). That is an empty attribute set,
+    // not an incomplete measurement. Any other reader error fails closed.
+    const errors = (result.stderr || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const onlyUnsupported = errors.length > 0
+      && errors.every((line) => /: Operation not supported$/.test(line));
+    if (!onlyUnsupported) {
+      const detail = errors[0] ?? 'no output';
+      throw new ProvenanceError(`The extended-attribute reader exited ${result.status ?? 'unknown'}: ${detail.slice(0, 200)}`);
+    }
   }
   const entries = new Map<string, string[]>();
   let current: string | undefined;
