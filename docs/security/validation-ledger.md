@@ -750,3 +750,120 @@ What is verified versus not:
   artifact-ingestion API; and the instruction-smuggling case proves Task metadata/env are data
   at the host boundary, not that a model cannot be influenced by hostile content (F-012
   remains accepted). See F-016 for the coverage-gap closure.
+
+## 2026-11-11 — Explicit Docker sandbox provider (F-006 closure)
+
+Local host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0,
+`bwrap 0.9.0` at `/tmp/bwrap-root/usr/bin`. Docker CLI is installed but the daemon is not
+reachable to this user:
+
+```text
+permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
+```
+
+The measured Docker run was therefore executed by GitHub Actions, not locally. The drill
+reported the runner kernel `7.0.0-1017-azure`; the job did not separately print the Docker
+engine version or assert whether its daemon was rootful or rootless.
+
+Commands actually run locally at code head `40438a5`:
+
+```sh
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/adversarial-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/collection-bound-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/session-operator-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/journal-drill.mjs
+node tools/security/scan-secrets.mjs
+node tools/security/audit-policy.mjs
+```
+
+Observed locally: full workspace gate **46/46 tasks successful**, **0 cached**; host **154
+passed / 17 skipped** (the 17 skips are the live suites without `AIOS_BWRAP_DIR`); live
+bubblewrap **17/17**; bubblewrap adversarial **21/21**; resource-limit, quota, seccomp,
+collection, operator, and journal drills exit **0**; `secret-scan: no findings across 283
+tracked files`; `audit-policy: no untriaged high or critical advisories (0 triaged)`.
+Bubblewrap's filter/limit evidence is unchanged (profile SHA-256
+`12e5ae012d8d9bee997b0530b92e9f8b8271b0c2cf5fca2290e655f7921fbaac`).
+
+CI measurement at `40438a5`: Security run `42943242036`, live job `130269803337`. The job
+built `aios-sandbox:local` from `tools/security/docker-sandbox.Dockerfile` (step 12) and ran
+the Docker drill (step 13); both steps succeeded. The drill used the real
+`createSandboxProvider({ provider: 'docker' })`, `LocalCommandExecutor`,
+`ManagedExecutionPort`, durable `ExecutionLedger`, and `LocalCommandVerifier`; no test double
+stood in for sandboxing or verification. The provider reported kernel
+`7.0.0-1017-azure`, availability `Docker passed its container, seccomp and resource-limit
+probe.`, and filter SHA-256
+`87ae93a78692f192bb8272a9398bafe21c864dce3cf8d79f2f96a0313a7a1214`. All **21/21** cases were
+denied or contained; the final JSON result was `all adversarial cases denied or contained`.
+
+Per-case Docker observations from the CI step log:
+
+| # | Attack | Observed result |
+|---|---|---|
+| 1 | Host file read (`/etc/shadow`) | exit 1; no `root:` bytes; `host_system_mount: none`; filter SHA-256 `87ae93a7…a7a1214` |
+| 2 | Path traversal (`../../etc/shadow`, `/workspace/../etc/shadow`, `/proc/1/root/etc/shadow`) | exit 1; no shadow content |
+| 3 | Symlink chain to `/etc/shadow` | exit 1; no shadow content |
+| 4 | Hardlink `/etc/shadow` into `/workspace` | `rc=1`; no host-file link created |
+| 5 | Task cwd `../../etc` and absolute cwd | `HostExecutionError` before spawn; no marker file |
+| 6 | Writes to `/etc`, `/usr`, `/root` | exit 2; no `wrote:` line; host paths unchanged |
+| 7 | Host environment secret | absent from `/usr/bin/env` and `/proc/self/environ`; only declared `LANG=C` |
+| 8 | Host `/tmp` secret via `..`, `/proc/1/root`, and `/tmp` | secret bytes absent |
+| 9 | TCP connect to a real host loopback listener | exit 1; listener accepted 0 connections |
+| 10 | Raw socket without capabilities | exit 2; no success output |
+| 11 | Capability/privilege escalation | `CapEff: 0`; mount exit 159; chroot exit 125, `Operation not permitted` |
+| 12 | CPU exhaustion | deadline termination, `SIGKILL`, `timedOut:true`, 3,004 ms; CPU limit 3 s, PID limit 128 |
+| 13 | Fork/PID exhaustion | 126 children, 128 namespaced processes, 0 marked survivors |
+| 14 | Cancellation orphan cleanup | `cancelled:true`, 0 marked survivors |
+| 15 | Timeout orphan cleanup | `timedOut:true`, 0 marked survivors |
+| 16 | Disk exhaustion (64 KiB cap) | `WorkspaceQuotaExceededError`; 0 workspace entries; 0 marked survivors |
+| 17 | Instruction smuggling | exact argv SHA-256; 89-byte env value literal; output `safe`; hostile text absent from evidence |
+| 18 | Forged executor result | rejected: `The executor result does not match the durable attempt evidence.` |
+| 19 | Self-issued verification | rejected before running: verifier must be independent |
+| 20 | Artifact tampering | verifier exit 1; `accepted:false` |
+| 21 | Stale attempt-1 evidence after attempt 2 | stale rejected; latest attempt accepted |
+
+The same exact head's other checks were green: `ci` run `42943242089`, `conformance` run
+`42943242041`, `schema-check` run `42943242116`, and the Security supply-chain job
+`130269803066`. The earlier Docker probes `dbee5c7` (Security run `42942578684`, job
+`130267664888`) and `75f7371` (Security run `42943011442`, job `130269052728`) failed closed
+on Docker CLI-invalid `--ulimit as` and bare `rw` mount syntax respectively; they were repaired
+before the measured run.
+
+Docker evidence details: the daemon-reported controls were read-only root, `NetworkMode=none`,
+`CapDrop=ALL`, no-new-privileges, a non-default seccomp profile, cgroup memory 536,870,912
+bytes with equal memory-swap, `NanoCpus=1,000,000,000`, `PidsLimit=128`, the deadline-aligned
+CPU rlimit, the workspace-only bind with `RW:true`, and the host UID/GID. Docker does not
+expose the client-side seccomp path or digest in `HostConfig.SecurityOpt`; an attempted
+exact-path check at `7daf4fd` failed closed and was reverted. The generated profile digest is
+recorded separately; the daemon is trusted for its active-profile report.
+
+What this does not establish:
+
+- Rootless Docker, subuid/subgid mapping, rootless cgroup delegation, or the runner daemon's
+  rootful/rootless mode. The local host remains Docker-unavailable.
+- A per-process `RLIMIT_AS` for Docker. The CLI rejects `--ulimit as`; the measured memory
+  control is the aggregate 512 MiB cgroup, not bubblewrap's 1.25 GiB address-space rlimit.
+- Signed or digest-pinned image provenance. The CI image is a local `debian:bookworm-slim`
+  build; the provider never pulls implicitly but the image supply chain is operator-owned.
+- A host `/etc` bind test: the drill image removes `/etc/shadow`, so case 1 proves the
+  container rootfs lacks the host credential file, not that a host `/etc` bind is absent.
+- Hard disk quota: the workspace remains governed by the host executor's 25 ms sampler, with
+  the same overshoot and attribution limits as bubblewrap.
+- VM-class isolation: Docker shares the host kernel. A daemon compromise, kernel exploit, or
+  malicious daemon is outside this evidence.
+- A distinct `SIGXCPU`: case 12 ended by the provider deadline (`SIGKILL`); the exact CPU rlimit
+  value was separately probed.
+
+## Checkpoint — explicit Docker provider measured
+
+The production Docker provider, its custom seccomp profile, the CI image, the 21-case Docker
+drill, and the provider-selection/unavailable/misconfiguration regressions are present. ADR-0031
+records the selection and threat-model delta; F-006 is fixed for the measured CI path. The
+remaining Docker work is rootless-mode measurement, image signing/pinning, and a run on an
+operator-controlled daemon. `main` must remain untouched, PR #1 must remain draft/unmerged,
+and only `community/open-source-foundation` may be pushed.

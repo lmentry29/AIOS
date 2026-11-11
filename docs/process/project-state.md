@@ -1,8 +1,8 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest security code head: `29eb496` (21-case adversarial sandbox and verifier
-drill, following `550d0e5`); its documentation checkpoint follows. The historical heads below
+evidence from observed CI. Latest measured security code head: `40438a5` (explicit Docker provider and measured
+21-case Docker matrix, following `29eb496`); its documentation checkpoint follows. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
 the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
@@ -18,11 +18,12 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
+- Measured security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; measured Docker provider work landed in `dbee5c7`, with the CLI repair in `75f7371`). The final documentation commit reverts an unverifiable exact-seccomp-path probe; its code behavior is the measured `40438a5` path.
+- Prior security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
 - Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `29eb496`; read
+- Documentation checkpoint for this pass: the branch tip after `40438a5`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `4422229` with docs commit `aa86a4e`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
@@ -89,13 +90,22 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   All 21 cases were denied or contained. A temporary probe (`c5a4a44`) failed Security run
   `42936839536` at step 11 with exit 1; the real drill passed `29eb496` in run `42937205409`,
   step 11, with 21 attack records. No workflow permission or isolation rule changed.
+- The explicit Docker provider (`provider: docker` plus a locally present image) now creates a
+  named container, inspects its read-only root, `network=none`, capability drop,
+  no-new-privileges, a non-default seccomp profile, cgroup memory/PID/CPU limits, CPU rlimit,
+  non-root host UID/GID, and workspace-only mount before `start --attach`, then kills and
+  removes it on every exit path. The same 21-case production drill passed **21/21** in CI at
+  `40438a5` (Security run `42943242036`, live job `130269803337`, step 13), kernel
+  `7.0.0-1017-azure`, filter SHA-256 `87ae93a78692f192bb8272a9398bafe21c864dce3cf8d79f2f96a0313a7a1214`.
+  Linux `auto` remains bubblewrap; Docker is explicit and fails closed, with no fallback.
+  See ADR-0031 and F-006.
 - The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
   passed the original 9/9 adversarial boundary cases, then 12/12 boundary/limit cases after
   the resource work, covering host-file reads, workspace symlink escape, network interfaces,
   environment clearing, PID-namespace privacy, writes outside the workspace, effective
-  capabilities, background-workload cleanup, and memory/limits. Docker, Seatbelt, gVisor, and
-  Apple Containerization remain unverified or unavailable and are labelled as such in
-  `docs/security/sandbox-matrix.md`.
+  capabilities, background-workload cleanup, and memory/limits. Docker was measured separately
+  in CI at `40438a5` (21/21); Seatbelt, gVisor, and Apple Containerization remain unverified or
+  unavailable and are labelled as such in `docs/security/sandbox-matrix.md`.
 - Timeout and cancellation now kill the provider's whole process group (with a direct-child
   fallback), covered by real parent/grandchild tests.
 - Living security documentation lives in `docs/security/`: threat model, provider matrix,
@@ -264,6 +274,15 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   triaged**; secret scan **281 tracked files, no findings**. Security run `42934563018`
   passed step 11 `Run node tools/security/session-operator-drill.mjs` with all 13 steps in the
   log; probe run `42934134785` failed at that same step with exit 1.
+- At Docker code head `40438a5`: full workspace gate **46/46 tasks** (forced, no cache); host
+  **154 passed/17 skipped**; live bubblewrap **17/17**; bubblewrap adversarial **21/21**;
+  Docker adversarial **21/21** in CI; resource-limit, workspace-quota, seccomp, collection,
+  operator, and journal drills all exit 0; audit **0 triaged**; secret scan **283 tracked
+  files, no findings**. Security run `42943242036` (live job `130269803337`) passed step 13 with
+  the 21 Docker case records; `ci` run `42943242089`, `conformance` run `42943242041`,
+  `schema-check` run `42943242116`, and the supply-chain job `130269803066` were green. The
+  earlier Docker probes `dbee5c7` and `75f7371` failed closed on CLI-invalid `--ulimit as` and
+  bare `rw` mount syntax respectively, then were repaired.
 - CI on the exact pushed head `15bc7f8`: `ci` (run `42933005083`), `conformance` (run
   `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
   dispatched `release` build (run `42933109086`) all succeeded. PR #1 remained open, draft,
@@ -274,21 +293,22 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   docs-only CI-record commit after `aa86a4e` has its own runs; do not infer their result
   from this line.
 
-The command and test results above are local, not CI. The real Docker, bubblewrap, and
-Seatbelt providers could not be integration-tested here: `docker info` cannot reach a daemon, and `bwrap`,
-`podman`, and `sandbox-exec` are absent. The cancellation, multi-generation resume/retry, and
-crash tests use clearly labelled test-only process/sandbox doubles where a real isolation
-provider is unavailable; they do not claim container isolation.
+The command and test results above are local, not CI. The real Docker provider was measured
+in CI, not locally: `docker info` still cannot reach a daemon on this host (`permission denied
+while trying to connect to the docker API at unix:///var/run/docker.sock`). Bubblewrap was
+measured locally and in CI; `podman` and `sandbox-exec` are absent. The cancellation,
+multi-generation resume/retry, and crash tests use clearly labelled test-only process/sandbox
+doubles where a real isolation provider is unavailable; they do not claim container isolation.
 
 ## Production blockers — not optional
 
-1. **Execution isolation proof.** Docker/bubblewrap/Seatbelt implementations need testing on
-   hosts where they actually run, including cancellation/container-kill behavior, mount
-   permissions, network denial, PID/memory limits, and hostile commands. Bubblewrap has a
-   generated seccomp deny-list and live denial drill (ADR-0027) plus per-process RLIMIT
-   enforcement (ADR-0028), but no aggregate cgroup accounting, no active Landlock, and remains
-   trusted-local only; Docker/Seatbelt/gVisor are unverified. Node/libuv is currently killed by
-   the seccomp io_uring denial at startup.
+1. **Execution isolation proof.** Bubblewrap and the explicit Docker provider have measured
+   adversarial matrices, including cancellation, container kill, mount/network denial, and
+   CPU/PID limits. Bubblewrap has a generated seccomp deny-list and per-process RLIMIT
+   enforcement (ADR-0027/ADR-0028) but no aggregate cgroup accounting, no active Landlock, and
+   remains trusted-local only. Docker has measured aggregate cgroups but no per-process
+   `RLIMIT_AS`; rootless Docker, Seatbelt, gVisor, and Apple Containerization remain unverified.
+   Node/libuv is currently killed by the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
    a compromised host process.
@@ -325,8 +345,9 @@ provider is unavailable; they do not claim container isolation.
 1. Exercise runtime policy publication and retirement in a production-like deployment with a
    real non-bootstrap operator, independent audit consumer, and restart/recovery drill; local
    tests are not operational deployment proof.
-2. Test Docker/bubblewrap/Seatbelt on capable hosts and record the actual results, including
-   cancellation and the explicit Docker container kill.
+2. Test rootless Docker, Seatbelt, gVisor, and Apple Containerization on capable hosts and
+   record the actual results, including cancellation and the explicit Docker container kill.
+   Re-run the measured Docker CI matrix when the runner, image, or Docker engine changes.
 3. Add verifier key provenance or explicitly retain and document the host-trust model.
 4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
    crashes, cancelling generation 2, and workspace reuse across generations.
