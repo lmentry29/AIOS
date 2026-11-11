@@ -11,7 +11,7 @@ import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SandboxIsolationUnavailableError } from '../src/errors.js';
 import { createTrustRoot, generateSigningKey, signArtifact } from '../src/execution/artifact-signing.js';
-import { digestRootfs } from '../src/execution/provenance.js';
+import { digestRootfs, hashFile } from '../src/execution/provenance.js';
 import { createSandboxProvider } from '../src/execution/sandbox.js';
 
 interface FakeRunsc {
@@ -192,6 +192,18 @@ describe('gvisor provider', () => {
           },
         });
         expect(check.provenance?.runtime.pin_sha256).toMatch(/^[0-9a-f]{64}$/);
+        const manifest = JSON.parse(readFileSync(fake.rootfsManifestPath, 'utf8')) as {
+          rootfs_sha256: string;
+          entries: number;
+        };
+        // The signed manifest digest, the measured rootfs digest and the provider evidence
+        // are the same value; materializeVerifiedRootfs re-checks that value on the copy.
+        expect(check.provenance?.rootfs).toMatchObject({
+          sha256: manifest.rootfs_sha256,
+          entries: manifest.entries,
+          manifest_sha256: hashFile(fake.rootfsManifestPath, 'sha256'),
+        });
+        expect(check.provenance?.rootfs.sha256).toBe(digestRootfs(fake.rootfs).sha256);
 
         const workspace = mkdtempSync(join(tmpdir(), 'aios-gvisor-workspace-'));
         const result = await provider.run({
@@ -321,6 +333,27 @@ describe('gvisor provider', () => {
       // The runtime mutated only the per-invocation copy.
       expect(existsSync(join(fake.rootfs, 'intruder'))).toBe(false);
       expect(existsSync(captured.config.root.path)).toBe(false);
+    });
+  });
+
+  it('fails closed when the rootfs changes after its manifest was signed', async () => {
+    const fake = fakeRunsc();
+    writeFileSync(join(fake.rootfs, 'planted-after-signing'), 'mutation');
+    await withPath(fake.directory, async () => {
+      const provider = createSandboxProvider({
+        provider: 'gvisor',
+        rootfs: fake.rootfs,
+        gvisorPinPath: fake.pinPath,
+        gvisorRuntimeSignaturePath: fake.runtimeSignaturePath,
+        gvisorRootfsManifestPath: fake.rootfsManifestPath,
+        gvisorRootfsSignaturePath: fake.rootfsSignaturePath,
+        gvisorTrustRootPath: fake.trustRootPath,
+      });
+      const check = await provider.check();
+      expect(check.available).toBe(false);
+      expect(check.isolationFailure).toBe(true);
+      expect(check.reason).toMatch(/does not match the signed manifest/);
+      expect(existsSync(fake.calls)).toBe(false);
     });
   });
 

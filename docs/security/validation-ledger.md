@@ -1230,3 +1230,10 @@ the built rootfs manifest, and runs `verify-all` against the generated trust roo
 gVisor drill; the drill additionally signs the artifacts it executes. This proves the offline
 chain only. A production trust root/key, Fulcio/Rekor identity and SLSA provenance are not
 provisioned and are not claimed.
+
+## Signed-artifact adversarial hardening (2026-11-11)
+
+- `pnpm --filter @aios/host build` — exit 0; host lint — exit 0.
+- Focused `artifact-signing`, `artifact-signing-adversarial`, `gvisor`, `gvisor-provenance` — 54 passed.
+- `TURBO_CACHE_DIR=/tmp/aios-turbo pnpm turbo build lint typecheck test --force` — 46/46 tasks, 0 cached; host 209 passed / 17 skipped; integration 43; orchestration 30.
+- Coverage: 12 hostile-input regression tests plus 250 statement and 150 trust-root seeded mutations; invariant test binds signed manifest digest to measured and executed rootfs. Statement schema bumped to 2; v1 rejected. Production trust root, Sigstore identity and SLSA provenance remain unprovisioned and unclaimed.

@@ -1014,3 +1014,12 @@ exercises it with a run-scoped key and the adversarial drill signs what it execu
 checked-in trust root has no keys: provisioning a production key and committing its public
 half is the next required operator action. CI identity and transparency logging are not
 implemented.
+
+## Signed-artifact v2 hardening — 2026-11-11
+
+`artifact-signing.ts` now parses statements and trust roots with `parseStrictJson` (duplicate
+and prototype keys, depth, size, trailing content and non-finite numbers rejected), requires
+canonical 64-byte base64 signatures and exact fields, and rejects schema v1. Adversarial tests
+live in `tests/artifact-signing-adversarial.test.ts`; the execution-binding invariant is in
+`tests/gvisor.test.ts`. Re-sign any future v1 artifact. Still open: production trust root/key,
+Sigstore identity, SLSA provenance, macOS/rootless Docker measurements.

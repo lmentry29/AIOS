@@ -231,7 +231,7 @@ describe('artifact signing', () => {
       signature_path: fixture.signaturePath,
       trust_root_path: fixture.trustRootPath,
       expected_subject: runtimeSubject,
-    })).toThrow(/not valid JSON/);
+    })).toThrow(/not valid strict JSON/);
   });
 
   it('rejects a signature from a key that is not in the trust root', () => {

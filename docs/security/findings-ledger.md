@@ -38,3 +38,16 @@ copied and executed. Rejection tests cover missing/malformed/wrong-key/revoked/e
 replayed/modified artifacts. No Sigstore/SLSA level is claimed; see
 `docs/security/artifact-signing.md`. The repository trust root is intentionally empty until an
 operator provisions a key, so default gVisor verification fails closed.
+
+## F-021 — ambiguous parsing of signed statements
+
+**Status:** fixed in statement v2; v1 rejected.
+
+The v1 verifier used `JSON.parse`, so duplicate keys collapsed silently, a `__proto__` subject
+name went through the prototype setter, unknown fields were ignored, signature lengths were
+unbounded and documents had no size/depth limit. `parseStrictJson` now rejects duplicate and
+dangerous keys, bounds size/depth, requires exact known fields and canonical 64-byte base64
+signatures, and restricts subjects to strings or safe integers. The statement version was
+bumped to 2 and v1 is rejected rather than accepted with weaker parsing. Deterministic
+adversarial tests and seeded mutation fuzzing cover the parser and verifier; no v1 statement
+was ever signed here.

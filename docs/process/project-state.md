@@ -472,3 +472,8 @@ rootfs manifest, checked-in (empty, fail-closed) trust root, rotation/revocation
 provider-side verification bound to the measured rootfs and materialized runtime, and
 deterministic rejection tests. Open: production key/trust-root provisioning, CI workload
 identity (Fulcio/OIDC) and SLSA provenance. No conformance level is claimed.
+
+Statement v2 (2026-11-11) hardens signed-artifact parsing: strict JSON with no duplicate or
+prototype keys, bounded size/depth, exact fields, canonical signatures and a v1 rejection.
+Adversarial regression tests and seeded mutation fuzzing pass locally; production trust-root
+provisioning remains the blocking operator action.

@@ -8,23 +8,18 @@ import {
 } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { hashFile } from './provenance.js';
 
 /**
  * Detached-signature trust chain for gVisor provenance artifacts.
  *
- * The artifact (runtime pin document or rootfs manifest) is hashed byte-for-byte; a detached
- * Ed25519 statement signs that digest, the artifact kind, the signer key id, the signing time,
- * a normalized subject (the security-relevant fields of the artifact) and the CI source
- * metadata. Consumers must load the trust root from a repository-controlled path and verify
- * the statement before the artifact is parsed or used.
+ * Statement version 2 is parsed by a strict JSON reader rather than `JSON.parse`: duplicate
+ * keys, prototype-mutating keys, excess nesting, trailing content, non-finite numbers and
+ * oversized documents are rejected before any field is trusted. Verification binds the exact
+ * artifact bytes, the artifact kind, a normalized subject, the signer key id and a canonical
+ * base64 Ed25519 signature. Keys are never read from beside the artifact.
  *
- * Nothing here fetches a key or a trust root at run time, and a public key supplied next to
- * the artifact is never trusted. Sigstore keyless signing was evaluated and is deliberately
- * not used as the primary path: verification would depend on Fulcio/Rekor availability and
- * network access, whereas this offline path works for air-gapped hosts and keeps the trust
- * anchor in the repository. The trade-off is that CI identity is metadata, not a certificate;
- * see docs/security/artifact-signing.md.
+ * Version 1 statements are deliberately rejected rather than accepted with weaker parsing;
+ * they were never signed in this repository, so re-signing is the only compatible action.
  */
 
 export class SigningError extends Error {
@@ -36,6 +31,23 @@ export class SigningError extends Error {
 
 export type ArtifactKind = 'gvisor-runtime-pin' | 'gvisor-rootfs-manifest';
 export type KeyStatus = 'trusted' | 'revoked';
+
+export const STATEMENT_SCHEMA_VERSION = 2 as const;
+
+const MAX_STATEMENT_BYTES = 1024 * 1024;
+const MAX_TRUST_ROOT_BYTES = 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
+const MAX_JSON_DEPTH = 32;
+const MAX_TRUSTED_KEYS = 64;
+const MAX_SUBJECT_FIELDS = 64;
+const MAX_SUBJECT_STRING = 1024;
+const MAX_SOURCE_STRING = 2048;
+const MAX_PEM_BYTES = 4096;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const KEY_ID = /^[0-9a-f]{64}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 export interface TrustedKey {
   key_id: string;
@@ -61,7 +73,7 @@ export interface SignatureSource {
 export type SignatureSubject = Record<string, string | number>;
 
 export interface SignedStatement {
-  schema_version: 1;
+  schema_version: typeof STATEMENT_SCHEMA_VERSION;
   artifact_kind: ArtifactKind;
   key_id: string;
   signed_at: string;
@@ -85,29 +97,34 @@ export interface GeneratedSigningKey {
   key_id: string;
 }
 
-const KEY_ID = /^[0-9a-f]{64}$/;
-const SHA256_HEX = /^[0-9a-f]{64}$/;
-const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
-const BASE64_SIGNATURE = /^[A-Za-z0-9+/]+={0,2}$/;
-const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function requireString(value: unknown, field: string): string {
+function requireString(value: unknown, field: string, maxLength = MAX_SUBJECT_STRING): string {
   if (typeof value !== 'string' || value.length === 0) {
     throw new SigningError(`The signature statement field "${field}" must be a non-empty string.`);
+  }
+  if (value.length > maxLength) {
+    throw new SigningError(`The signature statement field "${field}" exceeds ${maxLength} characters.`);
   }
   return value;
 }
 
 function requireTimestamp(value: unknown, field: string): string {
-  const text = requireString(value, field);
+  const text = requireString(value, field, 64);
   if (!ISO_TIMESTAMP.test(text) || Number.isNaN(Date.parse(text))) {
     throw new SigningError(`The signature statement field "${field}" must be an ISO-8601 UTC timestamp.`);
   }
   return text;
+}
+
+function requireOnlyFields(record: Record<string, unknown>, allowed: readonly string[], context: string): void {
+  for (const key of Object.keys(record)) {
+    if (!allowed.includes(key)) {
+      throw new SigningError(`The ${context} contains an unknown field "${key}".`);
+    }
+  }
 }
 
 /** Deterministic JSON with recursively sorted object keys; signatures cover exactly these bytes. */
@@ -130,7 +147,134 @@ export function canonicalJson(value: unknown): string {
   throw new SigningError('Canonical JSON accepts only null, booleans, finite numbers, strings, arrays and objects.');
 }
 
-function readRegularFile(path: string, label: string): Buffer {
+/**
+ * Strict JSON reader for attacker-controlled statements and trust roots.
+ *
+ * Rejects duplicate object keys, dangerous keys, depth above the bound, trailing content,
+ * unterminated strings, non-finite numbers and oversized text before semantic validation.
+ */
+export function parseStrictJson(text: string, label: string): unknown {
+  let index = 0;
+  const fail = (message: string): never => {
+    throw new SigningError(`The ${label} is not valid strict JSON: ${message}.`);
+  };
+  const skipWhitespace = (): void => {
+    while (
+      index < text.length
+      && (text[index] === ' ' || text[index] === '\n' || text[index] === '\r' || text[index] === '\t')
+    ) {
+      index += 1;
+    }
+  };
+  const parseString = (): string => {
+    if (text[index] !== '"') fail('expected a string');
+    const start = index;
+    index += 1;
+    while (index < text.length) {
+      const character = text[index] as string;
+      if (character === '\\') {
+        if (text[index + 1] === undefined) fail('unterminated escape');
+        index += 2;
+        continue;
+      }
+      if (character === '"') {
+        index += 1;
+        try {
+          return JSON.parse(text.slice(start, index)) as string;
+        } catch {
+          return fail('invalid string escape');
+        }
+      }
+      if (character.charCodeAt(0) < 0x20) fail('control character in string');
+      index += 1;
+    }
+    return fail('unterminated string');
+  };
+  const parseNumber = (): number => {
+    const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(index));
+    if (match === null) return fail('expected a number');
+    index += match[0].length;
+    const value = Number(match[0]);
+    if (!Number.isFinite(value)) return fail('number is not finite');
+    return value;
+  };
+  const parseValue = (depth: number): unknown => {
+    if (depth > MAX_JSON_DEPTH) fail(`nesting exceeds ${MAX_JSON_DEPTH} levels`);
+    skipWhitespace();
+    const character = text[index];
+    if (character === '{') {
+      index += 1;
+      skipWhitespace();
+      const object: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      if (text[index] === '}') {
+        index += 1;
+        return object;
+      }
+      while (true) {
+        skipWhitespace();
+        const key = parseString();
+        if (DANGEROUS_KEYS.has(key)) fail(`key "${key}" is not allowed`);
+        if (Object.hasOwn(object, key)) fail(`duplicate key "${key}"`);
+        skipWhitespace();
+        if (text[index] !== ':') fail('expected ":"');
+        index += 1;
+        object[key] = parseValue(depth + 1);
+        skipWhitespace();
+        if (text[index] === ',') {
+          index += 1;
+          continue;
+        }
+        if (text[index] === '}') {
+          index += 1;
+          return object;
+        }
+        fail('expected "," or "}"');
+      }
+    }
+    if (character === '[') {
+      index += 1;
+      skipWhitespace();
+      const array: unknown[] = [];
+      if (text[index] === ']') {
+        index += 1;
+        return array;
+      }
+      while (true) {
+        array.push(parseValue(depth + 1));
+        skipWhitespace();
+        if (text[index] === ',') {
+          index += 1;
+          continue;
+        }
+        if (text[index] === ']') {
+          index += 1;
+          return array;
+        }
+        fail('expected "," or "]"');
+      }
+    }
+    if (character === '"') return parseString();
+    if (text.startsWith('true', index)) {
+      index += 4;
+      return true;
+    }
+    if (text.startsWith('false', index)) {
+      index += 5;
+      return false;
+    }
+    if (text.startsWith('null', index)) {
+      index += 4;
+      return null;
+    }
+    return parseNumber();
+  };
+  const parsed = parseValue(0);
+  skipWhitespace();
+  if (index !== text.length) fail('trailing content after the document');
+  return parsed;
+}
+
+function readCappedFile(path: string, label: string, maxBytes: number): Buffer {
   const resolved = resolve(path);
   let stats: ReturnType<typeof lstatSync>;
   try {
@@ -141,11 +285,43 @@ function readRegularFile(path: string, label: string): Buffer {
   if (stats.isSymbolicLink() || !stats.isFile()) {
     throw new SigningError(`The ${label} must be a regular file, not a symlink: ${resolved}.`);
   }
+  if (stats.size > maxBytes) {
+    throw new SigningError(`The ${label} exceeds the ${maxBytes}-byte limit: ${resolved}.`);
+  }
   return readFileSync(resolved);
+}
+
+function validateSubject(subject: Record<string, unknown>, context: string): SignatureSubject {
+  const entries = Object.entries(subject);
+  if (entries.length === 0 || entries.length > MAX_SUBJECT_FIELDS) {
+    throw new SigningError(`The ${context} subject must contain between 1 and ${MAX_SUBJECT_FIELDS} fields.`);
+  }
+  const validated = Object.create(null) as SignatureSubject;
+  for (const [name, value] of entries) {
+    if (name.length === 0 || name.length > 128 || DANGEROUS_KEYS.has(name)) {
+      throw new SigningError(`The ${context} subject field "${name}" is not allowed.`);
+    }
+    if (typeof value === 'string') {
+      if (value.length > MAX_SUBJECT_STRING) {
+        throw new SigningError(`The ${context} subject field "${name}" is too long.`);
+      }
+      validated[name] = value;
+      continue;
+    }
+    if (typeof value === 'number' && Number.isSafeInteger(value)) {
+      validated[name] = value;
+      continue;
+    }
+    throw new SigningError(`The ${context} subject field "${name}" must be a string or a safe integer.`);
+  }
+  return validated;
 }
 
 /** Key id is the SHA-256 of the DER SPKI encoding, so a public key cannot be relabelled. */
 export function keyIdForPublicKey(publicKeyPem: string): string {
+  if (publicKeyPem.length > MAX_PEM_BYTES) {
+    throw new SigningError(`The public key exceeds the ${MAX_PEM_BYTES}-byte limit.`);
+  }
   let der: Buffer;
   try {
     der = createPublicKey(publicKeyPem).export({ type: 'spki', format: 'der' }) as Buffer;
@@ -169,7 +345,7 @@ export function createTrustRoot(key: {
   not_after: string;
   status?: KeyStatus;
 }): TrustRoot {
-  if (key.key_id !== keyIdForPublicKey(key.public_key_pem)) {
+  if (!KEY_ID.test(key.key_id) || key.key_id !== keyIdForPublicKey(key.public_key_pem)) {
     throw new SigningError('The trusted key id does not match its public key.');
   }
   return {
@@ -186,24 +362,28 @@ export function createTrustRoot(key: {
 }
 
 export function loadTrustRoot(path: string): TrustRoot {
-  const raw = readRegularFile(path, 'trust root');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.toString('utf8')) as unknown;
-  } catch (error) {
-    throw new SigningError(`The trust root is not valid JSON: ${error instanceof Error ? error.message : 'unknown error'}.`);
-  }
+  const raw = readCappedFile(path, 'trust root', MAX_TRUST_ROOT_BYTES);
+  const parsed = parseStrictJson(raw.toString('utf8'), 'trust root');
   if (!isRecord(parsed) || parsed.schema_version !== 1) {
     throw new SigningError('The trust root must be a JSON object with schema_version 1.');
   }
+  requireOnlyFields(parsed, ['schema_version', 'keys'], 'trust root');
   if (!Array.isArray(parsed.keys)) {
     throw new SigningError('The trust root must contain a keys array.');
+  }
+  if (parsed.keys.length > MAX_TRUSTED_KEYS) {
+    throw new SigningError(`The trust root exceeds the ${MAX_TRUSTED_KEYS}-key limit.`);
   }
   const keys: TrustedKey[] = [];
   const seen = new Set<string>();
   for (const [index, entry] of parsed.keys.entries()) {
     if (!isRecord(entry)) throw new SigningError(`The trust root key ${index} must be an object.`);
-    const keyId = requireString(entry.key_id, `keys[${index}].key_id`).toLowerCase();
+    requireOnlyFields(
+      entry,
+      ['key_id', 'algorithm', 'public_key_pem', 'status', 'not_before', 'not_after'],
+      `trust root key ${index}`,
+    );
+    const keyId = requireString(entry.key_id, `keys[${index}].key_id`, 64);
     if (!KEY_ID.test(keyId)) {
       throw new SigningError(`The trust root key ${index} has a malformed key id.`);
     }
@@ -214,7 +394,7 @@ export function loadTrustRoot(path: string): TrustRoot {
     if (entry.algorithm !== 'ed25519') {
       throw new SigningError(`The trust root key ${keyId} must use ed25519.`);
     }
-    const publicKeyPem = requireString(entry.public_key_pem, `keys[${index}].public_key_pem`);
+    const publicKeyPem = requireString(entry.public_key_pem, `keys[${index}].public_key_pem`, MAX_PEM_BYTES);
     if (keyIdForPublicKey(publicKeyPem) !== keyId) {
       throw new SigningError(`The trust root key ${keyId} does not match its public key.`);
     }
@@ -247,7 +427,8 @@ export function loadTrustRoot(path: string): TrustRoot {
 export function sourceFromEnvironment(environment: NodeJS.ProcessEnv = process.env): SignatureSource {
   const read = (key: string): string | null => {
     const value = environment[key];
-    return typeof value === 'string' && value.length > 0 ? value : null;
+    if (typeof value !== 'string' || value.length === 0) return null;
+    return value.slice(0, MAX_SOURCE_STRING);
   };
   return {
     repository: read('GITHUB_REPOSITORY'),
@@ -272,8 +453,12 @@ export function signArtifact(options: {
   signed_at?: string;
   trust_root?: TrustRoot;
 }): SignedStatement {
-  const artifact = readRegularFile(options.artifact_path, 'artifact');
+  const artifact = readCappedFile(options.artifact_path, 'artifact', MAX_ARTIFACT_BYTES);
   const signedAt = requireTimestamp(options.signed_at ?? new Date().toISOString(), 'signed_at');
+  const subject = validateSubject(options.subject, 'signature');
+  if (!KEY_ID.test(options.key_id)) {
+    throw new SigningError('The signing key id is malformed.');
+  }
   if (options.trust_root !== undefined) {
     const key = options.trust_root.keys.find((entry) => entry.key_id === options.key_id);
     if (key === undefined) {
@@ -287,12 +472,12 @@ export function signArtifact(options: {
     }
   }
   const payload: Omit<SignedStatement, 'signature'> = {
-    schema_version: 1,
+    schema_version: STATEMENT_SCHEMA_VERSION,
     artifact_kind: options.artifact_kind,
     key_id: options.key_id,
     signed_at: signedAt,
     artifact_sha256: createHash('sha256').update(artifact).digest('hex'),
-    subject: options.subject,
+    subject,
     source: options.source ?? sourceFromEnvironment(),
   };
   let signature: string;
@@ -304,65 +489,77 @@ export function signArtifact(options: {
   return { ...payload, signature };
 }
 
+function parseSource(value: unknown): SignatureSource {
+  if (!isRecord(value)) throw new SigningError('The signature statement must contain a source object.');
+  requireOnlyFields(value, ['repository', 'commit', 'workflow', 'run_id'], 'signature source');
+  const sourceField = (name: string): string | null => {
+    const field = value[name];
+    if (field === null) return null;
+    if (typeof field !== 'string' || field.length > MAX_SOURCE_STRING) {
+      throw new SigningError(`The signature source field "${name}" must be a string or null.`);
+    }
+    return field;
+  };
+  return {
+    repository: sourceField('repository'),
+    commit: sourceField('commit'),
+    workflow: sourceField('workflow'),
+    run_id: sourceField('run_id'),
+  };
+}
+
 export function parseSignedStatement(text: string): SignedStatement {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch (error) {
-    throw new SigningError(`The signature statement is not valid JSON: ${error instanceof Error ? error.message : 'unknown error'}.`);
+  if (Buffer.byteLength(text, 'utf8') > MAX_STATEMENT_BYTES) {
+    throw new SigningError(`The signature statement exceeds the ${MAX_STATEMENT_BYTES}-byte limit.`);
   }
-  if (!isRecord(parsed) || parsed.schema_version !== 1) {
-    throw new SigningError('The signature statement must be a JSON object with schema_version 1.');
+  const parsed = parseStrictJson(text, 'signature statement');
+  if (!isRecord(parsed)) throw new SigningError('The signature statement must be a JSON object.');
+  requireOnlyFields(
+    parsed,
+    ['schema_version', 'artifact_kind', 'key_id', 'signed_at', 'artifact_sha256', 'subject', 'source', 'signature'],
+    'signature statement',
+  );
+  if (parsed.schema_version === 1) {
+    throw new SigningError(
+      'The signature statement uses schema_version 1, whose parsing is not accepted; re-sign the artifact with schema_version 2.',
+    );
+  }
+  if (parsed.schema_version !== STATEMENT_SCHEMA_VERSION) {
+    throw new SigningError(`The signature statement must use schema_version ${STATEMENT_SCHEMA_VERSION}.`);
   }
   if (parsed.artifact_kind !== 'gvisor-runtime-pin' && parsed.artifact_kind !== 'gvisor-rootfs-manifest') {
     throw new SigningError('The signature statement has an unknown artifact_kind.');
   }
-  const keyId = requireString(parsed.key_id, 'key_id').toLowerCase();
+  const keyId = requireString(parsed.key_id, 'key_id', 64);
   if (!KEY_ID.test(keyId)) throw new SigningError('The signature statement has a malformed key_id.');
-  const artifactSha256 = requireString(parsed.artifact_sha256, 'artifact_sha256').toLowerCase();
+  const artifactSha256 = requireString(parsed.artifact_sha256, 'artifact_sha256', 64);
   if (!SHA256_HEX.test(artifactSha256)) {
     throw new SigningError('The signature statement has a malformed artifact_sha256.');
   }
-  const signature = requireString(parsed.signature, 'signature');
-  if (!BASE64_SIGNATURE.test(signature)) {
-    throw new SigningError('The signature statement has a malformed signature.');
-  }
   if (!isRecord(parsed.subject)) throw new SigningError('The signature statement must contain a subject object.');
-  const subject: SignatureSubject = {};
-  for (const [name, value] of Object.entries(parsed.subject)) {
-    if (typeof value !== 'string' && typeof value !== 'number') {
-      throw new SigningError(`The signature subject field "${name}" must be a string or number.`);
-    }
-    subject[name] = value;
+  const subject = validateSubject(parsed.subject, 'signature');
+  const signature = requireString(parsed.signature, 'signature', 88);
+  if (signature.length % 4 !== 0) throw new SigningError('The signature statement has a malformed signature.');
+  const signatureBytes = Buffer.from(signature, 'base64');
+  if (signatureBytes.length !== 64 || signatureBytes.toString('base64') !== signature) {
+    throw new SigningError('The signature statement must contain a canonical 64-byte base64 Ed25519 signature.');
   }
-  if (!isRecord(parsed.source)) throw new SigningError('The signature statement must contain a source object.');
-  const sourceRecord = parsed.source;
-  const sourceField = (name: string): string | null => {
-    const value = sourceRecord[name];
-    if (value === null) return null;
-    if (typeof value !== 'string') throw new SigningError(`The signature source field "${name}" must be a string or null.`);
-    return value;
-  };
   return {
-    schema_version: 1,
+    schema_version: STATEMENT_SCHEMA_VERSION,
     artifact_kind: parsed.artifact_kind,
     key_id: keyId,
     signed_at: requireTimestamp(parsed.signed_at, 'signed_at'),
     artifact_sha256: artifactSha256,
     subject,
-    source: {
-      repository: sourceField('repository'),
-      commit: sourceField('commit'),
-      workflow: sourceField('workflow'),
-      run_id: sourceField('run_id'),
-    },
+    source: parseSource(parsed.source),
     signature,
   };
 }
 
 /**
- * Fail-closed verification: trust root from the repository, exact key id, revocation,
- * validity window, Ed25519 verifier, artifact byte digest and subject equality.
+ * Fail-closed verification: strict parse, artifact-kind match, trust root from the repository,
+ * exact key id, revocation, validity window, Ed25519 verifier, artifact byte digest and
+ * subject equality. No key or trust root is accepted from beside the artifact.
  */
 export function verifyArtifactSignature(options: {
   artifact_kind: ArtifactKind;
@@ -372,13 +569,14 @@ export function verifyArtifactSignature(options: {
   expected_subject: SignatureSubject;
   now?: Date;
 }): VerifiedSignature {
-  const artifact = readRegularFile(options.artifact_path, 'artifact');
-  const statement = parseSignedStatement(readRegularFile(options.signature_path, 'signature statement').toString('utf8'));
+  const artifact = readCappedFile(options.artifact_path, 'artifact', MAX_ARTIFACT_BYTES);
+  const statement = parseSignedStatement(
+    readCappedFile(options.signature_path, 'signature statement', MAX_STATEMENT_BYTES).toString('utf8'),
+  );
   if (statement.artifact_kind !== options.artifact_kind) {
-    throw new SigningError(
-      `The signature is for ${statement.artifact_kind}, not ${options.artifact_kind}.`,
-    );
+    throw new SigningError(`The signature is for ${statement.artifact_kind}, not ${options.artifact_kind}.`);
   }
+  const expectedSubject = validateSubject(options.expected_subject, 'expected');
   const trustRoot = loadTrustRoot(options.trust_root_path);
   const key = trustRoot.keys.find((entry) => entry.key_id === statement.key_id);
   if (key === undefined) {
@@ -419,11 +617,10 @@ export function verifyArtifactSignature(options: {
       `The signature is not over this artifact (expected ${statement.artifact_sha256}, observed ${artifactSha256}).`,
     );
   }
-  for (const [name, expected] of Object.entries(options.expected_subject)) {
-    const observed = statement.subject[name];
-    if (observed !== expected) {
+  for (const [name, expected] of Object.entries(expectedSubject)) {
+    if (!Object.hasOwn(statement.subject, name) || statement.subject[name] !== expected) {
       throw new SigningError(
-        `The signature subject "${name}" does not match the artifact (expected ${String(expected)}, observed ${String(observed)}).`,
+        `The signature subject "${name}" does not match the artifact (expected ${String(expected)}, observed ${String(statement.subject[name])}).`,
       );
     }
   }
@@ -434,9 +631,4 @@ export function verifyArtifactSignature(options: {
     subject: statement.subject,
     source: statement.source,
   };
-}
-
-/** Hash helper exposed so callers can assert the digest they verify is the digest they use. */
-export function artifactDigest(path: string): string {
-  return hashFile(path, 'sha256');
 }

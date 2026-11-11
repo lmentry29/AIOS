@@ -156,3 +156,7 @@ trust root before use, and the signed rootfs digest must equal the measured and 
 rootfs. With the repository's unprovisioned (empty) trust root the provider is unavailable;
 CI and drills supply a run-scoped trust root to exercise the offline chain. This row does not
 imply keyless identity or SLSA provenance.
+
+Statement v2 additionally requires strict, bounded JSON: duplicate/prototype keys, unknown
+fields, oversized/deep documents and non-canonical signatures fail closed before any trust
+decision. Version 1 statements are rejected.

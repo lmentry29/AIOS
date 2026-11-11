@@ -351,3 +351,12 @@ measured rootfs, and that measurement is the one materialized and re-checked for
 The checked-in trust root is empty until provisioned, so the provider fails closed by
 default. Sigstore keyless verification was evaluated and rejected as the primary path because
 it requires network access to Fulcio/Rekor; no Sigstore or SLSA conformance is claimed.
+
+## Amendment — statement v2 hostile-input parsing (2026-11-11)
+
+Signed statements are a security boundary, so version 2 replaces `JSON.parse` with a strict
+reader and rejects version 1 rather than accepting weaker parsing. Duplicate keys, prototype
+keys, excess size/depth, unknown fields, wrong subject types and non-canonical signatures are
+refused before verification. The signed rootfs digest is asserted equal to the measured digest
+that is materialized. Adversarial regression and seeded mutation-fuzz tests cover the parser
+and verifier. Production key provisioning and keyless identity remain open.

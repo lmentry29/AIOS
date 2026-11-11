@@ -89,3 +89,40 @@ weaker identity binding.
   self-asserted by whoever holds the signing key; they are metadata, not a CI identity
   attestation. The Security workflow log shows the run-scoped key id and digest, not a
   trusted workload identity.
+
+## Adversarial hardening — statement v2 (2026-11-11)
+
+Version 1 statements were parsed with `JSON.parse`. Review found real ambiguities: duplicate
+object keys silently collapsed to the last value, a subject field named `__proto__` was
+assigned through the prototype setter, unknown statement fields were silently dropped, and
+signature/base64 lengths were not bounded. Version 2 fixes these and **version 1 statements
+are rejected** with an instruction to re-sign; no version 1 statement was ever signed in this
+repository, so no compatibility break is hidden.
+
+The v2 reader (`parseStrictJson`) rejects duplicate keys, `__proto__`/`constructor`/`prototype`
+keys, more than 32 nesting levels, documents over 1 MiB, trailing content, unterminated
+strings, control characters and non-finite numbers. Statements must contain exactly the known
+fields; the subject accepts only strings and safe integers (1 to 64 fields); the source accepts
+exactly four string-or-null fields; the signature must be canonical base64 decoding to exactly
+64 bytes. Artifacts are capped at 8 MiB and trust roots at 1 MiB / 64 keys.
+
+Coverage in `apps/host/tests/artifact-signing-adversarial.test.ts` (12 tests):
+
+- duplicate keys, prototype keys at top level and nested, excessive depth, trailing content,
+  unterminated strings, control characters, non-finite numbers, oversized statements;
+- version 1 rejection, unknown fields, float/object subject values, 63-byte and non-canonical
+  base64 signatures;
+- cross-artifact-kind replay, an attacker public key placed beside the artifact, duplicate /
+  unknown / prototype trust-root entries;
+- deterministic seeded mutation fuzzing: 250 statement mutations and 150 trust-root
+  mutations, asserting that any verification which still succeeds carries the original key,
+  digest and subject, and every other case fails with a `SigningError`.
+
+`apps/host/tests/gvisor.test.ts` adds the execution-binding invariant: the signed manifest
+digest, the measured rootfs digest and the provider evidence are equal, and a rootfs modified
+after signing fails closed before `runsc` is invoked.
+
+Measured locally: focused 54/54; full uncached gate 46/46 tasks with 0 cached, host 209 passed
+/ 17 skipped, integration 43, orchestration 30. The remaining open items are unchanged:
+production trust-root/key provisioning, Sigstore/Fulcio/Rekor identity, SLSA provenance, and
+separate macOS/rootless-Docker measurement. No Sigstore or SLSA conformance is claimed.
