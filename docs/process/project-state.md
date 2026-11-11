@@ -1,18 +1,15 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-10 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest security code head: `43e2dd6` (F-014 dependency upgrade plus
-explicit canonical-array bounds, and F-015 bounded task-environment record); its
-documentation/validation commit follows. The historical heads below remain the last CI
-verification recorded in this file; re-check the new head instead of reusing them.
-Code head `4422229` (authorized runtime policy retirement) sits on
-the branch above the previously verified merge head `8c950e6`, which merged `upstream/main`
-at `767f30e` and passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and
-`schema-check` (run `42887224921`) workflows with PR #1 mergeable/clean. Docs commit
-`aa86a4e` sits above the code head, and `aa86a4e` passed `ci` (run `42892775891`),
-`conformance` (run `42892776172`), and `schema-check` (run `42892775877`). Docs-only
-record commit `c1dfa71` follows and passed the same three workflows; the security-hardening
-commits are newer still and are recorded in `docs/security/validation-ledger.md`.
+Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
+evidence from observed CI. Latest security code head: `b067501` (durable host session
+lifecycle; closes F-013); its documentation checkpoint follows. The historical heads below
+remain the last explicitly recorded CI evidence in this file; re-check the pushed head
+instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
+the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
+passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `schema-check`
+(run `42887224921`) workflows with PR #1 mergeable/clean. The docs-only CI-record commit
+`c1dfa71` also passed; the security-hardening commits are newer and are recorded in
+`docs/security/validation-ledger.md`.
 
 ## Repository and active change
 
@@ -21,8 +18,10 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified code head: `4422229` (`feat(host): retire attached policy versions at runtime`)
-- Docs commit for this pass: `aa86a4e` (`docs(adr): record authorized runtime policy retirement`).
+- Verified security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
+- Documentation checkpoint for this pass: the branch tip after `b067501`; read
+  `git log --oneline -3` for the exact docs SHA.
+- Historical policy pass: `4422229` with docs commit `aa86a4e`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
   mergeable/clean.
 - `4422229` and docs commit `aa86a4e` sit above that merge head. Both workflow sets
@@ -57,6 +56,13 @@ commits are newer still and are recorded in `docs/security/validation-ledger.md`
   namespace (ADR-0028). The wrapper proves exact `/proc/self/limits` and `Seccomp: 2`; missing
   proof is `sandbox_resource_limit_unavailable` and verifier-bound. Live memory bomb: exit 1,
   `Out of memory!`, `timed_out:false`. This is per-process, not aggregate cgroup, enforcement.
+- Host sessions now have mandatory bounded expiry, durable generations, explicit rotation and
+  terminal revocation, and task/run/evidence scope binding (ADR-0029). The journal persists
+  the active generation and retired-token digests before acknowledgement; restart and
+  compaction preserve the denial. Expired, unknown, malformed, rotated-away, revoked, and
+  cross-scope tokens fail closed with structured 401 reasons. In-flight work authorized
+  before rotation continues. F-013 is fixed; the residual is pre-provisioned tokens without
+  login/MFA/rate limiting, one-time rotation delivery, and unencrypted loopback HTTP.
 - The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
   passed the original 9/9 adversarial boundary cases, then 12/12 boundary/limit cases after
   the resource work, covering host-file reads, workspace symlink escape, network interfaces,
@@ -202,6 +208,11 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   and seccomp drills all exit 0; production audit **0 triaged**; secret scan **272 tracked
   files, no findings**. The 17 skipped host tests are the live suites run separately with
   `AIOS_BWRAP_DIR` set.
+- At F-013 head `b067501`: full workspace gate **46/46 tasks**; host **148 passed/17 skipped**
+  (HTTP **57**, identity **9**, session lifecycle **6**); core **51**; live bubblewrap
+  **17/17**; resource-limit, quota, seccomp, and collection drills all exit 0; production audit
+  **0 triaged**; secret scan **273 tracked files, no findings**. The real HTTP expiry case and
+  the restart/compaction rotation/revocation cases are included in the host count.
 - GitHub Actions on `aa86a4e`: `ci` (run `42892775891`), `conformance` (run
   `42892776172`), and `schema-check` (run `42892775877`) all succeeded; PR #1 reported
   `mergeable: true`, `mergeable_state: unstable` while those runs were in flight. The

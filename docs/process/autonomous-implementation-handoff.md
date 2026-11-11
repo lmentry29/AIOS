@@ -3,20 +3,21 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-10 (Freebuff Cloud session, bounded canonical collections and F-015
-task-environment closure). Latest security code head: `43e2dd6` (explicit array bounds on top
-of the Zod 4.6.7 upgrade, plus the bounded environment record); its documentation/validation
-commit follows. Re-check this head rather than older CI lines below. F-009's digest mitigation
-and F-005's fail-closed regression remain in place from `24d2791`.
+Last updated: 2026-11-11 (Freebuff Cloud session, durable host session lifecycle and F-013
+closure). Latest security code head: `b067501` (`feat(host): add durable session rotation and
+revocation`); its documentation checkpoint follows. Re-check this head rather than older CI
+lines below. F-009's digest mitigation, F-005's fail-closed regression, the bounded canonical
+collections, and the live bubblewrap controls remain in place from `24d2791`/`43e2dd6`.
 
 ## Repository state
 
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified code head: `7103957` (`feat(host): authorize runtime policy publication`)
-- Docs commit for the runtime-policy pass: `0a1ae66`
-  (`docs(adr): record authorized runtime policy administration`).
+- Verified security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
+- Documentation checkpoint for this pass: the branch tip after `b067501`; read
+  `git log --oneline -3` for the exact docs SHA.
+- Historical policy pass: `7103957` with docs commit `0a1ae66`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
   PR #1 is mergeable/clean.
 - This handoff is a docs-only verification commit after the merge head; read
@@ -618,6 +619,31 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
   `apps/host/tests/http-host.test.ts` adds four retirement tests (51 HTTP total). Full
   workspace: **513 passed**.
 
+## Completed — durable host session lifecycle (`b067501`)
+
+F-013 was the remaining Low finding: bearer digests had optional expiry and no rotation or
+revocation endpoint. Sessions now require `expires_at` with a 30-day ceiling. The operational
+journal persists active generations, task/run/evidence scopes, and terminal retired-token
+digests before acknowledgement; replay and compaction reconstruct the same state. `POST
+/v1/session/rotate` issues a one-time 32-byte random token and retires the predecessor;
+`POST /v1/session/revoke` is terminal. The real HTTP path denies expired, unknown, malformed,
+rotated-away, revoked, and cross-scope credentials with stable reasons (`expired_token`,
+`rotated_token`, `revoked_token`, `task_scope_mismatch`, `run_scope_mismatch`,
+`evidence_scope_mismatch`). A token bound to one task/run cannot authorize another; evidence
+scope is checked against the recomputed artifact digest. Work already authorized before a
+rotation completes normally. Snapshot restore refuses to reintroduce a session removed from
+configuration.
+
+Evidence at `b067501`: focused host/typecheck green; six durable lifecycle tests plus nine
+identity and 57 HTTP tests; full gate **46/46 tasks**, host **148 passed/17 skipped**, core
+**51**; live bwrap **17/17**; resource-limit, quota, seccomp, and collection drills exit 0;
+audit **0 triaged**; secret scan **273 tracked files, no findings**. Six lifecycle tests cover
+controlled-clock expiry, rotation replay, revocation replay, cross-task/run/evidence replay,
+restart, compaction, and snapshot resurrection refusal; the HTTP suite includes restart
+recovery and an in-flight run across rotation. Residual: pre-provisioned tokens only, no
+login/MFA/rate limiting, one-time rotation delivery, and unencrypted loopback HTTP. See
+ADR-0029, F-013, and the validation ledger.
+
 ## Completed — bubblewrap per-run resource limits (`f012df3`)
 
 F-003 was selected as the highest-severity actionable open finding: F-005 requires unavailable
@@ -682,9 +708,10 @@ rejects more than 64 entries before inspecting values; the generated contract ca
 issue in about 100 ms. The host allowlist and 256 KiB default request-body cap remain defense
 in depth.
 
-Next action: close F-013 (host session-token rotation/revocation) in the production identity
-path, with a real expiry/revocation regression and the same full-gate/live evidence. Do not
-claim signed policy provenance or macOS isolation until the recorded blockers are cleared.
+Next action: F-013 is closed at `b067501`. Continue with the concrete work below; do not claim
+signed policy provenance, macOS isolation, Docker/gVisor execution, or aggregate cgroup
+enforcement until their recorded blockers are cleared. Re-run the full gate and live suite on
+the pushed documentation checkpoint before relying on its CI.
 
 ## Next concrete work
 
