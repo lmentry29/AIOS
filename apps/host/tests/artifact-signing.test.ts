@@ -125,7 +125,7 @@ describe('artifact signing', () => {
       artifact_sha256: fixture.artifactDigest,
       subject: runtimeSubject,
     });
-    expect(verified.source.repository).toBeNull();
+    expect(verified.source.repository).toBe(process.env.GITHUB_REPOSITORY ?? null);
   });
 
   it('verifies a correctly signed rootfs manifest', () => {
