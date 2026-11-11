@@ -383,3 +383,15 @@ external head checkpoint. Key rotation uses overlapping trust-root validity; rev
 absence deny. The full format, exit codes and residual gaps are in
 `docs/security/evidence-bundle.md`. External audit custody, Fulcio/Rekor identity, SLSA and
 in-toto conformance, and macOS/rootless-Docker measurement remain open and unclaimed.
+
+
+## Amendment — signed source-to-build provenance (2026-11-11)
+
+A build attestation now binds the exact repository/commit, GitHub workflow ref, run id and
+attempt, builder identity and the measured digest/size of every produced artifact. It reuses
+the existing strict JSON reader, canonical JSON and Ed25519/trust-root primitives and is
+verified offline by a separate-process CLI against real artifact files. Wrong source, builder,
+workflow, run, artifact set, signature or key lifecycle each fail closed with a distinct exit
+code; replay requires an externally expected run/attempt/attestation checkpoint. CI generates
+and verifies the attestation with the existing run-scoped key. No SLSA level, in-toto or
+Sigstore conformance, OIDC builder identity or external custody is claimed.

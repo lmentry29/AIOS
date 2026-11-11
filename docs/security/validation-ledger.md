@@ -1269,3 +1269,22 @@ provisioned and are not claimed.
 - Remaining: external audit custody/trusted timestamp, production trust-root/key, Sigstore
   identity, SLSA/in-toto conformance, macOS/rootless-Docker measurement. No standard level is
   claimed.
+
+
+## Signed build provenance (2026-11-11)
+
+- New `apps/host/src/execution/build-provenance.ts`: strict versioned attestation over source
+  commit/repository, CI workflow/run identity, builder and measured artifact digests/sizes;
+  offline verification with external trust root, expected identities/checkpoint and real
+  artifact files.
+- New `tools/security/build-provenance.mjs`: separate-process `generate` and `verify`.
+- `apps/host/tests/build-provenance.test.ts` — 8 tests covering accept, forged signature,
+  duplicate keys, unknown schema, absent/revoked/not-yet-valid/expired keys, wrong
+  repository/commit/builder/workflow, replay checkpoint, artifact digest/missing/extra, spliced
+  build and a real subprocess CLI accept (exit 0) / forged rejection (exit 3).
+- Security workflow now generates and verifies the attestation from the real environment and
+  artifact bytes using the existing run-scoped key/trust root.
+- Full uncached gate: 46/46 tasks, 0 cached; host 241 passed / 17 skipped; integration 43;
+  conformance 107; orchestration 30.
+- Not claimed: SLSA level, in-toto/Sigstore conformance, OIDC builder identity, external
+  custody, production key provisioning, macOS/rootless-Docker measurement.

@@ -98,6 +98,35 @@ jobs:
           node tools/security/sign-artifacts.mjs sign --kind runtime-pin --artifact tools/security/gvisor-runtime.pin.json --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-runtime.pin.sig.json"
           node tools/security/sign-artifacts.mjs sign --kind rootfs-manifest --artifact "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json"
           node tools/security/sign-artifacts.mjs verify-all --pin tools/security/gvisor-runtime.pin.json --pin-signature "$RUNNER_TEMP/gvisor-runtime.pin.sig.json" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --manifest-signature "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json" --trust-root "$ROOT"
+      # Bind the exact source commit/workflow identity to the artifact set actually produced
+      # by this run. The run-scoped key and trust root are the same offline chain used above;
+      # this is not an OIDC, Sigstore or SLSA identity claim.
+      - name: Generate and verify build provenance
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/aios-signing-key.pem"
+          ROOT="$RUNNER_TEMP/aios-trust-root.json"
+          PROVENANCE="$RUNNER_TEMP/build-provenance.json"
+          node tools/security/build-provenance.mjs generate \
+            --key "$KEY" \
+            --out "$PROVENANCE" \
+            --artifact "gvisor-runtime-pin=tools/security/gvisor-runtime.pin.json" \
+            --artifact "gvisor-rootfs-manifest=$RUNNER_TEMP/gvisor-rootfs.manifest.json" \
+            --artifact "gvisor-runtime-signature=$RUNNER_TEMP/gvisor-runtime.pin.sig.json" \
+            --artifact "gvisor-rootfs-signature=$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json"
+          node tools/security/build-provenance.mjs verify \
+            --attestation "$PROVENANCE" \
+            --trust-root "$ROOT" \
+            --expect-repository "$GITHUB_REPOSITORY" \
+            --expect-commit "$GITHUB_SHA" \
+            --expect-builder-id "github-actions:$GITHUB_WORKFLOW_REF" \
+            --expect-workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --expect-run-id "$GITHUB_RUN_ID" \
+            --expect-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --artifact "gvisor-runtime-pin=tools/security/gvisor-runtime.pin.json" \
+            --artifact "gvisor-rootfs-manifest=$RUNNER_TEMP/gvisor-rootfs.manifest.json" \
+            --artifact "gvisor-runtime-signature=$RUNNER_TEMP/gvisor-runtime.pin.sig.json" \
+            --artifact "gvisor-rootfs-signature=$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json"
       # Same 21-case matrix through the explicit gVisor provider and real verifier.
       - run: PATH="$RUNNER_TEMP/gvisor:$PATH" AIOS_SANDBOX_PROVIDER=gvisor AIOS_GVISOR_ROOTFS="$RUNNER_TEMP/gvisor-rootfs" AIOS_GVISOR_ROOTFS_MANIFEST="$RUNNER_TEMP/gvisor-rootfs.manifest.json" node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.

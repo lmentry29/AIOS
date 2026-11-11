@@ -175,3 +175,11 @@ Bundle export/verification is host-level audit functionality and does not change
 isolation row. Offline verification was exercised on Linux CI; no macOS or rootless-Docker
 measurement of bundle export/verification is claimed. An absent/revoked/expired key or any
 chain, signature, binding or replay failure denies; there is no fallback to the embedded key.
+
+
+## Signed build provenance (2026-11-11)
+
+Build provenance is host/CI audit functionality and does not change provider isolation rows.
+Verification was exercised on Linux CI; no macOS or rootless-Docker claim is made. A mismatch
+in source, builder, workflow, artifact, signature or key lifecycle denies, and replay requires
+an external checkpoint.

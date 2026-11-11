@@ -489,3 +489,10 @@ truncation, replay, forged signatures and key absence/revocation/expiry fail clo
 documented exit code. Replay needs an external head checkpoint; production key custody,
 external audit custody/trusted timestamps, Sigstore identity, SLSA/in-toto conformance and
 macOS/rootless-Docker measurement remain open.
+
+
+Signed build provenance (2026-11-11) now binds repository/commit, workflow/run identity, builder
+and measured artifact digests to an offline-verifiable Ed25519 attestation. CI generates and
+checks it with the run-scoped key and real artifact files. No OIDC/Sigstore/SLSA/in-toto
+conformance or external custody is claimed; production key provisioning and macOS/rootless
+Docker remain open.

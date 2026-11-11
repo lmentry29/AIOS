@@ -1045,3 +1045,15 @@ Completed Tasks require accepted verifier Artifacts and a completed latest execu
 detection requires `--expect-head` from an external checkpoint. Docs: `docs/security/
 evidence-bundle.md`. Still open: external audit custody/trusted timestamp, production key
 custody, Sigstore identity, SLSA/in-toto conformance, macOS/rootless-Docker measurement.
+
+
+## Signed build provenance — 2026-11-11
+
+`build-provenance.ts` emits a strict versioned Ed25519 attestation over source
+repository/commit, workflow ref, run/attempt, builder identity and real artifact digests/sizes.
+`tools/security/build-provenance.mjs verify` runs in a separate process with only the
+attestation, external trust root and artifact files; expected commit/builder/workflow/run and
+artifact set are checked explicitly. CI generates and verifies it with the existing run-scoped
+key. Tests cover forged signatures, key lifecycle, wrong identities, artifact mismatch/missing/
+extra, splice, replay and schema failures. Still open: OIDC builder identity, external custody,
+production key provisioning, SLSA/in-toto/Sigstore conformance and macOS/rootless-Docker measurement.

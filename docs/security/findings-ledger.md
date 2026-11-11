@@ -77,3 +77,17 @@ expired-key and post-hoc-mutated cases with distinct failure codes; a completed 
 an accepted verifier Artifact and a completed latest attempt. Replay detection requires an
 externally supplied head checkpoint. No external audit custody, trusted timestamp,
 Fulcio/Rekor identity, SLSA or in-toto conformance is claimed.
+
+
+## F-024 — no verifiable source-to-build provenance
+
+**Status:** fixed for signed offline attestations; external identity/custody remains open.
+
+The Security workflow produced and signed runtime/rootfs artifacts but did not bind them to the
+exact source commit or workflow identity. A versioned build attestation now records repository,
+commit, ref, event, workflow ref, run/attempt, builder identity and measured artifact digests
+and sizes, signed with the existing Ed25519 trust root. The separate-process verifier checks
+the signature, key lifecycle, expected source/builder/workflow, exact artifact set and replay
+checkpoint. Deterministic tests cover forged signature, unknown/revoked/expired keys, wrong
+commit/repository/builder/workflow, artifact digest/missing/extra, splice, replay, unknown
+schema and duplicate-key JSON. This is not an OIDC, Sigstore, SLSA or in-toto conformance claim.
