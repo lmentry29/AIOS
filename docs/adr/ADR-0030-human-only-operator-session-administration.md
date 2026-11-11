@@ -121,7 +121,9 @@ denying the target's next request and surviving restart, idempotent repeat revoc
 rotating a retired session, the denied/not-found/usage exit codes, a non-human denial, a
 scoped-token denial with `scope_binding_required`, and absence of token material in stdout,
 stderr, and the journal. `packages/founder/tests/authorization.test.ts` proves the exact,
-human-only grant. `tools/security/session-operator-drill.mjs` runs the same flow through the
-compiled `aios-host` binary against a real host process and real restarts. See
+human-only grant.`tools/security/session-operator-drill.mjs` runs the same flow through the compiled
+`aios-host` binary against a real host process and real restarts. That drill is a required
+step in the Security workflow's live-sandbox job: a non-zero drill exit fails the job
+(demonstrated by a probe run), and the real drill passed in CI with all 13 steps. See
 `docs/security/validation-ledger.md` for the measured results and
 `docs/security/session-operator-runbook.md` for the incident procedure.

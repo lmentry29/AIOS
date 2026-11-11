@@ -581,3 +581,79 @@ CI on the exact pushed head `15bc7f8`: `ci` run `42933005083` — success; `conf
 `42933005020` — success (both live-boundary and supply-chain jobs); `release` run
 `42933109086` — success (`workflow_dispatch` on the branch head, since the workflow has no
 push trigger). PR #1 remained open, draft, and unmerged; `main` stayed at `767f30e`.
+
+## 2026-11-11 — CI guard for operator session administration (`550d0e5`)
+
+Host: Linux `6.1.102` x86_64, unprivileged UID, Node 26.13.0, pnpm 11.11.0, `bwrap 0.9.0` at
+`/tmp/bwrap-root/usr/bin`. This pass makes the operator drill a required CI step in the
+Security workflow and demonstrates both directions: a non-zero drill exit fails the job, and
+the real drill passes in the actual run.
+
+Workflow change: `.github/workflows/security.yml` adds, after the existing resource-limit
+drill in the `sandbox-live` job, in the same plain `run:` pattern and with no permission,
+action, or isolation change:
+
+```yaml
+      # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.
+      - run: node tools/security/session-operator-drill.mjs
+```
+
+The step inherits the job's `/usr/bin/bash -e {0}` shell, so a non-zero drill exit fails the
+step and the job. That was not assumed: a temporary probe commit (`fb7090a`) made the drill
+exit 1, and the actual run demonstrated the failure. The probe was removed in `550d0e5`; the
+branch retains both commits so the demonstration is auditable.
+
+Commands actually run locally, in this order:
+
+```sh
+git show 6dfdbf0:tools/security/session-operator-drill.mjs > tools/security/session-operator-drill.mjs
+node tools/security/session-operator-drill.mjs
+pnpm turbo lint typecheck test build --cache-dir=/tmp/turbo-cache --force
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin pnpm --filter @aios/host exec vitest run \
+  tests/sandbox-live.test.ts tests/seccomp-live.test.ts tests/workspace-quota-live.test.ts
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/resource-limit-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/workspace-quota-drill.mjs
+AIOS_BWRAP_DIR=/tmp/bwrap-root/usr/bin node tools/security/seccomp-drill.mjs
+node tools/security/collection-bound-drill.mjs
+node tools/security/audit-policy.mjs
+node tools/security/scan-secrets.mjs
+```
+
+Observed at final code head `550d0e5`:
+
+- Operator drill: **13/13 steps, exit 0** (`no_token_leakage`, `steps:13`).
+- Full workspace gate, forced with no cache: **46/46 tasks successful**; host **152 passed,
+  17 skipped**; founder **63**; core **51**; conformance **107**; integration **43**; objects
+  **32**; orchestration **30**; tools **9**; work-hierarchy **24**; containers **21**;
+  learning **28**; agents **6**. Counts are unchanged from `27ab654`; no test or assertion was
+  removed or weakened.
+- Live bubblewrap suite: **17/17 passed**. Resource-limit, workspace-quota, seccomp, and
+  collection drills all exit 0.
+- `audit-policy: no untriaged high or critical advisories (0 triaged)`; `secret-scan: no
+  findings across 281 tracked files`.
+
+CI evidence, read from the run jobs and step logs rather than inferred from the conclusion:
+
+- **Failure propagation, probe head `fb7090a`:** Security run `42934134785`, job
+  `130239870814` (`Live sandbox boundary`) concluded `failure`; step 11
+  `Run node tools/security/session-operator-drill.mjs` concluded `failure`, with
+  `{"drill":"session-operator","ok":false,"error":"intentional CI failure-propagation probe"}`
+  and `##[error]Process completed with exit code 1.`
+- **Real drill, final code head `550d0e5`:** Security run `42934563018`, job `130241299391`
+  concluded `success`; step 11 concluded `success`. The step log recorded all 13 drill lines:
+  `list_sessions` (total 3, no digests), exit codes `3`/`2`/`4`, `rotate_live` generation 2
+  with `rotated_token`, `rotation_replay_denied`, idempotent `revoke_live` with
+  `revoked_token`, `scoped_admin_denied` (`scope_binding_required`), `restart_recovery`,
+  `no_token_leakage`, and `{"drill":"session-operator","ok":true,"steps":13}`.
+
+The workflow gained no permission, action, or unpinned dependency. The probe commit exists
+only to prove exit propagation; the final tree is the real drill.
+
+What is verified versus not:
+
+- **Verified:** the Security workflow executes the operator drill on every pull request; the
+  step fails the job on a non-zero drill exit; the real drill passes in CI with all 13 steps;
+  local counts, live suite, and every security drill are unchanged.
+- **Not changed:** no sandbox, authentication, scope, verifier, policy, or journal behavior was
+  modified by this pass. The operator-surface residuals in ADR-0030 (bearer operator token
+  without step-up/MFA, loopback HTTP, one-time rotation delivery, single-process state) remain.

@@ -3,10 +3,10 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, human-only operator session administration
-over the durable host session lifecycle). Latest security code head: `27ab654` (`feat(host):
-add human-only operator session administration`), following `b067501` (durable session
-rotation/revocation and F-013 closure); its documentation checkpoint follows. Re-check this
+Last updated: 2026-11-11 (Freebuff Cloud session, CI-guarded operator session administration
+over the durable host session lifecycle). Latest security code head: `550d0e5` (the operator
+drill is a required Security-workflow step; the guard landed in `fb7090a`), following
+`27ab654` and `b067501`; its documentation checkpoint follows. Re-check this
 head rather than older CI lines below. F-009's digest mitigation, F-005's fail-closed
 regression, the bounded canonical collections, and the live bubblewrap controls remain in
 place from `24d2791`/`43e2dd6`.
@@ -16,7 +16,8 @@ place from `24d2791`/`43e2dd6`.
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Verified security code head: `27ab654` (`feat(host): add human-only operator session administration`)
+- Verified security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
+- Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
 - Documentation checkpoint for this pass: the branch tip after `27ab654`; read
   `git log --oneline -3` for the exact docs SHA.
@@ -43,6 +44,8 @@ place from `24d2791`/`43e2dd6`.
   - `b5dc5d9` — durable hash-chained operational journal
   - `a7d930a` — durable-persistence evidence and handoff
   - `27ab654` — human-only operator session administration and executable operator drill
+  - `fb7090a` — operator drill added to the Security workflow, with a temporary failure probe
+  - `550d0e5` — real drill restored; probe removed after the red run demonstrated exit propagation
 
 ## Environment notes
 
@@ -378,6 +381,11 @@ operator has to hand-call.
   `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
   dispatched `release` build (run `42933109086`) all succeeded. PR #1 stayed open, draft, and
   unmerged; `main` stayed at `767f30e`.
+- CI guard at `550d0e5`: the Security workflow runs the operator drill as a required
+  live-sandbox step. Probe run `42934134785` failed that step with exit 1; Security run
+  `42934563018` passed it with all 13 drill lines in the step log. Local gate at `550d0e5`:
+  forced 46/46, host 152 passed/17 skipped, founder 63, core 51, live 17/17, operator 13/13,
+  every drill exit 0, audit 0, secret scan 281 files.
 
 ### Not claimed
 
@@ -386,6 +394,18 @@ operator has to hand-call.
 - Rotation delivery is manual and one-time; restoring a revoked session requires configuration
   re-provisioning and a restart.
 - The surface is single-host and single-process, like the rest of the journal.
+
+### CI regression guard
+
+- `.github/workflows/security.yml` runs `node tools/security/session-operator-drill.mjs` in
+  the `sandbox-live` job after the resource-limit drill, using the same plain `run:` pattern
+  and no new permissions, actions, or isolation changes. The job shell is `/usr/bin/bash -e`,
+  so a non-zero drill exit fails the step and the job.
+- Failure propagation was demonstrated in CI, not assumed: probe head `fb7090a` (Security run
+  `42934134785`, job `130239870814`) failed step 11 with `intentional CI failure-propagation
+  probe` and `Process completed with exit code 1.` The probe was removed in `550d0e5`.
+- The real drill passed on `550d0e5` (Security run `42934563018`, job `130241299391`); the step
+  log contains all 13 lines through `{"drill":"session-operator","ok":true,"steps":13}`.
 
 ## Verification actually executed at `7103957` and CI at `8c950e6`
 

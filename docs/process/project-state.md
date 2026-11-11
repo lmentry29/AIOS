@@ -1,9 +1,8 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest security code head: `27ab654` (human-only operator session
-administration, following the `b067501` durable session lifecycle that closed F-013); its
-documentation checkpoint follows. The historical heads below
+evidence from observed CI. Latest security code head: `550d0e5` (CI-guarded human-only operator
+session administration, following `27ab654`); its documentation checkpoint follows. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
 the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
@@ -19,7 +18,8 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Active implementation branch: `community/open-source-foundation`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Verified security code head: `27ab654` (`feat(host): add human-only operator session administration`)
+- Verified security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
+- Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
 - Documentation checkpoint for this pass: the branch tip after `27ab654`; read
   `git log --oneline -3` for the exact docs SHA.
@@ -75,6 +75,10 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   weakened: a scoped token cannot use the admin surface, and the bootstrap principal has no
   implicit grant. The operator grant is itself a high-value bearer credential with no
   step-up or approval quorum.
+- The operator drill is a required step in the Security workflow's live-sandbox job, in the
+  same plain `run:` pattern as the existing resource-limit drill. A deliberate non-zero probe
+  failed the job (run `42934134785`); the real drill passed on `550d0e5` (run `42934563018`,
+  step 11, 13/13 steps). No workflow permission, pinned action, or isolation rule changed.
 - The real Linux boundary was executed, not simulated: bubblewrap 0.9.0 on kernel 6.1.102
   passed the original 9/9 adversarial boundary cases, then 12/12 boundary/limit cases after
   the resource work, covering host-file reads, workspace symlink escape, network interfaces,
@@ -238,6 +242,12 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   **17/17**; the operator drill ran **13 steps**; resource-limit, quota, seccomp, collection,
   and operator drills all exit 0; production audit **0 triaged**; secret scan **276 tracked
   files, no findings**.
+- At CI-guard head `550d0e5`: full workspace gate **46/46 tasks** (forced, no cache); host
+  **152 passed/17 skipped**; founder **63**; core **51**; live bubblewrap **17/17**; operator
+  drill **13/13**; resource-limit, quota, seccomp, and collection drills exit 0; audit **0
+  triaged**; secret scan **281 tracked files, no findings**. Security run `42934563018`
+  passed step 11 `Run node tools/security/session-operator-drill.mjs` with all 13 steps in the
+  log; probe run `42934134785` failed at that same step with exit 1.
 - CI on the exact pushed head `15bc7f8`: `ci` (run `42933005083`), `conformance` (run
   `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
   dispatched `release` build (run `42933109086`) all succeeded. PR #1 remained open, draft,
