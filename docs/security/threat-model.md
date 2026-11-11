@@ -56,10 +56,12 @@ Founder Intelligence vault's own access controls.
   gVisor is measured (ADR-0032) and its runtime/rootfs are digest-verified, but it is a
   user-space kernel, not a VM; a VM boundary is still not validated in this repository.
 - **Sandbox supply chain.** The gVisor release archive is pinned by SHA-512 and the extracted
-  `runsc` by SHA-256; CI requires a reproducible rootfs manifest. The pin file and manifest are
-  unsigned, the base image tag and apt package versions are not pinned, and the manifest omits
-  ownership/timestamps. A malicious host writer or upstream compromise is outside the workload
-  boundary.
+  `runsc` by SHA-256. The rootfs is built from a base image pinned by manifest-list digest, the
+  fixed `snapshot.debian.org` timestamp `20261110T000000Z`, and exact package versions; CI
+  requires two independent no-cache image builds to produce the same canonical rootfs digest
+  and manifest. The pin file, base/snapshot inputs, and manifest are unsigned, the snapshot must
+  remain available for a future rebuild, and the manifest omits ownership/timestamps. A
+  malicious host writer or upstream compromise is outside the workload boundary.
 - **System-call attack surface.** bubblewrap now installs a generated seccomp deny-list
   (ADR-0027) that kills ptrace, mount/namespace, keyring/module, bpf/perf, io_uring,
   userfaultfd, and related syscalls. It is a deny-list, not a complete allow-list: unlisted

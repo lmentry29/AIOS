@@ -137,38 +137,49 @@ cgroup; disk remains the executor's 25 ms workspace sampler.
 
 The provenance amendment reduces the accidental-substitution risk but does not make the supply
 chain signed or self-authenticating. The release archive and extracted binary are checked
-against repository data; the rootfs is reproducible from the local image and checked against a
-canonical manifest every run. However, the pin file and manifest are unsigned, the Docker base
-image tag and apt package versions are not pinned, the manifest excludes ownership/timestamps,
-and a host writer can replace the runtime or rootfs after hashing. A Sigstore-signed release,
-digest-pinned base image, and immutable runtime mount remain future work.
+against repository data; the rootfs is built from a base image pinned by manifest-list digest, a
+fixed Debian snapshot, and exact package versions, then checked against a canonical manifest
+every run. However, the pin file, base/snapshot inputs, and manifest are unsigned repository
+trust anchors, the snapshot service must remain available for a future rebuild, the manifest
+excludes ownership/timestamps, and a host writer can replace the runtime or rootfs after
+hashing. A Sigstore-signed release and immutable runtime mount remain future work.
 
 ## Measured evidence
 
-### CI at `ef02f27`
+### CI at `378e7d6`
 
-- Code head `ef02f27`; Security run `42950936794`, live job `130294805697`:
-  - gVisor install step 14 measured `runsc release-20261102.0`, binary SHA-256
-    `c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098`, release archive
-    SHA-512 `2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05`,
-    pin SHA-256 `20c017d90727d32cffa931219f68a336d639f97ac234087190984312a5b9bd2c`.
-  - Fail-closed step 15 observed the tampered-archive SHA-512 mismatch and the missing-pin
-    error, then completed successfully because both were rejected. A successful verification
-    would have exited 1.
-  - Rootfs build step 16 measured image ID
-    `sha256:3ee869b8eab21408d36f4b898240f5d966a568f541eeb28e34cba65732a9174c`, Dockerfile
-    SHA-256 `b3bff35269be52a05317b32755e54eeb0e4197bdeb03002c7d6772c9be86ab8b`, rootfs
-    `c7004df1b39c4778ae93de9bde5303d09bc8a8b365225c7bbb2da693f28d7f05` (6,221 entries),
-    manifest SHA-256 `b8115b66a817f06f7939a968e0b30ffae5132ecb9fb1a2f0a27434669aced186`, and
-    a second export with the same digest/entry count.
-  - gVisor drill step 17: **21/21** cases denied or contained; every case carried the same
-    provenance digest `ce8ac1c8f9e725e656e530c11446b6bc928b3aa121878fe29c3f3639d875f5cc` and
-    the runtime/rootfs digests above; result `all adversarial cases denied or contained`.
-  - Bubblewrap live tests, resource-limit drill, and bubblewrap adversarial drill steps 9–11
-    also passed. Docker build/drill steps 12–13 and the operator drill step 18 passed.
-- The same head's CI run `42950936687`, Conformance run `42950936691`, and Schema Check run
-  `42950936700` were green. The Release workflow is `workflow_dispatch`-only and is not a
-  pull-request check.
+- Code head `378e7d63ad7f747833eb09ae6dc73eef649bfffe`; Security run `42956393498`, live job
+  `130312417881`:
+  - Step 12, pin guard. Observed `debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`,
+    Debian snapshot `20261110T000000Z` (`bookworm`, `bookworm-updates`, `bookworm-security`),
+    exact packages `coreutils=9.1-1`, `perl=5.36.0-7+deb12u4`, and
+    `util-linux=2.38.1-5+deb12u3`; pin SHA-256
+    `9fccac3eac4bb9e5c0adde39816dc7b858c3ea1b5105d3e79b91046c15c6174d`.
+  - Step 13 built the Docker image; step 14 ran the Docker drill **21/21** (engine `28.0.4`,
+    rootful, kernel `7.0.0-1017-azure`).
+  - Step 15 rebuilt the image independently with `docker build --no-cache`; step 16 installed
+    and verified `runsc release-20261102.0`, binary
+    `c5a5a7ba1209b605d08874fdd4429035f95afcb2d482bc95ed3fb13d31a25098`, archive
+    `2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05`,
+    pin `20c017d90727d32cffa931219f68a336d639f97ac234087190984312a5b9bd2c`.
+  - Step 17 observed the tampered-archive SHA-512 mismatch and missing-pin error, then
+    completed because both were rejected. A successful verification would have exited 1.
+  - Step 18 exported the first image and the independently built image. Image IDs
+    `sha256:89eacf2ae4ed6aa99b5be877d12656c6968ccac812777f4f1da7167b7e1ff8e5` and
+    `sha256:a8abdab0a7949941cf9afbea740065ede56047a39880e29649fd7e89f75a0ba7`; Dockerfile
+    SHA-256 `5acad18ae243c42ba3e5f4cc8cd30557beafe9aaad95b025d9e64d7f6fb8fe2c`; both produced
+    rootfs `6e1376d8ee022a239e7dc38a068498729a88632639559ccc41a0174d788f20d7` with 6,195
+    entries; manifest SHA-256
+    `845c98537b568983f70644d4ef5fc9582303c3aa09893cca39d6e5bf5b5bab3f`; comparison method
+    `independent-image-build`.
+  - Step 19 ran the gVisor drill **21/21**; every case carried provenance digest
+    `8490ada2b7adb15bad155212fcde4b7c3187ad12ae6b989319b0bfa62052007b`, runtime `c5a5a7ba…`,
+    and rootfs `6e1376d8…`; result `all adversarial cases denied or contained`.
+  - Step 20 ran the session-operator drill. Bubblewrap live tests, resource-limit drill, and
+    bubblewrap adversarial drill steps 9–11 also passed.
+- The same head's CI run `42956393497`, Conformance run `42956393507`, and Schema Check run
+  `42956393513` were green. The Release workflow is `workflow_dispatch`-only and is dispatched
+  separately on the final documentation head.
 
 ### Earlier CI at `54344f1`
 
@@ -185,7 +196,7 @@ digest-pinned base image, and immutable runtime mount remain future work.
 
 ### Local
 
-- Uncached workspace gate: **46/46** tasks, **0 cached**; host tests **165 passed / 17 skipped**
+- Uncached workspace gate: **46/46** tasks, **0 cached**; host tests **168 passed / 17 skipped**
   (the skips are live suites without a provider environment).
 - Bubblewrap live suite **17/17**; bubblewrap adversarial **21/21**; resource-limit drill exit
   **0**; bubblewrap filter SHA-256
@@ -202,9 +213,9 @@ digest-pinned base image, and immutable runtime mount remain future work.
 
 ### Per-case gVisor observations (CI)
 
-At `ef02f27`, every case carried `provenance_sha256`
-`ce8ac1c8f9e725e656e530c11446b6bc928b3aa121878fe29c3f3639d875f5cc`, runtime
-`c5a5a7ba…`, and rootfs `c7004df1…`; the 21 cases below are the individual observations.
+At `378e7d6`, every case carried `provenance_sha256`
+`8490ada2b7adb15bad155212fcde4b7c3187ad12ae6b989319b0bfa62052007b`, runtime
+`c5a5a7ba…`, and rootfs `6e1376d8…`; the 21 cases below are the individual observations.
 
 | # | Case | Observed denial/containment |
 |---|---|---|
@@ -219,7 +230,7 @@ At `ef02f27`, every case carried `provenance_sha256`
 | 9 | Host loopback TCP | exit 1; listener saw 0 connections |
 | 10 | Raw socket | exit 2; no success output |
 | 11 | Capabilities/mount/chroot | `CapEff: 0`; mount probe exit 1 (EPERM, no survivor); chroot exit 125, `Operation not permitted` |
-| 12 | CPU exhaustion | `timedOut:true`, `SIGKILL`, 3,007 ms; CPU 3 s, PID 128 |
+| 12 | CPU exhaustion | `timedOut:true`, `SIGKILL`, 3,009 ms; CPU 3 s, PID 128 |
 | 13 | PID exhaustion | 127 children, 128 namespaced processes, 0 survivors |
 | 14 | Cancellation orphan | `cancelled:true`; 0 marked survivors |
 | 15 | Timeout orphan | `timedOut:true`; 0 marked survivors |
@@ -245,7 +256,7 @@ mount.
 | No netstack | The measured configuration uses `--network=none`; external networking is intentionally absent. |
 | OCI rlimits, no host cgroup | The Sentry enforces `RLIMIT_AS`, CPU, NPROC, and NOFILE; there is no aggregate host cgroup for the workload, and the executor still samples workspace usage every 25 ms rather than using a hard quota. |
 | No custom seccomp claim | The gVisor boundary is the Sentry/OCI configuration. The provider does not claim a host seccomp filter; `mount` was observed denied with `EPERM`, and the gVisor OCI seccomp action tested for process-kill was rejected by `runsc` as unsupported. |
-| Runtime/rootfs supply chain | `runsc` is fetched from the pinned release and checked against archive SHA-512, extracted SHA-256, and expected version on every invocation. The rootfs is exported from the in-repo Docker recipe; CI double-exports it and requires the same canonical digest, and the drill requires the manifest. Neither artifact is Sigstore-signed; the base image/apt versions are not pinned, and the manifest excludes ownership/timestamps. |
+| Runtime/rootfs supply chain | `runsc` is fetched from the pinned release and checked against archive SHA-512, extracted SHA-256, and expected version on every invocation. The rootfs is built from a base image pinned by manifest-list digest, the fixed `snapshot.debian.org` timestamp, and exact package versions; CI builds two independent no-cache images and requires the same canonical digest, and the drill requires the manifest. Neither artifact is Sigstore-signed; the pin, base/snapshot inputs, and manifest are unsigned repository trust anchors, the snapshot must remain available, and the manifest excludes ownership/timestamps. |
 | Shared host kernel | gVisor is not a VM. The Sentry and gofer make host syscalls; a Sentry or host-kernel vulnerability remains in scope. |
 | CPU termination | The burner ended by the provider deadline (`SIGKILL`), not a distinct `SIGXCPU`; the OCI CPU rlimit value was separately probed. |
 | Case 1 image detail | The rootfs removes `/etc/shadow`; case 1 proves the controlled rootfs lacks that credential file, not that a hostile operator-supplied rootfs is trustworthy. |
@@ -254,13 +265,15 @@ mount.
 ### Operational cost
 
 Each gVisor CI job performs one release download, archive verification, extraction, binary
-verification, two container exports, and two canonical rootfs hashes; each provider check/run
-rehashes the resolved runtime and all 6,221 rootfs entries. Updating gVisor requires changing
-the release, archive SHA-512, `runsc` SHA-256, and expected version together, then re-running
-the full 21-case drill. Refreshing the Debian base or apt packages requires rebuilding twice
-and updating the recorded image/Dockerfile/rootfs digests. The pin file is a repository trust
-anchor and must be reviewed like code. This is more maintenance than bubblewrap, which needs
-no fetched runtime or rootfs, and is why bubblewrap remains the Linux default.
+verification, two independent no-cache image builds, two container exports, and two canonical
+rootfs hashes; each provider check/run rehashes the resolved runtime and all 6,195 rootfs
+entries. Updating gVisor requires changing the release, archive SHA-512, `runsc` SHA-256, and
+expected version together, then re-running the full 21-case drill. Refreshing the Debian base or
+apt snapshot requires updating the base digest, snapshot timestamp, exact package versions, and
+Dockerfile together, rebuilding twice, and updating the recorded image/Dockerfile/rootfs
+digests. The pin file is a repository trust anchor and must be reviewed like code. This is more
+maintenance than bubblewrap, which needs no fetched runtime or rootfs, and is why bubblewrap
+remains the Linux default.
 
 ## Alternatives considered
 
@@ -271,15 +284,16 @@ no fetched runtime or rootfs, and is why bubblewrap remains the Linux default.
 | Treat gVisor as a host seccomp provider | gVisor is a user-space kernel; borrowing bubblewrap/Docker filter evidence would be fabricated coverage. |
 | Make gVisor the Linux default | Adds a runtime binary, rootfs supply chain, rootless constraints, and compatibility/performance costs; bubblewrap remains the smallest unprivileged default. |
 | Fall back to bubblewrap when gVisor fails | Silently changes the selected boundary; the provider contract requires fail-closed behavior. |
-| Claim Docker rootless or image provenance from this run | The measured daemon was rootful `28.0.4`; rootless Docker and signed/digest-pinned images remain unverified. |
+| Claim Docker rootless or signed image provenance from this run | The measured daemon was rootful `28.0.4`; rootless Docker and signed images remain unverified. |
 
 ## Consequences
 
 - gVisor is a first-class explicit provider with a measured 21-case production path, per-case
   evidence, fail-closed selection, cleanup, and repository-pinned runtime/rootfs provenance.
-- The runtime/rootfs provenance is content attestation, not a signed release. The unsigned pin,
-  unpinned base image/package versions, and host-writer trust remain explicit residuals (F-017,
-  F-018), so gVisor is still not the Linux default.
+- The runtime/rootfs provenance is content attestation, not a signed release. The unsigned pin
+  and manifest, Debian snapshot availability, metadata exclusion, and host-writer trust remain
+  explicit residuals (F-017); F-018 is closed because the base image, apt snapshot, and package
+  versions are pinned and independent image builds agree. gVisor is still not the Linux default.
 - The Docker row now states the measured engine (`28.0.4`) and daemon mode (**rootful**); the
   earlier unstated-daemon residual is closed, while rootless Docker remains open.
 - Bubblewrap remains the Linux default because it is the simplest unprivileged boundary here,

@@ -3,10 +3,10 @@
 Single source of truth for cross-session continuation. Do not create competing progress
 documents; update this one.
 
-Last updated: 2026-11-11 (Freebuff Cloud session, pinned gVisor runtime and reproducible rootfs
-provenance after the measured Docker/gVisor matrix). Latest measured security code head:
-`ef02f27` (repository pin, archive/binary/rootfs verification, deterministic rootfs manifest,
-fail-closed tamper/missing-pin probes, and provenance evidence), following `54344f1`,
+Last updated: 2026-11-11 (Freebuff Cloud session, pinned gVisor build inputs and independent-
+image rootfs reproduction after the measured Docker/gVisor matrix). Latest measured security
+code head: `378e7d6` (pinned base/snapshot/packages, independent no-cache rebuild comparison,
+and path-level mismatch diagnostics), following `ef02f27`, `103b521`, `54344f1`,
 `40438a5`, `29eb496`, `550d0e5`, `27ab654`, and `b067501`; its documentation checkpoint follows. Re-check this head rather than
 older CI lines below. F-009's digest mitigation, F-005's fail-closed regression, the bounded
 canonical collections, and the live bubblewrap controls remain in place from
@@ -17,14 +17,16 @@ canonical collections, and the live bubblewrap controls remain in place from
 - Repository: `lmentry29/AIOS` (public)
 - Branch: `community/open-source-foundation`
 - Pull request: https://github.com/lmentry29/AIOS/pull/1 (open, draft, **not merged**)
-- Measured security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic rootfs manifest, fail-closed probes, and evidence plumbing).
+- Measured security code head: `378e7d6` (`fix(security): normalize gVisor rootfs build state`; pinned base/snapshot/packages, independent no-cache rebuild comparison, and path-level mismatch diagnostics).
+- Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic rootfs manifest, fail-closed probes, and evidence plumbing).
+- Pinned-input code commit: `103b521` (`feat(security): pin gVisor rootfs build inputs`; base digest, Debian snapshot, exact packages, pin guard, independent build, regressions).
 - Prior security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider/OCI bundle/rootfs validation/fail-closed errors/drill/CI and Docker engine metadata).
 - Prior security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; the Docker provider landed in `dbee5c7`; CLI repairs in `75f7371` and `40438a5`).
 - Prior security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
 - Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `ef02f27`; read
+- Documentation checkpoint for this pass: the branch tip after `378e7d6`; read
   `git log --oneline -3` for the exact docs SHA.
 - Historical policy pass: `7103957` with docs commit `0a1ae66`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; all three PR workflows passed and
@@ -59,6 +61,8 @@ canonical collections, and the live bubblewrap controls remain in place from
   - `40438a5` — correct Docker bind mount syntax and pin the exact mount argument
   - `54344f1` — explicit gVisor provider, generated OCI bundle/rootfs validation, fail-closed Sentry evidence, 21-case Docker/gVisor CI matrix, and measured Docker engine/rootless metadata
   - `ef02f27` — repository-pinned gVisor runtime, canonical rootfs manifest/double export, fail-closed tampered/missing-pin probes, provenance evidence, and F-017 mitigation
+  - `103b521` — pinned gVisor base digest, Debian snapshot, exact packages, input guard, independent image build, and drift regressions
+  - `378e7d6` — normalized build caches/logs, path-level reproducibility diff, and independent-image digest agreement
 
 ## Environment notes
 
@@ -79,7 +83,7 @@ canonical collections, and the live bubblewrap controls remain in place from
   The runtime is checked against `tools/security/gvisor-runtime.pin.json`; the local rootfs
   manifest is `/tmp/aios-gvisor-rootfs-clean.local.manifest.json` and its source is intentionally
   empty because it is not the Docker recipe. CI reproduces the runtime from the pinned release
-  and the rootfs from the Docker image export, then double-exports it. Recreate before re-running
+  and the rootfs from two independently built no-cache images. Recreate before re-running
   the gVisor drill rather than treating stale `/tmp` paths as evidence.
 - GitHub Actions passed `ci` (run `42887224979`), `conformance` (run `42887225101`), and
   `schema-check` (run `42887224921`) at merge head `8c950e6`; PR #1 is mergeable/clean. Earlier
@@ -114,7 +118,7 @@ canonical collections, and the live bubblewrap controls remain in place from
   unverified. ADR-0032 records the decision; F-006/F-007/F-016 were updated and F-017 was added.
   Bubblewrap remains the Linux default.
 
-## Completed — pinned runtime and reproducible rootfs (`ef02f27`)
+## Completed — pinned runtime and reproducible rootfs (`378e7d6`)
 
 - `tools/security/gvisor-runtime.pin.json` pins release `20261102.0`, archive SHA-512
   `2e6671bb…`, extracted `runsc` SHA-256 `c5a5a7ba…`, expected version, architecture, and HTTPS
@@ -124,26 +128,29 @@ canonical collections, and the live bubblewrap controls remain in place from
   absolute binary path, and returns provenance; executor and verifier evidence carry the pin,
   release, version, archive digest, binary digest, rootfs digest, and entry count. A failure
   raises `SandboxIsolationUnavailableError`; no fallback.
-- `tools/security/gvisor-provenance.mjs` adds `fetch-runtime`, `verify-archive`,
-  `digest-rootfs`, `verify-rootfs`, and `build-rootfs --verify-reproducible`.
-  `tools/security/gvisor-rootfs.json` records source image, Dockerfile, packages, exclusions, and
-  construction; the rootfs is exported twice and must match.
-- `tools/security/adversarial-drill.mjs` now requires `AIOS_GVISOR_ROOTFS_MANIFEST`, compares the
+- `tools/security/docker-sandbox.Dockerfile` builds from
+  `debian:bookworm-slim@sha256:734a72b3…`, reads the Debian snapshot at `20261110T000000Z`, and
+  installs exact `coreutils`, `perl`, and `util-linux` versions. `tools/security/gvisor-rootfs.json`
+  records those inputs and the pin SHA-256 `9fccac3e…`. `gvisor-provenance.mjs` adds
+  `verify-rootfs-pin` and `build-rootfs --compare-image`; the latter rejects same-image
+  comparison and differing digests.
+- `tools/security/adversarial-drill.mjs` requires `AIOS_GVISOR_ROOTFS_MANIFEST`, compares the
   provider's rootfs digest/entries to it, records the manifest, and puts provenance digests on
-  every case. Security workflow steps 14–17 fetch/verify the runtime, prove tampered/missing pins
-  fail closed, build/prove the rootfs, and run the real drill. Bubblewrap/Docker steps and all
-  existing assertions remain untouched.
-- CI at `ef02f27`: Security run `42950936794`, live job `130294805697`; install measured
-  `runsc release-20261102.0`, binary `c5a5a7ba…`, archive `2e6671bb…`, pin `20c017d9…`; rootfs
-  `c7004df1…` (6,221 entries), image ID `3ee869b8…`, Dockerfile `b3bff352…`, manifest
-  `b8115b66…`, double export identical; drill **21/21** with per-case provenance `ce8ac1c8…`.
-  Fail-closed observed errors are in the validation ledger. Local **21/21** used rootfs
-  `2e7a3eba…` (2,693 entries) and the same pin/runtime; full gate **46/46**, host **165 passed /
-  17 skipped**, bubblewrap **21/21**.
-- Residuals: pin/manifest not signed; upstream not Sigstore-verified; base image tag and apt
-  versions not pinned; canonical manifest excludes ownership/timestamps; a host writer can
-  replace runtime/rootfs after hashing. F-017 is mitigated for accidental substitution; F-018
-  records the remaining source-reproducibility gap. Bubblewrap remains the Linux default.
+  every case. Security workflow steps 12 and 15–19 validate the pin, rebuild the image
+  independently, prove tampered/missing pins fail closed, build the rootfs, and run the drill.
+  Bubblewrap/Docker steps and all existing assertions remain untouched.
+- CI at `378e7d6`: Security run `42956393498`, live job `130312417881`; pin guard `9fccac3e…`;
+  install measured `runsc release-20261102.0`, binary `c5a5a7ba…`, archive `2e6671bb…`, pin
+  `20c017d9…`; independent images `89eacf2a…` and `a8abdab0…` both produced rootfs `6e1376d8…`
+  (6,195 entries), Dockerfile `5acad18a…`, manifest `845c9853…`; drill **21/21** with per-case
+  provenance `8490ada2…`. Fail-closed observed errors are in the validation ledger. Local
+  **21/21** used rootfs `2e7a3eba…` (2,693 entries) and the same pin/runtime; full gate **46/46**,
+  host **168 passed / 17 skipped**, bubblewrap **21/21**.
+- Residuals: pin/base/snapshot/manifest are unsigned; upstream is not Sigstore-verified; the
+  Debian snapshot must remain available; canonical manifest excludes ownership/timestamps; a host
+  writer can replace runtime/rootfs after hashing. F-017 is mitigated for accidental
+  substitution; F-018 is fixed for deterministic build inputs and independent-image
+  reproduction. Bubblewrap remains the Linux default.
 
 ## Completed — Task execution lifecycle (`d414cbe`)
 
@@ -628,9 +635,9 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 1. **Remaining sandbox verification.** Run rootless Docker, Seatbelt, and Apple Containerization
    on capable hosts, including cancellation/container-kill behavior, mount permissions, network
    denial, PID/memory limits, and hostile command probes. Re-run the Docker and gVisor CI
-   matrices when the runner, image, runtime, rootfs, or engine changes. For gVisor, also
-   digest-pin the Debian base/apt packages, rebuild on a later date, and sign the runtime pin and
-   rootfs manifest (F-017/F-018).
+   matrices when the runner, image, runtime, rootfs, or engine changes. For gVisor, rebuild from
+   the fixed snapshot on a later date, sign the runtime pin and rootfs manifest, and retain
+   snapshot provenance (F-017; F-018 is fixed).
 2. **Verifier provenance.** Add key generation/distribution/rotation and kernel-side
    signature verification, or explicitly retain the current host-configured trust model.
 3. **Execution re-drive quality.** Resume/retry are implemented and authorized per ADR-0022,
