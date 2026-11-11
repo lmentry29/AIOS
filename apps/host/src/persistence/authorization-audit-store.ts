@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { AuthorizationAuditStore, AuthorizationDecisionAudit } from '@aios/founder';
+import { isPolicyProvenance, type AuthorizationAuditStore, type AuthorizationDecisionAudit } from '@aios/founder';
 import { AppendOnlyJournal, JournalError } from './journal.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -15,6 +15,7 @@ const AUDIT_FIELDS = new Set([
   'matched_rule_index',
   'matched_rule_effect',
   'timestamp',
+  'provenance',
 ]);
 const ACTIONS = new Set([
   'intake',
@@ -73,6 +74,8 @@ function parseAuditRecord(value: unknown): AuthorizationDecisionAudit {
   }
   const matchedRuleIndex = value.matched_rule_index;
   const matchedRuleEffect = value.matched_rule_effect;
+  const isProvenanceReason = typeof value.reason === 'string'
+    && value.reason.startsWith('policy_provenance_');
   if (!isUuid(value.request_id)
     || !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id))
     || !(value.action === null || (typeof value.action === 'string' && ACTIONS.has(value.action)))
@@ -81,12 +84,16 @@ function parseAuditRecord(value: unknown): AuthorizationDecisionAudit {
     || !(value.policy_version === null
       || (Number.isSafeInteger(value.policy_version) && (value.policy_version as number) >= 1))
     || (value.decision !== 'allow' && value.decision !== 'deny')
-    || typeof value.reason !== 'string' || !REASONS.has(value.reason)
+    || typeof value.reason !== 'string' || !(REASONS.has(value.reason) || isProvenanceReason)
     || typeof value.timestamp !== 'string' || !Number.isFinite(Date.parse(value.timestamp))
     || !(matchedRuleIndex === undefined || matchedRuleIndex === null
       || (Number.isSafeInteger(matchedRuleIndex) && (matchedRuleIndex as number) >= 0))
     || !(matchedRuleEffect === undefined || matchedRuleEffect === null
-      || matchedRuleEffect === 'allow' || matchedRuleEffect === 'deny')) {
+      || matchedRuleEffect === 'allow' || matchedRuleEffect === 'deny')
+    || (value.provenance !== undefined
+      && (!isPolicyProvenance(value.provenance)
+        || value.provenance.subject !== 'authorization_decision'
+        || value.provenance.subject_id !== value.request_id))) {
     throw new JournalError('Authorization audit record is invalid.');
   }
 
@@ -106,7 +113,7 @@ function parseAuditRecord(value: unknown): AuthorizationDecisionAudit {
     if (matchedRuleEffect !== 'deny') {
       throw new JournalError('Authorization audit explicit deny must record its matching deny rule.');
     }
-  } else if (DEFAULT_DENY_REASONS.has(value.reason)) {
+  } else if (DEFAULT_DENY_REASONS.has(value.reason) || isProvenanceReason) {
     if (hasRuleEffect) {
       throw new JournalError('Authorization audit default deny cannot reference a matching grant.');
     }
@@ -128,6 +135,7 @@ function parseAuditRecord(value: unknown): AuthorizationDecisionAudit {
       ? matchedRuleEffect
       : null,
     timestamp: value.timestamp,
+    ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
   };
 }
 

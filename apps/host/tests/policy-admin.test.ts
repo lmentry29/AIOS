@@ -19,6 +19,7 @@ import {
   VAULT_RESOURCE_ID,
   sessionExpiresAt,
 } from './fixtures.js';
+import { createPolicyAuthority } from './policy-provenance-fixture.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -27,10 +28,12 @@ function setup(): { directory: string; configPath: string; policyPath: string; r
   const configPath = join(directory, 'host.json');
   const policyPath = join(directory, 'policy-state.json');
   const resourceId = randomUUID();
+  const policyAuthority = createPolicyAuthority(directory);
   writeFileSync(configPath, JSON.stringify({
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 4780 },
     policy_file: policyPath,
+    policy_provenance: policyAuthority.config,
     operational_store: { directory: join(directory, 'operational') },
     decision_collection_id: DECISION_COLLECTION_ID,
     resources: { vault: VAULT_RESOURCE_ID, gmail: GMAIL_RESOURCE_ID, notion: NOTION_RESOURCE_ID },

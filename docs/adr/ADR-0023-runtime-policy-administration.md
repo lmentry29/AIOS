@@ -138,8 +138,13 @@ publish decision reads back in the durable authorization journal in order.
 
 ### 6. Signature boundary
 
-The current trust model has **no detached policy signature**. Authority comes from the
-verified session plus the exact `administer_policy` grant; the request body is not signed.
+> **Amended by ADR-0034 (2026-11-11).** The host now requires detached Ed25519 provenance on
+> every published policy bundle and every authorization decision, verified against the pinned
+> trust root before rule evaluation. The text below records the original ADR-0023 boundary and
+> is superseded on this point; key custody and external audit custody remain open.
+
+The original trust model had **no detached policy signature**. Authority came from the
+verified session plus the exact `administer_policy` grant; the request body was not signed.
 Unknown policy fields, including a caller-supplied `signature` field, are rejected by the
 strict schema rather than silently carried. This ADR does not claim cryptographic policy
 provenance. Adding detached signatures requires key generation, distribution, rotation, and
@@ -171,8 +176,8 @@ offline verification, which is a separate security decision and deployment contr
 - The offline CLI still works for initial bootstrap and for operators who deliberately stop
   the host. Runtime administration does not replace it.
 - Runtime retirement of an attached version is added by ADR-0024; this ADR's publication
-  contract is unchanged. There is still no detached policy signature, key rotation, or
-  external audit custody. Those remain production blockers.
+  contract is unchanged apart from ADR-0034's detached provenance requirement. Production
+  key custody and external audit custody remain blockers.
 - The registry remains single-process and local-disk only. Multi-host administration is not
   supported.
 

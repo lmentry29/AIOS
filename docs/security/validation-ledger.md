@@ -1348,3 +1348,29 @@ provisioned and are not claimed.
 - Remaining: production trust-root/key provisioning and custody, base/snapshot signing,
   OIDC/Fulcio/Rekor identity, external custody/trusted timestamps, SLSA/in-toto conformance and
   macOS/rootless-Docker measurement. No standard level is claimed.
+
+## Policy bundle and decision provenance (2026-11-11)
+
+- Added required host `policy_provenance` configuration and `PolicyProvenanceAuthority`
+  (`apps/host/src/policy-provenance.ts`). Policy bundles and authorization decisions use a
+  detached Ed25519 envelope over canonical JSON with an explicit schema/subject, subject id,
+  key id, signing time, payload SHA-256, and canonical 64-byte signature.
+- `AuthorizationService` verifies bundle provenance before rule matching. Provenance failure
+  still writes a signed deny audit record, then raises `PolicyProvenanceDeniedError`; the host
+  maps it to 409 `orchestration_rejected` with a `policy_provenance_*` reason. Every host
+  decision is signed before append, and `GET /v1/audit/authorization` verifies every record.
+- `policyArtifactSha256` excludes provenance, preserving the existing lifecycle content
+  digest and audit-chain compatibility. Registry state remains schema v2 and unsigned legacy
+  records remain readable only for migration; the host route refuses them as authoritative.
+- Adversarial tests actually run: payload mutation, signature reuse across bundle ids, schema
+  confusion, key-id substitution, valid signature from the wrong trust root, revoked and
+  expired keys, overlapping rotation with old-decision verification, unsigned policy at the
+  kernel intake boundary, and decision tampering. Each asserts the exact intended reason.
+- Numbers: focused policy provenance **9/9**; host suite **276 passed / 17 skipped** across 28
+  passing files; full forced gate **46/46 tasks, 0 cached**, exit 0; secret scan and
+  `git diff --check` clean. The repository-wide formatter baseline remains non-green and was
+  not changed by this pass.
+- Still open: production trust-root/key provisioning and custody, an owner-operated
+  production rotation/revocation ceremony, external audit custody, trusted timestamps,
+  rollback/monotonic-checkpoint protection, remote attestation, and recovery from private-key
+  compromise. This is local tamper evidence, not a remote trust service.

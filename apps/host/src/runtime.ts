@@ -18,6 +18,7 @@ import {
 } from '@aios/orchestration';
 import { SharedAuthorizationBoundary } from './authorization.js';
 import type { HostConfig } from './config.js';
+import { PolicyProvenanceAuthority } from './policy-provenance.js';
 import { HostUnavailableError } from './errors.js';
 import { TrustedIdentityService } from './identity.js';
 import { ManagedExecutionPort, type CancellableExecutionPort } from './execution/managed-execution.js';
@@ -86,6 +87,8 @@ export interface HostRuntimeOptions {
 export interface HostRuntime {
   config: HostConfig;
   policies: FilePolicyRegistry;
+  /** Policy bundle and decision signing/verification against the pinned trust root. */
+  policyProvenance: PolicyProvenanceAuthority;
   identity: TrustedIdentityService;
   /** The single evaluator shared by every surface. */
   authorization: AuthorizationService;
@@ -203,6 +206,11 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     throw new Error('Evidence readers are configured but no Obsidian++ password was supplied.');
   }
 
+  const policyProvenance = PolicyProvenanceAuthority.fromFiles({
+    trust_root_file: config.policy_provenance.trust_root_file,
+    private_key_file: config.policy_provenance.signing_key_file,
+    key_id: config.policy_provenance.key_id,
+  });
   const policies = new FilePolicyRegistry({ filePath: config.policy_file });
   let operational: DurableOperationalStore | undefined;
   let learningStore: DurableLearningStore | undefined;
@@ -216,6 +224,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       policies,
       (resourceId) => policies.resolve(resourceId),
       auditStore,
+      policyProvenance,
     );
     const boundary = new SharedAuthorizationBoundary(authorization);
 
@@ -314,6 +323,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     return {
       config,
       policies,
+      policyProvenance,
       identity,
       authorization,
       authorizationAudit: auditStore,

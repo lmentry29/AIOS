@@ -9,6 +9,7 @@ import { loadHostConfig } from '../src/config.js';
 import { runOperatorSessionCommand, type OperatorSessionCommand } from '../src/operator-session.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
 import { createHostServer, type HostHttpServer } from '../src/server.js';
+import { createPolicyAuthority } from './policy-provenance-fixture.js';
 import {
   AGENT_ID,
   AGENT_TOKEN,
@@ -52,10 +53,12 @@ async function startHost(): Promise<Harness> {
   const configPath = join(directory, 'host.json');
   const policyPath = join(directory, 'policy-state.json');
   const operationalDirectory = join(directory, 'operational');
+  const policyAuthority = createPolicyAuthority(directory);
   writeFileSync(configPath, JSON.stringify({
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
     policy_file: policyPath,
+    policy_provenance: policyAuthority.config,
     operational_store: { directory: operationalDirectory },
     dispatch_lease_ms: 5_000,
     decision_collection_id: DECISION_COLLECTION_ID,
@@ -81,9 +84,10 @@ async function startHost(): Promise<Harness> {
   const registry = new FilePolicyRegistry({ filePath: policyPath });
   try {
     const administration = new PolicyAdministrationService(FOUNDER, registry, registry);
-    await administration.publish(policy, FOUNDER);
+    const signed = await policyAuthority.authority.signPolicy(policy);
+    await administration.publish(signed, FOUNDER);
     for (const resourceId of new Set(policy.rules.flatMap((rule) => [...rule.resource_ids]))) {
-      await administration.attach(resourceId, policy.policy_id, FOUNDER);
+      await administration.attach(resourceId, signed.policy_id, FOUNDER);
     }
   } finally {
     registry.close();

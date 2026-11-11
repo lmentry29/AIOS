@@ -13,6 +13,7 @@ import {
   MAX_POLICY_REVOCATION_TARGETS,
   PolicyRevocationError,
   StaticAccessPolicyStore,
+  isPolicyProvenance,
   policyArtifactSha256,
 } from './authorization.js';
 
@@ -130,7 +131,11 @@ function validateDecisionRecord(value: AuthorizationDecisionAudit): void {
     || !(value.policy_version === null || (Number.isSafeInteger(value.policy_version) && value.policy_version >= 1))
     || (value.decision !== 'allow' && value.decision !== 'deny')
     || typeof value.reason !== 'string' || value.reason.length > 256
-    || typeof value.timestamp !== 'string' || !Number.isFinite(Date.parse(value.timestamp))) {
+    || typeof value.timestamp !== 'string' || !Number.isFinite(Date.parse(value.timestamp))
+    || (value.provenance !== undefined
+      && (!isPolicyProvenance(value.provenance)
+        || value.provenance.subject !== 'authorization_decision'
+        || value.provenance.subject_id !== value.request_id))) {
     throw new FilePolicyRegistryError('Authorization audit record is invalid.');
   }
 }

@@ -30,11 +30,63 @@ export interface AccessPolicy {
   policy_id: string;
   version: number;
   rules: readonly AccessRule[];
+  /**
+   * Detached Ed25519 provenance. The host requires this before policy content can decide;
+   * the in-memory test store accepts unsigned policies so it can exercise the evaluator
+   * without pretending an unsigned policy is production provenance.
+   */
+  provenance?: PolicyProvenance;
+}
+
+export type PolicyProvenanceSubject = 'policy_bundle' | 'authorization_decision';
+
+/**
+ * Detached provenance shared by policy bundles and authorization decisions.
+ *
+ * The signed payload is built from the subject record itself plus the schema version,
+ * subject kind/id, key id and signed-at time. `payload_sha256` is the canonical digest of
+ * that payload and `signature` is the canonical base64 Ed25519 signature over the same
+ * canonical bytes. The fixed schema string prevents a signature made for one subject or
+ * schema from being reinterpreted by another consumer.
+ */
+export interface PolicyProvenance {
+  schema_version: 1;
+  subject: PolicyProvenanceSubject;
+  subject_id: string;
+  key_id: string;
+  signed_at: string;
+  payload_sha256: string;
+  signature: string;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+const ED25519_SIGNATURE = /^[A-Za-z0-9+/]{86}==$/;
+
+export function isPolicyProvenance(value: unknown): value is PolicyProvenance {
+  return isRecord(value)
+    && value.schema_version === 1
+    && (value.subject === 'policy_bundle' || value.subject === 'authorization_decision')
+    && typeof value.subject_id === 'string' && UUID_PATTERN.test(value.subject_id)
+    && typeof value.key_id === 'string' && SHA256_HEX.test(value.key_id)
+    && typeof value.signed_at === 'string' && ISO_TIMESTAMP.test(value.signed_at)
+    && Number.isFinite(Date.parse(value.signed_at))
+    && typeof value.payload_sha256 === 'string' && SHA256_HEX.test(value.payload_sha256)
+    && typeof value.signature === 'string' && ED25519_SIGNATURE.test(value.signature);
+}
+
+/** Policy content with provenance removed; this is what a signature covers. */
+export function policyContent(policy: AccessPolicy): Omit<AccessPolicy, 'provenance'> {
+  const { provenance: _provenance, ...content } = policy;
+  return content;
 }
 
 /**
  * Content digest for a policy artifact. This is tamper evidence, not a signature:
  * it binds an audit event to exact policy content but cannot establish who authored it.
+ * Provenance is excluded so signing a policy cannot change its content identity, and so
+ * pre-provenance audit chains keep verifying.
  */
 export function policyArtifactSha256(policy: AccessPolicy): string {
   const canonicalJson = (value: unknown): string => {
@@ -47,7 +99,7 @@ export function policyArtifactSha256(policy: AccessPolicy): string {
     }
     return JSON.stringify(value) ?? 'null';
   };
-  return createHash('sha256').update(canonicalJson(policy)).digest('hex');
+  return createHash('sha256').update(canonicalJson(policyContent(policy))).digest('hex');
 }
 
 export interface AccessRequest {
@@ -73,6 +125,21 @@ export interface AuthorizationDecisionAudit {
   /** Effect of the decisive rule; null when no rule decided the outcome. */
   matched_rule_effect?: 'allow' | 'deny' | null;
   timestamp: string;
+  /** Required by the host; optional here so signed and legacy audit stores can be read. */
+  provenance?: PolicyProvenance;
+}
+
+export interface PolicyProvenanceVerification {
+  valid: boolean;
+  /** Stable machine-readable suffix; the evaluator prefixes `policy_provenance_`. */
+  reason?: string;
+}
+
+/** Verification/signing port supplied by the host that owns the pinned trust root. */
+export interface PolicyProvenancePort {
+  verifyPolicy(policy: AccessPolicy): Promise<PolicyProvenanceVerification>;
+  signDecision(record: AuthorizationDecisionAudit): Promise<AuthorizationDecisionAudit>;
+  verifyDecision(record: AuthorizationDecisionAudit): Promise<PolicyProvenanceVerification>;
 }
 
 export interface AccessPolicyStore {
@@ -117,6 +184,13 @@ export class PolicyRevocationError extends Error {
   constructor(readonly code: PolicyRevocationErrorCode, message: string) {
     super(message);
     this.name = 'PolicyRevocationError';
+  }
+}
+
+export class PolicyProvenanceDeniedError extends Error {
+  constructor(readonly reasonCode: string) {
+    super(`Authorization rejected because policy provenance failed: ${reasonCode}.`);
+    this.name = 'PolicyProvenanceDeniedError';
   }
 }
 
@@ -224,6 +298,12 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
         throw new Error('Access policy contains an unsupported field.');
       }
       if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
+      if (policy.provenance !== undefined
+        && (!isPolicyProvenance(policy.provenance)
+          || policy.provenance.subject !== 'policy_bundle'
+          || policy.provenance.subject_id !== policy.policy_id)) {
+        throw new Error(`Access policy "${policy.policy_id}" has invalid or mismatched provenance.`);
+      }
       if (!Number.isSafeInteger(policy.version) || policy.version < 1) {
         throw new Error(`Access policy "${policy.policy_id}" requires a positive integer version.`);
       }
@@ -264,6 +344,9 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
           actions: Object.freeze([...rule.actions]),
           resource_ids: Object.freeze([...rule.resource_ids]),
         }))),
+        ...(policy.provenance === undefined
+          ? {}
+          : { provenance: Object.freeze({ ...policy.provenance }) }),
       }));
     }
   }
@@ -323,6 +406,9 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
         actions: Object.freeze([...rule.actions]),
         resource_ids: Object.freeze([...rule.resource_ids]),
       }))),
+      ...(policy.provenance === undefined
+        ? {}
+        : { provenance: Object.freeze({ ...policy.provenance }) }),
     }));
     this.events.push({
       event_id: randomUUID(),
@@ -438,14 +524,30 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 }
 
+export interface AuthorizationEvaluation {
+  allowed: boolean;
+  /** Fixed reason code; provenance failures carry a distinguishable prefix. */
+  reason: string;
+}
+
 export class AuthorizationService {
   constructor(
     private readonly policies: AccessPolicyStore,
     private readonly resolvePolicyId: AccessPolicyResolver,
     private readonly audit: AuthorizationAuditStore,
+    private readonly provenance?: PolicyProvenancePort,
   ) {}
 
   async authorize(request: AccessRequest): Promise<boolean> {
+    return (await this.authorizeDecision(request)).allowed;
+  }
+
+  /**
+   * Evaluates one request and returns the fixed reason alongside the decision. The kernel
+   * uses this only to surface a distinguishable provenance failure; normal allow/deny
+   * reasons remain internal audit codes.
+   */
+  async authorizeDecision(request: AccessRequest): Promise<AuthorizationEvaluation> {
     const requestId = request && typeof request.request_id === 'string' && isUuid(request.request_id)
       ? request.request_id
       : randomUUID();
@@ -476,28 +578,40 @@ export class AuthorizationService {
             || !Array.isArray(policy.rules) || !Number.isSafeInteger(policy.version) || policy.version < 1) {
             reason = 'policy_missing_or_invalid';
           } else {
-            policyVersion = policy.version;
-            const rules = policy.rules as readonly AccessRule[];
-            const matching = rules
-              .map((rule, index) => ({ rule, index }))
-              .filter(({ rule }) =>
-                rule.subject_ids.includes(actorId)
-                && rule.actions.includes(action)
-                && rule.resource_ids.includes(resourceId),
-              );
-            const denying = matching.find(({ rule }) => rule.effect === 'deny');
-            const allowing = matching.find(({ rule }) => rule.effect === 'allow');
-            if (denying) {
-              reason = 'explicit_deny';
-              matchedRuleIndex = denying.index;
-              matchedRuleEffect = 'deny';
-            } else if (allowing) {
-              decision = 'allow';
-              reason = 'matching_allow';
-              matchedRuleIndex = allowing.index;
-              matchedRuleEffect = 'allow';
+            const verification = this.provenance
+              ? await this.provenance.verifyPolicy(policy).catch(() => ({
+                  valid: false,
+                  reason: 'verification_error',
+                }))
+              : { valid: true };
+            if (!verification.valid) {
+              // No rule matching happens for content that is not attributable to the
+              // pinned trust root. This is deliberately a deny, not an evaluation error.
+              reason = `policy_provenance_${verification.reason ?? 'invalid'}`;
             } else {
-              reason = 'no_matching_allow';
+              policyVersion = policy.version;
+              const rules = policy.rules as readonly AccessRule[];
+              const matching = rules
+                .map((rule, index) => ({ rule, index }))
+                .filter(({ rule }) =>
+                  rule.subject_ids.includes(actorId)
+                  && rule.actions.includes(action)
+                  && rule.resource_ids.includes(resourceId),
+                );
+              const denying = matching.find(({ rule }) => rule.effect === 'deny');
+              const allowing = matching.find(({ rule }) => rule.effect === 'allow');
+              if (denying) {
+                reason = 'explicit_deny';
+                matchedRuleIndex = denying.index;
+                matchedRuleEffect = 'deny';
+              } else if (allowing) {
+                decision = 'allow';
+                reason = 'matching_allow';
+                matchedRuleIndex = allowing.index;
+                matchedRuleEffect = 'allow';
+              } else {
+                reason = 'no_matching_allow';
+              }
             }
           }
         }
@@ -521,17 +635,29 @@ export class AuthorizationService {
       timestamp: new Date().toISOString(),
     };
 
+    const provenanceDenied = reason.startsWith('policy_provenance_');
+    let signedRecord = auditRecord;
+    if (this.provenance) {
+      try {
+        signedRecord = await this.provenance.signDecision(auditRecord);
+      } catch {
+        // An unsigned decision must never be observed or persisted as authoritative.
+        return { allowed: false, reason: 'policy_provenance_decision_signing_failed' };
+      }
+    }
+
     try {
-      await this.audit.append(auditRecord);
+      await this.audit.append(signedRecord);
     } catch {
       // An authorization decision without its mandatory audit record is not valid.
-      return false;
+      return { allowed: false, reason };
     }
-    return decision === 'allow';
+    if (provenanceDenied) throw new PolicyProvenanceDeniedError(reason);
+    return { allowed: decision === 'allow', reason };
   }
 }
 
-const POLICY_FIELDS = new Set(['policy_id', 'version', 'rules']);
+const POLICY_FIELDS = new Set(['policy_id', 'version', 'rules', 'provenance']);
 const RULE_FIELDS = new Set(['effect', 'subject_ids', 'actions', 'resource_ids']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

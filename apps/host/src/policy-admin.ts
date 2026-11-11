@@ -8,6 +8,7 @@ import {
 } from '@aios/founder';
 import { loadHostConfig } from './config.js';
 import { HostConfigError, HostHttpError } from './errors.js';
+import { PolicyProvenanceAuthority } from './policy-provenance.js';
 
 const MAX_POLICY_FILE_BYTES = 256 * 1024;
 const MAX_ATTACH_TARGETS = 64;
@@ -220,6 +221,12 @@ export async function provisionPolicies(options: {
 }): Promise<PolicyProvisioningResult> {
   const config = loadHostConfig(options.configPath);
   const document = readPolicyProvisioningDocument(options.provisioningPath);
+  const authority = PolicyProvenanceAuthority.fromFiles({
+    trust_root_file: config.policy_provenance.trust_root_file,
+    private_key_file: config.policy_provenance.signing_key_file,
+    key_id: config.policy_provenance.key_id,
+  });
+  const signed = await authority.signPolicy(document.policy);
   const registry = new FilePolicyRegistry({ filePath: config.policy_file });
   try {
     const administration = new PolicyAdministrationService(
@@ -227,11 +234,11 @@ export async function provisionPolicies(options: {
       registry,
       registry,
     );
-    await administration.publish(document.policy, config.bootstrap_principal_id);
+    await administration.publish(signed, config.bootstrap_principal_id);
     for (const resourceId of document.attach_to) {
-      await administration.attach(resourceId, document.policy.policy_id, config.bootstrap_principal_id);
+      await administration.attach(resourceId, signed.policy_id, config.bootstrap_principal_id);
     }
-    return { policy_id: document.policy.policy_id, attached: [...document.attach_to] };
+    return { policy_id: signed.policy_id, attached: [...document.attach_to] };
   } finally {
     registry.close();
   }

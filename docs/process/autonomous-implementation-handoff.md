@@ -675,11 +675,14 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 10. **Operations.** Metrics/tracing/alerting, journal compaction and migrations, automated
     backup/restore drill, threat model, broader incident response (a session-compromise
     runbook now exists), deployment docs, SLOs.
-11. **Policy administration assurance.** Runtime publication and retirement have no detached
-    policy signature, key rotation, external audit custody, or production recovery/rotation
-    procedure. Current authority is the authenticated session plus the exact grant; do not
-    describe it as cryptographic policy provenance. Registry state is v2 and downgrade is
-    unsupported.
+11. **Policy administration assurance.** Runtime publication and retirement now have
+    detached Ed25519 bundle signatures and signed authorization decisions pinned to the same
+    external trust root (ADR-0034), with verification, overlapping rotation, revocation and
+    old-decision verification implemented and tested. Production key custody, an
+    owner-operated production rotation/revocation ceremony, external audit custody, and
+    rollback/monotonic checkpoint protection remain open. Current authority is the
+    authenticated session, the exact grant, **and** the verified policy signature. Registry
+    state is v2 and downgrade is unsupported.
 
 ## Architectural decisions made this session
 
@@ -781,9 +784,12 @@ succeeded; PR #1 reported `mergeable: true`, `mergeable_state: clean`.
 - A replacement and its publish decision survive host close/reopen; the replacement decides
   later protected reads and the audit prefix reads back in order. Serialized policy and
   audit files contain no bearer token or `Bearer` text.
-- Limits: no detached policy signature, key rotation, external audit custody, or policy
-  rollback by reattaching an older version. Rollback is a new higher version with the restored
-  rules. Runtime retirement is added under `4422229`. The registry remains single-process.
+- Historical limits at this checkpoint: no detached policy signature, key rotation,
+  external audit custody, or policy rollback by reattaching an older version. ADR-0034 later
+  adds local detached bundle/decision signatures and overlapping rotation verification;
+  external custody and rollback protection remain open. Rollback is a new higher version with
+  the restored rules. Runtime retirement is added under `4422229`. The registry remains
+  single-process.
 
 ## Completed — authorized runtime policy retirement (`4422229`)
 
@@ -906,10 +912,7 @@ rejects more than 64 entries before inspecting values; the generated contract ca
 issue in about 100 ms. The host allowlist and 256 KiB default request-body cap remain defense
 in depth.
 
-Next action: the adversarial drill is recorded below; F-013 remains fixed at `b067501`. Continue with the concrete work below; do not claim
-signed policy provenance, macOS isolation, Docker/gVisor execution, or aggregate cgroup
-enforcement until their recorded blockers are cleared. Re-run the full gate and live suite on
-the pushed documentation checkpoint before relying on its CI.
+Next action: the adversarial drill is recorded below; F-013 remains fixed at `b067501`. Continue with the concrete work below. Local signed policy provenance is now implemented under ADR-0034; do not claim production key custody, remote attestation, macOS isolation, or aggregate cgroup enforcement until their recorded blockers are cleared. Re-run the full gate and live suite on the pushed documentation checkpoint before relying on its CI.
 
 ## Completed — adversarial sandbox and verifier drill (`29eb496`)
 

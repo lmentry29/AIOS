@@ -40,6 +40,16 @@ export interface HostConfig {
   /** Absolute path to the durable policy/audit state file. */
   policy_file: string;
   /**
+   * Required detached-provenance authority for policy bundles and decisions (ADR-0034).
+   * The same strict Ed25519 trust root used by artifact and verifier provenance pins the
+   * policy signer; the owner-only private key is loaded once at startup.
+   */
+  policy_provenance: {
+    trust_root_file: string;
+    signing_key_file: string;
+    key_id: string;
+  };
+  /**
    * Owner-only directory for the durable operational journal (Tasks, Workflows,
    * Artifacts, dispatch runs). Never the Obsidian vault: ADR-0014 keeps Founder
    * Intelligence in the vault and ADR-0015 keeps operational state separate.
@@ -138,6 +148,7 @@ const TOP_LEVEL_KEYS = new Set([
   'schema_version',
   'bind',
   'policy_file',
+  'policy_provenance',
   'operational_store',
   'dispatch_lease_ms',
   'decision_collection_id',
@@ -355,6 +366,22 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
   };
 }
 
+function parsePolicyProvenance(raw: unknown): HostConfig['policy_provenance'] {
+  if (!isRecord(raw)) fail('policy_provenance', 'must be an object');
+  assertKnownKeys(raw, new Set(['trust_root_file', 'signing_key_file', 'key_id']), 'policy_provenance');
+  const trustRootFile = requireString(raw.trust_root_file, 'policy_provenance.trust_root_file', 4096);
+  if (!isAbsolute(trustRootFile)) fail('policy_provenance.trust_root_file', 'must be an absolute path');
+  const signingKeyFile = requireString(raw.signing_key_file, 'policy_provenance.signing_key_file', 4096);
+  if (!isAbsolute(signingKeyFile)) fail('policy_provenance.signing_key_file', 'must be an absolute path');
+  const keyId = requireString(raw.key_id, 'policy_provenance.key_id', 64);
+  if (!SHA256_HEX.test(keyId)) fail('policy_provenance.key_id', 'must be a lowercase hex SHA-256 key id');
+  return {
+    trust_root_file: resolve(trustRootFile),
+    signing_key_file: resolve(signingKeyFile),
+    key_id: keyId,
+  };
+}
+
 function parseObsidian(raw: unknown): HostConfig['obsidian'] {
   if (raw === undefined) return undefined;
   if (!isRecord(raw)) fail('obsidian', 'must be an object');
@@ -431,6 +458,7 @@ export function parseHostConfig(raw: unknown, now: number = Date.now()): HostCon
 
   const policyFile = requireString(raw.policy_file, 'policy_file', 4096);
   if (!isAbsolute(policyFile)) fail('policy_file', 'must be an absolute path');
+  const policyProvenance = parsePolicyProvenance(raw.policy_provenance);
 
   if (!isRecord(raw.operational_store)) fail('operational_store', 'must be an object');
   assertKnownKeys(raw.operational_store, new Set(['directory']), 'operational_store');
@@ -493,6 +521,7 @@ export function parseHostConfig(raw: unknown, now: number = Date.now()): HostCon
     schema_version: 1,
     bind,
     policy_file: resolve(policyFile),
+    policy_provenance: policyProvenance,
     operational_store: { directory: resolve(operationalDirectory) },
     dispatch_lease_ms: dispatchLeaseMs,
     decision_collection_id: decisionCollectionId,

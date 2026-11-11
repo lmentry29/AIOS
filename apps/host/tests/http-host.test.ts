@@ -36,6 +36,7 @@ import {
   sessionExpiresAt,
 } from './fixtures.js';
 import { StubSandbox, makeExecutionConfig } from './sandbox-fixture.js';
+import { createPolicyAuthority, type PolicyAuthorityFixture } from './policy-provenance-fixture.js';
 
 interface Harness {
   baseUrl: string;
@@ -44,6 +45,7 @@ interface Harness {
   server: HostHttpServer;
   policyPath: string;
   configPath: string;
+  policyAuthority: PolicyAuthorityFixture;
   sandbox?: StubSandbox;
 }
 
@@ -84,14 +86,19 @@ const verification: TaskVerificationPort = {
   }),
 };
 
-async function attachPolicy(policyPath: string, policy: AccessPolicy): Promise<void> {
+async function attachPolicy(
+  policyPath: string,
+  policy: AccessPolicy,
+  policyAuthority: PolicyAuthorityFixture,
+): Promise<void> {
   const registry = new FilePolicyRegistry({ filePath: policyPath });
   try {
     const administration = new PolicyAdministrationService(FOUNDER, registry, registry);
-    await administration.publish(policy, FOUNDER);
-    const resources = new Set(policy.rules.flatMap((rule) => [...rule.resource_ids]));
+    const signed = await policyAuthority.authority.signPolicy(policy);
+    await administration.publish(signed, FOUNDER);
+    const resources = new Set(signed.rules.flatMap((rule) => [...rule.resource_ids]));
     for (const resourceId of resources) {
-      await administration.attach(resourceId, policy.policy_id, FOUNDER);
+      await administration.attach(resourceId, signed.policy_id, FOUNDER);
     }
   } finally {
     registry.close();
@@ -112,6 +119,7 @@ async function startHost(options: {
   const directory = options.directory ?? mkdtempSync(join(tmpdir(), 'aios-host-http-'));
   const policyPath = join(directory, 'policy-state.json');
   const configPath = join(directory, 'host.json');
+  const policyAuthority = createPolicyAuthority(directory);
   const localExecutionConfig = options.withLocalAdapters
     ? {
         ...makeExecutionConfig(join(directory, 'workspaces')),
@@ -122,6 +130,7 @@ async function startHost(options: {
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
     policy_file: policyPath,
+    policy_provenance: policyAuthority.config,
     operational_store: { directory: join(directory, 'operational') },
     dispatch_lease_ms: 5_000,
     decision_collection_id: DECISION_COLLECTION_ID,
@@ -135,7 +144,7 @@ async function startHost(options: {
     ...(localExecutionConfig === undefined ? {} : { execution: localExecutionConfig }),
   }), { mode: 0o600 });
 
-  if (options.policy) await attachPolicy(policyPath, options.policy);
+  if (options.policy) await attachPolicy(policyPath, options.policy, policyAuthority);
 
   const config = loadHostConfig(configPath);
   let sandbox: StubSandbox | undefined;
@@ -175,6 +184,7 @@ async function startHost(options: {
     server,
     policyPath,
     configPath,
+    policyAuthority,
     ...(sandbox === undefined ? {} : { sandbox }),
   };
 }
@@ -2972,7 +2982,11 @@ describe('runtime policy revocation', () => {
         resource_ids: [other],
       }],
     };
-    await harness.runtime.policies.publishAndAttach(otherPolicy, [other], OPERATOR);
+    await harness.runtime.policies.publishAndAttach(
+      await harness.policyAuthority.authority.signPolicy(otherPolicy),
+      [other],
+      OPERATOR,
+    );
     const beforeFailures = readFileSync(harness.policyPath, 'utf8');
 
     const unknown = await revokePolicy(harness, randomUUID(), [resource]);
@@ -3117,5 +3131,29 @@ describe('runtime policy revocation', () => {
     expect(repeated.status).toBe(409);
     expect(repeated.body?.error).toBe('policy_already_revoked');
     expect(readFileSync(harness.policyPath, 'utf8')).toBe(beforeRepeat);
+  });
+
+  it('rejects unsigned policy content at the kernel intake boundary', async () => {
+    const task = makeTask();
+    const harness = await startHost();
+    const unsigned: AccessPolicy = {
+      policy_id: randomUUID(),
+      version: 1,
+      rules: [{
+        effect: 'allow',
+        subject_ids: [FOUNDER],
+        actions: ['intake'],
+        resource_ids: [task.entity_id],
+      }],
+    };
+    // Simulate a compromised or buggy writer that bypasses the signed publication path.
+    // The shared evaluator is the last line of defense: no rule may decide without
+    // provenance, so the kernel must reject before creating the Task.
+    await harness.runtime.policies.publishAndAttach(unsigned, [task.entity_id], FOUNDER);
+    const response = await intake(harness, 'task', task);
+    expect(response.status).toBe(409);
+    expect(response.body?.error).toBe('orchestration_rejected');
+    expect(String(response.body?.message)).toMatch(/policy_provenance_missing/);
+    expect(harness.runtime.taskStore.getTask(task.entity_id)).toBeUndefined();
   });
 });

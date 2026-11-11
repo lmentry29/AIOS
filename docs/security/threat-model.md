@@ -95,9 +95,10 @@ Founder Intelligence vault's own access controls.
   signed; an attacker who can rewrite the archive and its digest can forge history. Retention
   and custody remain operator responsibilities (ADR-0025).
 - **Identity lifecycle.** Host session tokens now have bounded expiry, rotation, revocation, and
-  task/run/evidence scope binding (ADR-0029). There is still no login, MFA, token-theft
-  detection, rate limiting, or TLS on the loopback listener, and no detached policy signature or
-  external audit custody (recorded in ADR-0023/ADR-0024). A rotation response is one-time; a
+  task/run/evidence scope binding (ADR-0029). Policies and authorization decisions now carry
+  detached local signatures verified against the pinned trust root (ADR-0034), but there is
+  still no login, MFA, token-theft detection, rate limiting, or TLS on the loopback listener,
+  and production policy-key custody plus external audit custody remain open. A rotation response is one-time; a
   lost token cannot be recovered from the journal. Retired digests are terminal and retained.
 - **Observability is not audit.** Structured logs help diagnosis; only the append-only audit
   store is treated as an authorization record.

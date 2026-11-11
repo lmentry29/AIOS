@@ -54,8 +54,9 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   heap. The temporary audit exception is removed.
 - Policy lifecycle audit events now carry a canonical SHA-256 of the exact policy, recomputed
   on registry load; substituted policy content is rejected even when the event hash chain still
-  verifies. This is F-009 tamper evidence, not a signature: external key custody, rotation, and
-  detached-signature verification remain blockers.
+  verifies. ADR-0034 now adds detached bundle/decision signatures and rotation verification;
+  production external key custody and an operated compromise-recovery ceremony remain
+  blockers, so this is still local tamper evidence rather than a remote trust service.
 - The deprecated macOS Seatbelt adapter has an executable fail-closed regression for
   non-macOS hosts; the host never falls back to an unisolated process. Real Seatbelt and Apple
   Containerization execution remain unverified.
@@ -214,8 +215,9 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable v2 policy registry/audit, exact-granted human-only runtime policy publication and retirement, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
-broker, no remote-attested verifier provenance, no detached policy signature, no automatic
-retry/backoff loop, and no live external-provider verification.
+broker, no remote-attested verifier provenance, no production custody for the local policy
+decision key, no automatic retry/backoff loop, and no live external-provider verification.
+Policy bundles and decisions now carry local detached provenance (ADR-0034).
 
 ## Architecture decisions
 
@@ -264,7 +266,8 @@ retry/backoff loop, and no live external-provider verification.
   and rule scope and commits the policy plus all attachments atomically. Every attempt is in
   the durable authorization decision journal; audit failure blocks mutation. A malformed,
   stale, or out-of-scope artifact leaves the prior policy effective. The offline
-  `publish-policy` CLI remains the bootstrap path. There is no detached policy signature yet;
+  `publish-policy` CLI remains the bootstrap path and signs through the same authority.
+  ADR-0034 adds the detached bundle/decision signature and rotation verification;
   authorized runtime retirement is added by ADR-0024.
 - ADR-0024 — **Accepted (2026-11-10)**: authorized runtime policy retirement. `revoke_policy`
   is an exact, human-only action distinct from `administer_policy`. The human-only
@@ -273,9 +276,9 @@ retry/backoff loop, and no live external-provider verification.
   the version from every history, reattaches the newest remaining version, or leaves the
   resource with no policy and a fail-closed deny; the version is marked permanently retired
   and cannot be reattached. Registry state moves to v2 and a v1 file migrates without
-  inventing a fallback. The offline `revoke-policy` CLI mirrors the route. There is still no
-  detached policy signature, key rotation, external audit custody, or multi-host
-  administration.
+  inventing a fallback. The offline `revoke-policy` CLI mirrors the route. ADR-0034 adds
+  detached signatures and overlapping rotation verification; external audit custody and
+  multi-host administration remain open.
 - ADR-0029/ADR-0030 — **Accepted (2026-11-11)**: durable host session lifecycle plus
   human-only operator administration. Sessions require bounded expiry, persist generations
   and retired digests in the operational journal, and carry optional task/run/evidence scope
@@ -422,12 +425,13 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
    infrastructure inventory, or secret broker exists.
 5. **Identity/policy lifecycle.** Bearer sessions, a durable policy registry, exact-granted
-   runtime publication and retirement, and a durable hash-chained decision audit exist, but
-   there is no user-facing login, detached policy signature, policy recovery/key-rotation
-   procedure, or independent external audit custody. Registry state is v2 and has no
-   downgrade path. The offline `publish-policy` and `revoke-policy` CLIs remain the bootstrap
-   paths. Session administration is exact-granted and human-only, but there is no step-up,
-   approval quorum, or rate limiting for the operator grant.
+   runtime publication and retirement, signed policy bundles/decisions, and a durable
+   hash-chained decision audit exist. There is no user-facing login, production policy-key
+   custody/recovery ceremony, independent external audit custody, or rollback/monotonic
+   checkpoint. Registry state is v2 and has no downgrade path. The offline `publish-policy`
+   and `revoke-policy` CLIs remain the bootstrap paths. Session administration is
+   exact-granted and human-only, but there is no step-up, approval quorum, or rate limiting
+   for the operator grant.
 6. **Founder Intelligence quality.** The vault adapter is read-only and collection-scoped;
    per-note authorization, retrieval/context assembly, contradiction detection, and reviewed
    Founder vault memory writes remain open. Organizational Learning Memory now has
@@ -458,9 +462,10 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 5. Source/review the Mission field model before adding any Mission API/schema.
 6. Build a secret broker before any provider credential is introduced.
 7. Keep PR #1 draft; do not merge or push `main`.
-8. Define detached policy signatures and a key-recovery/rotation procedure before treating
-   runtime policy administration as production security. Revocation itself is implemented;
-   what is missing is protection against a rewritten policy file and key compromise.
+8. Operate the ADR-0034 policy-key rotation/revocation ceremony with production custody and
+   external audit retention. Local signatures and rotation verification are implemented;
+   production key custody, external audit custody, rollback/monotonic checkpoints, and
+   recovery from key compromise remain open.
 
 ## Local verifier decision signing (2026-11-11)
 
@@ -549,3 +554,32 @@ Implemented and locally verified on `security/openjarvis-defensive-integration`:
 - Still open: an operator must provision and protect a production key/trust root; CI uses an
   ephemeral run-scoped key, not OIDC/Fulcio/Rekor identity or external custody. Base/snapshot
   inputs remain unsigned. No Sigstore, SLSA or in-toto conformance is claimed.
+
+## Policy bundle and decision provenance (2026-11-11)
+
+Required detached Ed25519 provenance now covers both policy bundles and authorization
+decisions (ADR-0034), using the same strict external trust root as artifact/verifier
+provenance. `policy_provenance` is a required host config block; the owner-only key is loaded
+once and never written to state. The policy payload covers `policy_id`, `version`, and every
+rule; the decision payload covers the request id, actor, action, resource, policy id/version,
+outcome, reason, matched-rule reference, and timestamp. Schema version, subject kind and
+subject id are inside the signed payload. Policy content is verified before any rule match;
+unsigned, tampered, wrong-bundle, schema-confused, wrong-key, revoked, expired, and
+wrong-trust-root bundles deny with a distinguishable `policy_provenance_*` reason and the
+same 409 `orchestration_rejected` response used for verifier provenance. Every host
+allow/deny decision is signed before append; the audit read verifies every record.
+
+Rotation is overlapping: old decisions verify while their key remains trusted, a replacement
+key does not invalidate the old audit trail, and an unknown key id is never accepted. The
+operator ceremony (stop host, generate key, write overlapping root, update config, restart,
+publish under the new key, retain old public keys) is recorded in ADR-0034; production key
+custody, external audit custody, trusted timestamps, and rollback/monotonic-checkpoint
+protection remain open.
+
+Tests: `apps/host/tests/policy-provenance.test.ts` (9) covers mutation, signature reuse,
+schema confusion, key-id substitution, wrong trust root, revoked/expired keys, overlapping
+rotation, unsigned policies, and decision tampering. `http-host.test.ts` (59) adds a
+kernel-intake test that injects an unsigned policy directly into the registry and receives
+`orchestration_rejected` with `policy_provenance_missing` before the Task exists. At this
+head: full host suite **276 passed / 17 skipped** across 28 passing files; focused policy
+provenance **9/9**; forced uncached workspace gate **46/46 tasks, 0 cached**, exit 0.

@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { FounderAuthorizationError, FounderInputError, PolicyPublicationError, PolicyRevocationError } from '@aios/founder';
+import {
+  FounderAuthorizationError,
+  FounderInputError,
+  PolicyProvenanceDeniedError,
+  PolicyPublicationError,
+  PolicyRevocationError,
+} from '@aios/founder';
 import {
   ExecutionAttemptConflictError,
   ExecutionCapacityError,
@@ -159,6 +165,14 @@ function mapError(error: unknown): { status: number; code: string; message: stri
   }
   if (error instanceof HostExecutionError) {
     return { status: 422, code: 'execution_failed', message: error.message };
+  }
+  if (error instanceof PolicyProvenanceDeniedError) {
+    return {
+      status: 409,
+      code: 'orchestration_rejected',
+      message: error.message,
+      reason: error.reasonCode,
+    };
   }
   if (error instanceof FounderAuthorizationError) {
     return { status: 403, code: 'forbidden', message: 'Authorization policy denied this operation.' };
@@ -629,9 +643,10 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         // policy, monotonic version, and rule scope and commits policy plus attachments as
         // one atomic snapshot. An audit-append failure on any decision denies the request.
         await requirePolicyAdministration(host, session, document.attach_to);
+        const signed = await host.policyProvenance.signPolicy(document.policy);
         try {
           await host.policies.publishAndAttach(
-            document.policy,
+            signed,
             document.attach_to,
             session.principal_id,
           );
@@ -1155,6 +1170,16 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         await requireAllowed(host, session, 'read_evidence', host.config.decision_collection_id);
         const limit = auditLimit(url);
         const records = host.authorizationAudit.list();
+        for (const record of records) {
+          const verified = await host.policyProvenance.verifyDecision(record);
+          if (!verified.valid) {
+            throw new HostHttpError(
+              409,
+              'audit_provenance_invalid',
+              `Authorization audit record failed policy provenance verification: ${verified.reason ?? 'invalid'}.`,
+            );
+          }
+        }
         return { status: 200, body: { records: records.slice(-limit), total: records.length } };
       },
     },

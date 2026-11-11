@@ -39,6 +39,11 @@ field fails startup instead of being silently ignored. A partial example (no sec
   "schema_version": 1,
   "bind": { "host": "127.0.0.1", "port": 4780 },
   "policy_file": "/home/you/.aios/policy-state.json",
+  "policy_provenance": {
+    "trust_root_file": "/home/you/.aios/trust-root.json",
+    "signing_key_file": "/home/you/.aios/policy-signing-key.pem",
+    "key_id": "<64 lowercase hex sha256 key id>"
+  },
   "operational_store": { "directory": "/home/you/.aios/operational" },
   "dispatch_lease_ms": 300000,
   "decision_collection_id": "00000000-0000-4000-8000-000000000001",
@@ -85,7 +90,11 @@ start a sandbox invocation. `verifier_signing_key_file`, `verifier_trust_root_fi
 regular, unlinked, owner-only file; the trust root is the same strict Ed25519 document used
 for gVisor provenance. When configured, every verifier decision is signed and checked before
 persistence and again on evidence read; the signature is local tamper evidence, not remote
-attestation (ADR-0033).
+attestation (ADR-0033). `policy_provenance` is **required** and supplies
+`trust_root_file`, `signing_key_file`, and `key_id`; it signs every policy bundle and every
+allow/deny decision, verifies the bundle before rule evaluation, and verifies the audit on
+read (ADR-0034). An unsigned policy injected directly into the durable registry is still
+rejected at the kernel boundary as `orchestration_rejected`.
 
 `obsidian` is optional and, when present, must be `http://127.0.0.1:<port>` or
 `http://[::1]:<port>` with no credentials, path, query, or fragment. The Obsidian++ password
@@ -343,10 +352,12 @@ version stays readable for audit but cannot be reattached. Typed failures are
 `400 invalid_policy_id`/`invalid_targets`, `404 policy_not_found`, and
 `409 policy_not_attached`/`policy_already_revoked`/`target_scope_mismatch`.
 
-There is no detached policy signature in this trust model: authority is the verified session
-plus the exact grant, and a caller-supplied signature field is rejected. A policy version
-cannot be rolled back by reattaching an older or retired policy; publish a new, higher
-version containing the desired rules.
+Authority is the verified session plus the exact grant **and** a detached policy signature
+verified against the pinned trust root (ADR-0034). The host signs every published bundle and
+every decision; a caller-supplied provenance field is replaced by the host signer rather than
+trusted. A policy version cannot be rolled back by reattaching an older or retired policy;
+publish a new, higher version containing the desired rules. Production key custody and
+rollback/monotonic-checkpoint protection remain open.
 
 ## Operator session administration
 
@@ -487,11 +498,12 @@ incident procedure, ordering, restart expectations, and remaining limits.
 ## What remains open
 
 - **Policy administration assurance.** Runtime publication and retirement are exact-granted
-  and human-only, with atomic replacement/retirement and durable decision audit. There is no
-  detached policy signature, key rotation, external audit custody, or reattachment of an
-  older or retired version; recovery from a bad policy is a new higher-version publication or
-  a retirement. The registry is single-process, local-disk only, and its state is v2 — an
-  older host cannot read it.
+  and human-only, with atomic replacement/retirement, detached bundle/decision signatures and
+  overlapping rotation verification (ADR-0034). Production key custody, an operated
+  recovery/revocation ceremony, external audit custody, rollback/monotonic-checkpoint
+  protection, and reattachment of an older or retired version remain open; recovery from a
+  bad policy is a new higher-version publication or a retirement. The registry is
+  single-process, local-disk only, and its state is v2 — an older host cannot read it.
 - **Operational persistence limits.** Task/Workflow/Artifact/run state is durable, but the
   journal is not compacted or snapshotted, has no migration framework, and supports only one
   host process. Learning state is durable in a separate journal and approval-gated for
@@ -504,8 +516,10 @@ incident procedure, ordering, restart expectations, and remaining limits.
 - **Execution and verification.** The fixed `local.exec` path exists for Docker,
   bubblewrap, gVisor, and macOS Seatbelt. It is not a general capability runtime; coordination is
   intentionally unsupported. Verifier independence is enforced as a distinct configured
-  principal plus a separately executed command, but there is no signed verifier decision,
-  key rotation, or protection against a compromised host process. Bubblewrap installs a
+  principal plus a separately executed command; verifier decisions can carry detached local
+  provenance (ADR-0033), and policy bundles/decisions carry it too (ADR-0034), but production
+  key custody, remote attestation, and protection against a compromised host process remain
+  open. Bubblewrap installs a
   generated seccomp deny-list before exec (ADR-0027) and per-process RLIMIT limits (ADR-0028),
   but still lacks aggregate cgroup accounting, has no active Landlock profile, and is suitable
   only for trusted local commands; Docker and gVisor are measured in CI

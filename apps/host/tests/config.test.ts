@@ -22,6 +22,11 @@ function validConfig(overrides: Record<string, unknown> = {}): Record<string, un
     schema_version: 1,
     bind: { host: '127.0.0.1', port: 0 },
     policy_file: join(directory, 'policy-state.json'),
+    policy_provenance: {
+      trust_root_file: join(directory, 'policy-trust-root.json'),
+      signing_key_file: join(directory, 'policy-signing-key.pem'),
+      key_id: 'a'.repeat(64),
+    },
     operational_store: { directory: join(directory, 'operational') },
     decision_collection_id: DECISION_COLLECTION_ID,
     resources: {

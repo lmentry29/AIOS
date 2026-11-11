@@ -132,9 +132,13 @@ a single-process lock.
 
 ### 8. Signature boundary
 
-The trust model is unchanged: authority is the verified session plus the exact grant. There is
-no detached policy signature and no signed revocation artifact. A caller-supplied signature
-field is rejected by the strict envelope rather than carried.
+> **Amended by ADR-0034 (2026-11-11).** Published policy bundles and authorization decisions
+> now carry detached Ed25519 provenance verified before rule evaluation. Retirement remains an
+> authenticated, exact-granted lifecycle operation; it does not add a separate signed
+> revocation artifact. The original text below is historical on the signature point.
+
+The original trust model had no detached policy signature and no signed revocation artifact.
+A caller-supplied signature field was rejected by the strict envelope rather than carried.
 
 ## Alternatives considered
 
@@ -159,8 +163,8 @@ field is rejected by the strict envelope rather than carried.
 - Publication remains the only way to *add* authority; retirement can only narrow it.
 - Registry state is now v2, and an older host cannot read it. Downgrade is not supported; a v1
   file migrates on load and is rewritten on the next mutation.
-- Still no detached policy signature, key rotation, external audit custody, or multi-host
-  administration.
+- ADR-0034 adds detached policy/decision provenance and overlapping rotation verification.
+  Production key custody, external audit custody, and multi-host administration remain open.
 
 ## Tests / evidence
 
