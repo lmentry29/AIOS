@@ -12,6 +12,7 @@ import {
   executionResultBinding,
   EXECUTION_BINDING_VERSION,
   parseEvidenceEntries,
+  resultExecutionNonce,
   snapshotExecutionResult,
 } from '../src/execution/evidence.js';
 import { ManagedExecutionPort } from '../src/execution/managed-execution.js';
@@ -72,7 +73,9 @@ describe('canonical execution evidence', () => {
     expect(() => snapshotExecutionResult({ ...result, extra: 'field' })).toThrow(/unknown field/);
     expect(() => snapshotExecutionResult({ summary: '', evidence: ['e'] })).toThrow(/summary/);
     expect(() => snapshotExecutionResult({ summary: 's', evidence: [] })).toThrow(/evidence entries/);
-    expect(() => snapshotExecutionResult({ summary: 's', evidence: ['line\ninjection'] })).toThrow(/single-line/);
+    // Opaque result evidence may contain newlines; it is hashed as data, never parsed as lines.
+    expect(() => snapshotExecutionResult({ summary: 's', evidence: ['line\nopaque'] })).not.toThrow();
+    expect(resultExecutionNonce({ summary: 's', evidence: ['execution_nonce:\nforged'] })).toBeUndefined();
     expect(() => snapshotExecutionResult({ summary: 's', evidence: Array.from({ length: 65 }, () => 'e') }))
       .toThrow(/evidence entries/);
   });

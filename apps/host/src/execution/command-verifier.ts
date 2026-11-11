@@ -20,6 +20,7 @@ import {
   isEvidenceDigest,
   isExecutionNonce,
   parseEvidenceEntries,
+  resultExecutionNonce,
   snapshotExecutionResult,
 } from './evidence.js';
 import type { SandboxProvider } from './sandbox.js';
@@ -146,13 +147,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       } catch {
         return this.rejectWithoutRunning('The executor result is not a bounded plain-data snapshot.');
       }
-      let resultEntries: Map<string, string>;
-      try {
-        resultEntries = parseEvidenceEntries(snapshot.evidence);
-      } catch {
-        return this.rejectWithoutRunning('The executor result evidence is malformed or ambiguous.');
-      }
-      const nonce = resultEntries.get('execution_nonce');
+      const nonce = resultExecutionNonce(snapshot);
       if (!isExecutionNonce(nonce) || entries.get('execution_nonce') !== nonce) {
         return this.rejectWithoutRunning(
           'The executor result nonce does not belong to the durable attempt; a replayed result is rejected.',

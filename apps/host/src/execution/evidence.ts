@@ -135,10 +135,8 @@ export function snapshotExecutionResult(value: unknown): ExecutionResultSnapshot
   const evidence = value.evidence.map((entry, index) => {
     if (typeof entry !== 'string'
       || entry.length === 0
-      || entry.length > MAX_RESULT_EVIDENCE_LENGTH
-      || entry.includes('\n')
-      || entry.includes('\r')) {
-      throw new EvidenceBindingError(`The executor result evidence entry ${index} must be a bounded single-line string.`);
+      || entry.length > MAX_RESULT_EVIDENCE_LENGTH) {
+      throw new EvidenceBindingError(`The executor result evidence entry ${index} must be a bounded string.`);
     }
     return entry;
   });
@@ -237,7 +235,11 @@ export function isExecutionNonce(value: string | undefined): value is string {
 
 export function resultExecutionNonce(result: unknown): string | undefined {
   try {
-    return parseEvidenceEntries(snapshotExecutionResult(result).evidence).get('execution_nonce');
+    const matches = snapshotExecutionResult(result).evidence
+      .filter((entry) => entry.startsWith('execution_nonce:'));
+    if (matches.length !== 1) return undefined;
+    const nonce = matches[0]?.slice('execution_nonce:'.length);
+    return isExecutionNonce(nonce) ? nonce : undefined;
   } catch {
     return undefined;
   }

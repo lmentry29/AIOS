@@ -19,7 +19,7 @@ import {
   EXECUTION_BINDING_VERSION,
   executionResultBinding,
   isExecutionNonce,
-  parseEvidenceEntries,
+  resultExecutionNonce,
   snapshotExecutionResult,
 } from './evidence.js';
 
@@ -119,7 +119,7 @@ export class ManagedExecutionPort implements AgentExecutionPort {
       // Snapshot the attacker-controlled result under a fixed schema, then bind it to this
       // exact attempt. A result replayed from another run, Task or Agent cannot validate.
       const snapshot = snapshotExecutionResult(result);
-      const nonce = parseEvidenceEntries(snapshot.evidence).get('execution_nonce');
+      const nonce = resultExecutionNonce(snapshot);
       if (!isExecutionNonce(nonce)) {
         throw new HostExecutionError(
           'The executor result has no valid per-invocation execution nonce; replay cannot be distinguished.',
