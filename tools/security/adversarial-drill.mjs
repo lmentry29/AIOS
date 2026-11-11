@@ -37,7 +37,6 @@ import { DurableOperationalStore } from '../../apps/host/dist/persistence/operat
 const bwrapDirectory = process.env.AIOS_BWRAP_DIR;
 assert.ok(bwrapDirectory, 'AIOS_BWRAP_DIR must point at a directory containing bwrap');
 process.env.PATH = `${bwrapDirectory}:${process.env.PATH ?? ''}`;
-process.exit(1); // Temporary CI failure-propagation probe; removed immediately after the red run.
 
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
 const VERIFIER_ID = '22222222-2222-4222-8222-222222222222';
