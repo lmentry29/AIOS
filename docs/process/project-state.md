@@ -238,6 +238,10 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   **17/17**; the operator drill ran **13 steps**; resource-limit, quota, seccomp, collection,
   and operator drills all exit 0; production audit **0 triaged**; secret scan **276 tracked
   files, no findings**.
+- CI on the exact pushed head `15bc7f8`: `ci` (run `42933005083`), `conformance` (run
+  `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
+  dispatched `release` build (run `42933109086`) all succeeded. PR #1 remained open, draft,
+  and unmerged; `main` stayed at `767f30e`.
 - GitHub Actions on `aa86a4e`: `ci` (run `42892775891`), `conformance` (run
   `42892776172`), and `schema-check` (run `42892775877`) all succeeded; PR #1 reported
   `mergeable: true`, `mergeable_state: unstable` while those runs were in flight. The

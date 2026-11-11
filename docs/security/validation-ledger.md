@@ -575,3 +575,9 @@ What is verified versus not:
   hard disk quotas, external policy signing). The operator token is a bearer credential: an
   attacker who can read its owner-only file has the same authority. See ADR-0030, F-013, and
   `docs/security/session-operator-runbook.md`.
+
+CI on the exact pushed head `15bc7f8`: `ci` run `42933005083` — success; `conformance` run
+`42933005064` — success; `schema-check` run `42933005025` — success; `security` run
+`42933005020` — success (both live-boundary and supply-chain jobs); `release` run
+`42933109086` — success (`workflow_dispatch` on the branch head, since the workflow has no
+push trigger). PR #1 remained open, draft, and unmerged; `main` stayed at `767f30e`.

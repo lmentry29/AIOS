@@ -374,6 +374,10 @@ operator has to hand-call.
   a real host process, including a SIGTERM restart and a journal/audit token-leak scan.
 - Validation ledger records: forced full gate 46/46, host 152 passed/17 skipped, founder 63,
   core 51, live bubblewrap 17/17, all drills exit 0, audit 0 triaged, secret scan 276 files.
+- CI on the exact pushed head `15bc7f8`: `ci` (run `42933005083`), `conformance` (run
+  `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
+  dispatched `release` build (run `42933109086`) all succeeded. PR #1 stayed open, draft, and
+  unmerged; `main` stayed at `767f30e`.
 
 ### Not claimed
 
