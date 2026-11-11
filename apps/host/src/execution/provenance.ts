@@ -4,7 +4,10 @@ import {
   closeSync,
   constants as fsConstants,
   copyFileSync,
+  cpSync,
+  existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -617,54 +620,115 @@ export function resolveExecutable(name: string): string {
   throw new ProvenanceError(`The ${name} executable is not installed on PATH.`);
 }
 
+/** Require the materialization directory to be the real, private directory this invocation created. */
+function assertPrivateDirectory(directory: OwnedDirectory): void {
+  const stats = lstatSync(directory.path);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new ProvenanceError(`The private runtime directory is not a real directory: ${directory.path}.`);
+  }
+  if (stats.dev !== directory.device || stats.ino !== directory.inode) {
+    throw new ProvenanceError(`The private runtime directory was replaced during preparation: ${directory.path}.`);
+  }
+  if ((stats.mode & 0o022) !== 0) {
+    throw new ProvenanceError('The private runtime directory must not be group- or world-writable.');
+  }
+}
+
+/** Reject symlinks and special files so execution cannot escape the materialized tree. */
+function assertRuntimeTree(root: string): void {
+  for (const name of readdirSync(root)) {
+    const child = join(root, name);
+    const stats = lstatSync(child);
+    if (stats.isSymbolicLink()) {
+      throw new ProvenanceError(`The materialized gVisor runtime contains a symlink: ${child}.`);
+    }
+    if (stats.isDirectory()) {
+      assertRuntimeTree(child);
+      continue;
+    }
+    if (!stats.isFile()) {
+      throw new ProvenanceError(`The materialized gVisor runtime contains a special file: ${child}.`);
+    }
+  }
+}
+
 /**
- * Copy a verified executable into a private directory and measure the copy.
+ * Copy the verified runtime directory into a private directory and measure the runsc copy.
  *
- * The provider executes this copy, not the PATH-resolved original, so replacing the original
- * after verification cannot change the bytes that run. The directory must be owned by this
- * invocation, not a symlink, and not group- or world-writable.
+ * `runsc` locates its Sentry sidecars relative to its own executable, so the whole extracted
+ * runtime tree is materialized, not just the binary. The pinned archive SHA-512 and `runsc`
+ * SHA-256 cover that tree; symlinks and special files are rejected so the executed tree cannot
+ * escape the private directory. The provider executes the copy, so replacing the PATH-resolved
+ * original after verification cannot change the bytes that run.
  */
-export function materializeVerifiedExecutable(
-  source: string,
+export function materializeVerifiedRuntime(
+  sourceDirectory: string,
   expectedSha256: string,
   directory: OwnedDirectory,
-): MaterializedExecutable {
-  const resolved = resolve(source);
-  const directoryStats = lstatSync(directory.path);
-  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
-    throw new ProvenanceError(`The private executable directory is not a real directory: ${directory.path}.`);
+): { path: string; executable: MaterializedExecutable } {
+  const source = resolve(sourceDirectory);
+  assertPrivateDirectory(directory);
+  const sourceStats = lstatSync(source);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isDirectory()) {
+    throw new ProvenanceError(`The verified gVisor runtime must be a real directory: ${source}.`);
   }
-  if (directoryStats.dev !== directory.device || directoryStats.ino !== directory.inode) {
-    throw new ProvenanceError(`The private executable directory was replaced during preparation: ${directory.path}.`);
+  const runsc = join(source, 'runsc');
+  const runscStats = lstatSync(runsc);
+  if (runscStats.isSymbolicLink() || !runscStats.isFile()) {
+    throw new ProvenanceError(`The verified gVisor runtime runsc must be a regular file, not a symlink: ${runsc}.`);
   }
-  if ((directoryStats.mode & 0o022) !== 0) {
-    throw new ProvenanceError('The private executable directory must not be group- or world-writable.');
-  }
-  const sourceStats = lstatSync(resolved);
-  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
-    throw new ProvenanceError(`The verified executable must be a regular file, not a symlink: ${resolved}.`);
-  }
-  const target = join(directory.path, 'runsc');
+  const target = join(directory.path, 'runtime');
   try {
     lstatSync(target);
-    throw new ProvenanceError(`The private executable path already exists: ${target}.`);
+    throw new ProvenanceError(`The private runtime path already exists: ${target}.`);
   } catch (error) {
     if (error instanceof ProvenanceError) throw error;
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  copyFileSync(resolved, target, fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE);
+  mkdirSync(target, { mode: 0o700 });
   try {
-    chmodSync(target, 0o500);
-    const sha256 = hashFile(target, 'sha256');
+    copyFileSync(runsc, join(target, 'runsc'), fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE);
+    const sidecars = join(source, 'gvisor-bin');
+    if (existsSync(sidecars)) {
+      const sidecarStats = lstatSync(sidecars);
+      if (sidecarStats.isSymbolicLink() || !sidecarStats.isDirectory()) {
+        throw new ProvenanceError(`The gVisor runtime has an unexpected gvisor-bin entry: ${sidecars}.`);
+      }
+      cpSync(sidecars, join(target, 'gvisor-bin'), {
+        recursive: true,
+        dereference: false,
+        errorOnExist: true,
+        force: false,
+        verbatimSymlinks: true,
+      });
+    }
+    assertRuntimeTree(target);
+    const executablePath = join(target, 'runsc');
+    const stats = lstatSync(executablePath);
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new ProvenanceError(`The verified gVisor runtime did not contain a regular runsc file: ${executablePath}.`);
+    }
+    chmodSync(executablePath, 0o500);
+    const sha256 = hashFile(executablePath, 'sha256');
     if (sha256 !== expectedSha256.toLowerCase()) {
       throw new ProvenanceError(
         `The materialized gVisor runsc does not match the verified SHA-256 (expected ${expectedSha256.toLowerCase()}, observed ${sha256}).`,
       );
     }
-    const stats = lstatSync(target);
-    return { path: target, source: resolved, sha256, device: stats.dev, inode: stats.ino, size: stats.size };
+    const finalStats = lstatSync(executablePath);
+    return {
+      path: target,
+      executable: {
+        path: executablePath,
+        source: join(source, 'runsc'),
+        sha256,
+        device: finalStats.dev,
+        inode: finalStats.ino,
+        size: finalStats.size,
+      },
+    };
   } catch (error) {
-    rmSync(target, { force: true });
+    rmSync(target, { recursive: true, force: true });
     throw error;
   }
 }

@@ -1148,10 +1148,13 @@ workflows for that commit complete.
   digest in `FROM`. `verify-platform-digest` selects the single amd64 entry from the raw pinned
   index and requires it to equal the recorded platform digest. The Security workflow installs
   `attr`, passes `--require-xattrs`, and runs the index check before building.
-- **Verify-to-execute binding.** The pinned `runsc` is copied into a private `0700`/`0500`
-  directory, the copy is hashed, and the copy is executed. Inode, size, writability and SHA-256
-  are re-checked immediately before spawn, and the rootfs is re-measured after execution; a
-  difference rejects the result with `SandboxIsolationUnavailableError`.
+- **Verify-to-execute binding.** The pinned `runsc` and its `gvisor-bin` Sentry sidecars are
+  copied into a private `0700` directory (executable `0500`); the copy is rejected if it contains
+  a symlink or special file, the copied `runsc` is hashed, and the copy is executed. `runsc`
+  resolves sidecars relative to its own binary, so the whole runtime tree moves with it. Inode,
+  size, writability and SHA-256 are re-checked immediately before spawn, and the rootfs is
+  re-measured after execution; a difference rejects the result with
+  `SandboxIsolationUnavailableError`.
 - **Archive hardening.** A symlinked `runsc` or `gvisor-bin` is rejected, chmod never follows a
   symlink in the extracted tree, extraction uses `--no-same-owner`, and manifests are written
   atomically.

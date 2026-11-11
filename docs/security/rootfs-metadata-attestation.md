@@ -91,9 +91,12 @@ would leave the resolved platform manifest unpinned.
 
 ## Verify-to-execute binding
 
-- The provider hashes the PATH-resolved `runsc`, then copies those bytes into a private
-  `mkdtemp` directory (mode `0700`, file `0500`), hashes the copy, and executes the copy.
-  Replacing the PATH entry after verification cannot change what runs.
+- The provider hashes the PATH-resolved `runsc`, then materializes `runsc` and its
+  `gvisor-bin/` Sentry sidecars into a private `mkdtemp` directory (mode `0700`; the executable
+  is `0500`), rejects symlinks and special files in the copy, re-hashes the copied `runsc`, and
+  executes the copy. `runsc` resolves its sidecars relative to its own executable, so the whole
+  runtime tree has to move with it. Replacing the PATH entry after verification cannot change
+  what runs.
 - `assertMaterializedExecutableUnchanged` re-checks inode, size, writability and SHA-256
   immediately before execution. The remaining window is confined to a directory only the
   invoking user can write; a same-UID attacker is inside the host trust boundary.

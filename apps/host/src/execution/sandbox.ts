@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SandboxProviderKind } from '../config.js';
 import {
@@ -16,7 +16,7 @@ import {
   createOwnedStagingDirectory,
   digestRootfs,
   hashFile,
-  materializeVerifiedExecutable,
+  materializeVerifiedRuntime,
   ProvenanceError,
   readGvisorRuntimePin,
   removeOwnedDirectory,
@@ -1057,8 +1057,8 @@ class GvisorSandbox implements SandboxProvider {
         `The gVisor runtime pin is for ${loaded.pin.architecture}, but this host is ${architecture}.`,
       );
     }
-    const source = resolveExecutable('runsc');
-    const binarySha256 = hashFile(source, 'sha256');
+    const resolved = resolveExecutable('runsc');
+    const binarySha256 = hashFile(resolved, 'sha256');
     if (binarySha256 !== loaded.pin.runsc.sha256) {
       throw new ProvenanceError(
         `The gVisor runsc SHA-256 does not match the repository pin (expected ${loaded.pin.runsc.sha256}, observed ${binarySha256}).`,
@@ -1066,9 +1066,11 @@ class GvisorSandbox implements SandboxProvider {
     }
     const directory = createOwnedStagingDirectory(tmpdir(), 'aios-gvisor-runtime-');
     try {
-      // Execute a private copy of the measured bytes, not the PATH-resolved original. A
-      // rename over the original between hashing and execution cannot affect this copy.
-      const executable = materializeVerifiedExecutable(source, binarySha256, directory);
+      // Execute a private copy of the measured runtime tree, not the PATH-resolved original.
+      // A rename over the original between hashing and execution cannot affect this copy, and
+      // runsc finds its Sentry sidecars relative to the copied binary.
+      const runtime = materializeVerifiedRuntime(dirname(resolved), binarySha256, directory);
+      const executable = runtime.executable;
       const version = await this.runscVersion(executable.path);
       if (version === undefined) {
         throw new ProvenanceError('The pinned gVisor runsc did not report its version.');

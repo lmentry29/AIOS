@@ -23,7 +23,7 @@ import {
   createOwnedStagingDirectory,
   digestRootfs,
   hashFile,
-  materializeVerifiedExecutable,
+  materializeVerifiedRuntime,
   promoteOwnedDirectory,
   readGvisorRootfsBuildPin,
   readGvisorRuntimePin,
@@ -267,27 +267,38 @@ describe('gVisor provenance', () => {
       .toThrow(/changed while the sandbox was running/);
   });
 
-  it('materializes the verified executable and rejects a replaced copy', () => {
+  it('materializes the verified runtime tree and rejects replaced or unsafe copies', () => {
     const parent = directory('aios-materialize-');
-    const source = join(parent, 'runsc');
-    writeFileSync(source, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    const sha256 = hashFile(source, 'sha256');
+    const source = join(parent, 'runtime');
+    mkdirSync(join(source, 'gvisor-bin'), { recursive: true });
+    writeFileSync(join(source, 'runsc'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(join(source, 'gvisor-bin', 'gvisor_sentry'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const sha256 = hashFile(join(source, 'runsc'), 'sha256');
     const stage = createOwnedStagingDirectory(parent, 'private-');
-    const executable = materializeVerifiedExecutable(source, sha256, stage);
-    expect(executable.path).not.toBe(source);
-    expect(readFileSync(executable.path, 'utf8')).toBe(readFileSync(source, 'utf8'));
-    expect(() => assertMaterializedExecutableUnchanged(executable)).not.toThrow();
+    const runtime = materializeVerifiedRuntime(source, sha256, stage);
+    expect(runtime.executable.path.startsWith(stage.path)).toBe(true);
+    expect(readFileSync(join(runtime.path, 'gvisor-bin', 'gvisor_sentry'), 'utf8'))
+      .toContain('exit 0');
+    expect(() => assertMaterializedExecutableUnchanged(runtime.executable)).not.toThrow();
 
-    chmodSync(executable.path, 0o700);
-    writeFileSync(executable.path, 'tampered');
-    expect(() => assertMaterializedExecutableUnchanged(executable))
+    chmodSync(runtime.executable.path, 0o700);
+    writeFileSync(runtime.executable.path, 'tampered');
+    expect(() => assertMaterializedExecutableUnchanged(runtime.executable))
       .toThrow(/replaced after verification|changed after verification/);
     removeOwnedDirectory(stage);
 
     const rejected = createOwnedStagingDirectory(parent, 'private-');
-    expect(() => materializeVerifiedExecutable(source, '0'.repeat(64), rejected))
+    expect(() => materializeVerifiedRuntime(source, '0'.repeat(64), rejected))
       .toThrow(/does not match the verified SHA-256/);
     removeOwnedDirectory(rejected);
+
+    const hostile = join(parent, 'hostile');
+    mkdirSync(hostile);
+    symlinkSync('/etc/passwd', join(hostile, 'runsc'));
+    const hostileStage = createOwnedStagingDirectory(parent, 'private-');
+    expect(() => materializeVerifiedRuntime(hostile, sha256, hostileStage))
+      .toThrow(/must be a regular file/);
+    removeOwnedDirectory(hostileStage);
   });
 
   it('selects exactly one amd64 manifest digest from a pinned image index', () => {
