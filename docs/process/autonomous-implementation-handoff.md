@@ -1023,3 +1023,13 @@ canonical 64-byte base64 signatures and exact fields, and rejects schema v1. Adv
 live in `tests/artifact-signing-adversarial.test.ts`; the execution-binding invariant is in
 `tests/gvisor.test.ts`. Re-sign any future v1 artifact. Still open: production trust root/key,
 Sigstore identity, SLSA provenance, macOS/rootless Docker measurements.
+
+## Executor/verifier evidence — 2026-11-11
+
+`evidence.ts` provides canonical bounded snapshots, attempt-bound digests and strict evidence
+parsing. `ManagedExecutionPort` records binding version, nonce and bound digest;
+`LocalCommandVerifier` refuses acceptance without them and rejects prior-attempt nonces.
+Reserved `AIOS_*` task environment names are filtered in `command-executor.ts`. Tests are in
+`tests/evidence-binding.test.ts`. Legacy attempts fail closed; re-run before verifying.
+Still open: cross-process attestation/audit custody, production trust root, Sigstore/SLSA,
+macOS and rootless-Docker measurements.

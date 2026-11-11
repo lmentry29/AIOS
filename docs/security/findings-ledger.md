@@ -51,3 +51,15 @@ signatures, and restricts subjects to strings or safe integers. The statement ve
 bumped to 2 and v1 is rejected rather than accepted with weaker parsing. Deterministic
 adversarial tests and seeded mutation fuzzing cover the parser and verifier; no v1 statement
 was ever signed here.
+
+## F-022 — verifier could accept without durable attempt binding
+
+**Status:** fixed; legacy attempts fail closed.
+
+The verifier's durable-ledger reference was optional, its digest used non-canonical
+`JSON.stringify`, it did not include the execution attempt identity, and it parsed evidence
+with prefix matching. Acceptance could therefore be reached without a durable attempt, and a
+byte-identical result could be replayed across retries. Acceptance now requires a bound
+attempt, canonical bounded plain-data snapshots, strict evidence parsing, an attempt-specific
+digest and a per-invocation nonce that must not appear in a prior attempt. Executor Task
+environments can no longer inject verifier identity or signing/provider configuration.

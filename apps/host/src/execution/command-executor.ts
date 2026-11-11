@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { TaskEntity } from '@aios/core';
 import { TaskCancelledError, type AgentExecutionPort, type TaskExecutionResult } from '@aios/orchestration';
 import type { HostExecutionConfig } from '../config.js';
@@ -16,6 +16,9 @@ import type { SandboxProvider, SandboxResult } from './sandbox.js';
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
+// Provider configuration, verifier identity and signing material are host-only. A Task can
+// never inject them through its declared environment.
+const RESERVED_ENV = /^AIOS_(VERIFIER_ID|TRUST_ROOT|SIGNING[A-Z0-9_]*|GVISOR[A-Z0-9_]*|ARTIFACT[A-Z0-9_]*)$/;
 const MAX_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_BYTES = 1_048_576;
 const FILTER_PROVIDERS = new Set(['bubblewrap', 'docker']);
@@ -29,7 +32,7 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
   if (!raw) return {};
   const allowed: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (ALLOWED_ENV.test(key) && typeof value === 'string' && value.length <= 256) {
+    if (ALLOWED_ENV.test(key) && !RESERVED_ENV.test(key) && typeof value === 'string' && value.length <= 256) {
       allowed[key] = value;
     }
   }
@@ -179,6 +182,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     const evidence = [
       `executor:${agentId}`,
       `task:${task.entity_id}`,
+      `execution_nonce:${randomUUID()}`,
       `provider:${result.provider}`,
       `assurance:${result.assurance}`,
       `argv_sha256:${digest(JSON.stringify(intent.argv))}`,

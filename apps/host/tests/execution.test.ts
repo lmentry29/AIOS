@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -9,7 +10,10 @@ import { runCapturedProcess } from '../src/execution/process.js';
 import { createSandboxProvider, type SandboxProvider, type SandboxResult, type SandboxRunSpec } from '../src/execution/sandbox.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
+import { ManagedExecutionPort } from '../src/execution/managed-execution.js';
+import { EXECUTION_BINDING_VERSION, executionResultBinding } from '../src/execution/evidence.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
+import { DurableOperationalStore } from '../src/persistence/operational-store.js';
 import { AGENT_ID, VERIFIER_ID, makeTask } from './fixtures.js';
 import { StubSandbox, makeExecutionConfig as executionConfig } from './sandbox-fixture.js';
 
@@ -301,10 +305,15 @@ describe('independent command verification', () => {
     const sandbox = new StubSandbox();
     const config = executionConfig();
     const workspaces = new RunWorkspaceManager(config.workspace_directory);
-    const executor = new LocalCommandExecutor(config, sandbox, workspaces);
-    const verifier = new LocalCommandVerifier(config, sandbox, workspaces);
+    const store = new DurableOperationalStore({ directory: mkdtempSync(join(tmpdir(), 'aios-execution-verify-')) });
+    const managed = new ManagedExecutionPort(
+      new LocalCommandExecutor(config, sandbox, workspaces),
+      store.executions,
+      1,
+    );
+    const verifier = new LocalCommandVerifier(config, sandbox, workspaces, { current: store.executions });
     const task = executableTask();
-    const result = await executor.executeTask(AGENT_ID, task);
+    const result = await managed.executeTask(AGENT_ID, task);
 
     const decision = await verifier.verify({
       task,
@@ -324,14 +333,28 @@ describe('independent command verification', () => {
     const sandbox = new StubSandbox();
     const config = executionConfig();
     const workspaces = new RunWorkspaceManager(config.workspace_directory);
-    const verifier = new LocalCommandVerifier(config, sandbox, workspaces);
+    const store = new DurableOperationalStore({ directory: mkdtempSync(join(tmpdir(), 'aios-execution-reject-')) });
+    const verifier = new LocalCommandVerifier(config, sandbox, workspaces, { current: store.executions });
     const task = executableTask();
+    const nonce = randomUUID();
+    const fabricated = { summary: 'self report', evidence: [`execution_nonce:${nonce}`, 'executor_claim:yes'] };
+    const attempt = store.executions.start({ task_id: task.entity_id, agent_id: AGENT_ID });
+    store.executions.complete(attempt.execution_id, [
+      `execution_binding:${EXECUTION_BINDING_VERSION}`,
+      `execution_nonce:${nonce}`,
+      `bound_result_sha256:${executionResultBinding({
+        execution_id: attempt.execution_id,
+        task_id: task.entity_id,
+        agent_id: AGENT_ID,
+        attempt: attempt.attempt,
+      }, fabricated)}`,
+    ]);
 
     sandbox.result = { exitCode: 9 };
     const rejected = await verifier.verify({
       task,
       agent_ids: [AGENT_ID],
-      execution_result: { summary: 'self report', evidence: ['executor says yes'] },
+      execution_result: fabricated,
     });
     expect(rejected.accepted).toBe(false);
     expect(rejected.reason).toContain('instead of 0');

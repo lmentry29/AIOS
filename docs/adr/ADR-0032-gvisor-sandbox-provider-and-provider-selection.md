@@ -360,3 +360,13 @@ keys, excess size/depth, unknown fields, wrong subject types and non-canonical s
 refused before verification. The signed rootfs digest is asserted equal to the measured digest
 that is materialized. Adversarial regression and seeded mutation-fuzz tests cover the parser
 and verifier. Production key provisioning and keyless identity remain open.
+
+## Amendment — attempt-bound execution evidence (2026-11-11)
+
+Verification acceptance now requires a durable attempt binding. Executor results are
+snapshotted as bounded plain data, hashed canonically with the attempt identity, and checked
+against a per-invocation nonce that must not have appeared in an earlier attempt. Evidence
+lines are parsed strictly, duplicate keys are rejected, and an unbound verifier can only
+deny. Task environments cannot inject verifier identity or signing/provider configuration.
+This closes the optional-ledger, non-canonical-digest and result-replay gaps; cross-process
+attestation and external audit custody remain open.

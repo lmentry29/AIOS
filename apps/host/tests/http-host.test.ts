@@ -11,7 +11,7 @@ import { ArtifactEntity } from '@aios/core';
 import type { TaskEntity, WorkflowEntity } from '@aios/core';
 import { loadHostConfig } from '../src/config.js';
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
-import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
+import { LocalCommandVerifier, type ExecutionLedgerRef } from '../src/execution/command-verifier.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { DurableAuthorizationAuditStore } from '../src/persistence/authorization-audit-store.js';
 import { createHostRuntime, type HostRuntime } from '../src/runtime.js';
@@ -65,7 +65,7 @@ const execution: AgentExecutionPort = {
   validateAgent: async (agentId) => agentId === AGENT_ID,
   executeTask: async (_agentId, task) => ({
     summary: `Test executor completed "${task.name}".`,
-    evidence: [`task:${task.entity_id}:executed`],
+    evidence: [`execution_nonce:${randomUUID()}`, `task:${task.entity_id}:executed`],
   }),
   coordinate: async () => {
     throw new Error('Coordination is not exercised by the host test suite.');
@@ -136,14 +136,16 @@ async function startHost(options: {
 
   const config = loadHostConfig(configPath);
   let sandbox: StubSandbox | undefined;
+  let ledgerRef: ExecutionLedgerRef | undefined;
   let localAdapters: { execution: LocalCommandExecutor; verification: LocalCommandVerifier } | undefined;
   if (localExecutionConfig) {
     sandbox = new StubSandbox();
     const executionConfig = localExecutionConfig;
     const workspaces = new RunWorkspaceManager(executionConfig.workspace_directory);
+    ledgerRef = {};
     localAdapters = {
       execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces),
-      verification: new LocalCommandVerifier(executionConfig, sandbox, workspaces),
+      verification: new LocalCommandVerifier(executionConfig, sandbox, workspaces, ledgerRef),
     };
   }
   const runtime = createHostRuntime({
@@ -156,6 +158,7 @@ async function startHost(options: {
       : { ...localAdapters, resolveAgent: async () => AGENT_ID }),
     ...(options.verification === undefined ? {} : { verification: options.verification }),
   });
+  if (ledgerRef !== undefined) ledgerRef.current = runtime.executions;
   const server = createHostServer(runtime);
   const address = await server.listen();
   cleanups.push(async () => {

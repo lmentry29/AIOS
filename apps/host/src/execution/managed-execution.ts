@@ -6,6 +6,7 @@ import {
   type ExecutionAttemptRequest,
   type TaskExecutionResult,
 } from '@aios/orchestration';
+import { HostExecutionError } from '../errors.js';
 import {
   SandboxFilterUnavailableError,
   SandboxIsolationUnavailableError,
@@ -14,6 +15,13 @@ import {
   WorkspaceQuotaExceededError,
 } from '../errors.js';
 import { type ExecutionLedger, type ExecutionRecord, evidenceDigest } from '../persistence/execution-ledger.js';
+import {
+  EXECUTION_BINDING_VERSION,
+  executionResultBinding,
+  isExecutionNonce,
+  parseEvidenceEntries,
+  snapshotExecutionResult,
+} from './evidence.js';
 
 export interface CancellableExecutionPort {
   cancelTask(taskId: string): boolean;
@@ -108,7 +116,32 @@ export class ManagedExecutionPort implements AgentExecutionPort {
       if (current?.execution_id !== execution.execution_id || current.state !== 'running') {
         throw new TaskCancelledError(task.entity_id);
       }
+      // Snapshot the attacker-controlled result under a fixed schema, then bind it to this
+      // exact attempt. A result replayed from another run, Task or Agent cannot validate.
+      const snapshot = snapshotExecutionResult(result);
+      const nonce = parseEvidenceEntries(snapshot.evidence).get('execution_nonce');
+      if (!isExecutionNonce(nonce)) {
+        throw new HostExecutionError(
+          'The executor result has no valid per-invocation execution nonce; replay cannot be distinguished.',
+        );
+      }
+      let binding: string;
+      try {
+        binding = executionResultBinding({
+          execution_id: execution.execution_id,
+          task_id: execution.task_id,
+          agent_id: execution.agent_id,
+          attempt: execution.attempt,
+        }, snapshot);
+      } catch (error) {
+        throw new HostExecutionError(
+          `The executor result could not be bound to its attempt: ${error instanceof Error ? error.message : 'invalid evidence'}.`,
+        );
+      }
       this.ledger.complete(execution.execution_id, [
+        `execution_binding:${EXECUTION_BINDING_VERSION}`,
+        `execution_nonce:${nonce}`,
+        `bound_result_sha256:${binding}`,
         `result_sha256:${evidenceDigest(result)}`,
         `evidence_sha256:${evidenceDigest(result.evidence)}`,
       ]);

@@ -13,6 +13,15 @@ import {
   SandboxResourceLimitUnavailableError,
 } from '../errors.js';
 import { evidenceDigest, type ExecutionLedger } from '../persistence/execution-ledger.js';
+import {
+  EXECUTION_BINDING_VERSION,
+  evidenceDigestEquals,
+  executionResultBinding,
+  isEvidenceDigest,
+  isExecutionNonce,
+  parseEvidenceEntries,
+  snapshotExecutionResult,
+} from './evidence.js';
 import type { SandboxProvider } from './sandbox.js';
 import { SECCOMP_DENIED_EXIT_CODE } from './seccomp.js';
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
@@ -64,12 +73,14 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     // Bind acceptance to the durable attempt rather than to whatever object reached this
     // port. The executor's committed record is the authority; a forged or replayed result
     // whose digest does not match it is rejected before the verification command runs.
-    let boundAttempt: { execution_id: string; attempt: number } | undefined;
-    if (this.ledger !== undefined) {
-      const ledger = this.ledger.current;
-      if (ledger === undefined) {
-        throw new HostExecutionError('The verifier is not bound to a durable execution ledger.');
-      }
+    let boundAttempt: { execution_id: string; attempt: number; binding: string } | undefined;
+    let bindingProblem: string | undefined;
+    const ledger = this.ledger?.current;
+    if (ledger === undefined) {
+      // The command may still run below for diagnostics, but no result can be accepted
+      // without a durable attempt binding.
+      bindingProblem = 'The verifier is not bound to a durable execution ledger.';
+    } else {
       const attempt = ledger.getForTask(request.task.entity_id);
       if (attempt === undefined) {
         return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
@@ -112,14 +123,62 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       if (attempt.state !== 'completed') {
         return this.rejectWithoutRunning('No completed durable execution attempt exists for this Task.');
       }
+      if (attempt.task_id !== request.task.entity_id) {
+        return this.rejectWithoutRunning('The durable attempt belongs to a different Task.');
+      }
       if (!request.agent_ids.includes(attempt.agent_id)) {
         return this.rejectWithoutRunning('The durable attempt was executed by a different principal.');
       }
-      const expected = attempt.evidence.find((entry) => entry.startsWith('result_sha256:'))?.slice('result_sha256:'.length);
-      if (expected === undefined || expected !== evidenceDigest(request.execution_result)) {
+      let entries: Map<string, string>;
+      try {
+        entries = parseEvidenceEntries(attempt.evidence);
+      } catch {
+        return this.rejectWithoutRunning('The durable attempt evidence is malformed or ambiguous.');
+      }
+      if (entries.get('execution_binding') !== EXECUTION_BINDING_VERSION) {
+        return this.rejectWithoutRunning(
+          'The durable attempt has no attempt-bound evidence; re-run the execution under the current evidence version.',
+        );
+      }
+      let snapshot: ReturnType<typeof snapshotExecutionResult>;
+      try {
+        snapshot = snapshotExecutionResult(request.execution_result);
+      } catch {
+        return this.rejectWithoutRunning('The executor result is not a bounded plain-data snapshot.');
+      }
+      let resultEntries: Map<string, string>;
+      try {
+        resultEntries = parseEvidenceEntries(snapshot.evidence);
+      } catch {
+        return this.rejectWithoutRunning('The executor result evidence is malformed or ambiguous.');
+      }
+      const nonce = resultEntries.get('execution_nonce');
+      if (!isExecutionNonce(nonce) || entries.get('execution_nonce') !== nonce) {
+        return this.rejectWithoutRunning(
+          'The executor result nonce does not belong to the durable attempt; a replayed result is rejected.',
+        );
+      }
+      const history = typeof ledger.listForTask === 'function' ? ledger.listForTask(attempt.task_id) : [];
+      if (history.some((record) => record.execution_id !== attempt.execution_id
+        && record.evidence.includes(`execution_nonce:${nonce}`))) {
+        return this.rejectWithoutRunning('The executor result nonce was already used by an earlier attempt; replay is rejected.');
+      }
+      let observed: string;
+      try {
+        observed = executionResultBinding({
+          execution_id: attempt.execution_id,
+          task_id: attempt.task_id,
+          agent_id: attempt.agent_id,
+          attempt: attempt.attempt,
+        }, snapshot);
+      } catch {
+        return this.rejectWithoutRunning('The executor result is not a bounded plain-data snapshot.');
+      }
+      const expected = entries.get('bound_result_sha256');
+      if (!isEvidenceDigest(expected) || !evidenceDigestEquals(expected, observed)) {
         return this.rejectWithoutRunning('The executor result does not match the durable attempt evidence.');
       }
-      boundAttempt = { execution_id: attempt.execution_id, attempt: attempt.attempt };
+      boundAttempt = { execution_id: attempt.execution_id, attempt: attempt.attempt, binding: observed };
     }
 
     const workspace = this.workspaces.getOrCreate(request.task.entity_id);
@@ -295,16 +354,19 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       };
     }
 
-    const accepted = !result.spawnError
+    const commandSucceeded = !result.spawnError
       && !result.timedOut
       && result.exitCode === expectedExitCode;
-    const reason = result.spawnError
-      ? 'Verification command could not be started.'
-      : result.timedOut
-        ? 'Verification command exceeded its time limit.'
-        : accepted
-          ? `Verification command exited with the expected code ${expectedExitCode}.`
-          : `Verification command exited with ${result.exitCode ?? 'no code'} instead of ${expectedExitCode}.`;
+    const accepted = bindingProblem === undefined && commandSucceeded;
+    const reason = bindingProblem !== undefined
+      ? `The verification command ${commandSucceeded ? 'completed' : 'did not complete'}, but acceptance was denied: ${bindingProblem}`
+      : result.spawnError
+        ? 'Verification command could not be started.'
+        : result.timedOut
+          ? 'Verification command exceeded its time limit.'
+          : accepted
+            ? `Verification command exited with the expected code ${expectedExitCode}.`
+            : `Verification command exited with ${result.exitCode ?? 'no code'} instead of ${expectedExitCode}.`;
 
     return {
       accepted,
@@ -313,6 +375,8 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       evidence: [
         `verifier:${this.verifier_id}`,
         `task:${request.task.entity_id}`,
+        'verification_evidence_version:2',
+        `execution_binding:${boundAttempt === undefined ? 'unbound' : 'attempt-v2'}`,
         `provider:${result.provider}`,
         `assurance:${result.assurance}`,
         `verification_argv_sha256:${digest(JSON.stringify(intent.argv))}`,
@@ -321,7 +385,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         `exit_code:${result.exitCode ?? 'none'}`,
         `expected_exit_code:${expectedExitCode}`,
         `timed_out:${result.timedOut}`,
-        `executor_result_sha256:${digest(JSON.stringify(request.execution_result))}`,
+        `executor_result_sha256:${boundAttempt?.binding ?? 'unbound'}`,
         ...(result.filter === undefined
           ? []
           : [

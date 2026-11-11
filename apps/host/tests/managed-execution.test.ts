@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,7 +47,7 @@ describe('managed execution lifecycle', () => {
         actor_id: 'human:founder',
         reason_code: 'cancelled_by_request',
       });
-      late.release({ summary: 'late success', evidence: ['late:evidence'] });
+      late.release({ summary: 'late success', evidence: [`execution_nonce:${randomUUID()}`, 'late:evidence'] });
 
       await expect(running).rejects.toBeInstanceOf(TaskCancelledError);
       expect(store.executions.getForTask(task.entity_id)).toMatchObject({
@@ -71,7 +72,7 @@ describe('managed execution lifecycle', () => {
       await expect(execution.executeTask(AGENT_ID, second)).rejects.toThrow(/concurrency limit is full/);
       expect(store.executions.getForTask(second.entity_id)).toBeUndefined();
 
-      late.release({ summary: 'first success', evidence: ['first:evidence'] });
+      late.release({ summary: 'first success', evidence: [`execution_nonce:${randomUUID()}`, 'first:evidence'] });
       await expect(running).resolves.toMatchObject({ summary: 'first success' });
       expect(store.executions.getForTask(first.entity_id)?.state).toBe('completed');
     } finally {

@@ -477,3 +477,8 @@ Statement v2 (2026-11-11) hardens signed-artifact parsing: strict JSON with no d
 prototype keys, bounded size/depth, exact fields, canonical signatures and a v1 rejection.
 Adversarial regression tests and seeded mutation fuzzing pass locally; production trust-root
 provisioning remains the blocking operator action.
+
+Execution evidence (2026-11-11) is now attempt-bound canonical plain data with strict evidence
+parsing, per-invocation nonce replay rejection and mandatory durable-ledger acceptance. Local
+gate and focused tests pass. Open: cross-process evidence attestation, production trust-root
+provisioning, Sigstore/SLSA identity, macOS and rootless-Docker measurement.

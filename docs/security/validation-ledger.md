@@ -1237,3 +1237,14 @@ provisioned and are not claimed.
 - Focused `artifact-signing`, `artifact-signing-adversarial`, `gvisor`, `gvisor-provenance` — 54 passed.
 - `TURBO_CACHE_DIR=/tmp/aios-turbo pnpm turbo build lint typecheck test --force` — 46/46 tasks, 0 cached; host 209 passed / 17 skipped; integration 43; orchestration 30.
 - Coverage: 12 hostile-input regression tests plus 250 statement and 150 trust-root seeded mutations; invariant test binds signed manifest digest to measured and executed rootfs. Statement schema bumped to 2; v1 rejected. Production trust root, Sigstore identity and SLSA provenance remain unprovisioned and unclaimed.
+
+## Executor/verifier evidence hardening (2026-11-11)
+
+- New `apps/host/src/execution/evidence.ts`: canonical plain-data snapshots, attempt-bound
+  result digests, strict `key:value` evidence parsing and constant-time digest comparison.
+- `ManagedExecutionPort` records `execution_binding:attempt-v2`, `execution_nonce` and
+  `bound_result_sha256`; the verifier requires all three and rejects prior-attempt nonces.
+- Focused evidence/execution/verifier/journal/seccomp/quota tests passed; full uncached gate:
+  46/46 tasks, 0 cached; host 218 passed / 17 skipped; integration 43; conformance 107.
+- Coverage: `apps/host/tests/evidence-binding.test.ts` (9 tests) plus the existing verifier
+  binding, journal recovery, seccomp and HTTP tests. Legacy attempt evidence is rejected.

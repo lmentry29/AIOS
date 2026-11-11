@@ -160,3 +160,11 @@ imply keyless identity or SLSA provenance.
 Statement v2 additionally requires strict, bounded JSON: duplicate/prototype keys, unknown
 fields, oversized/deep documents and non-canonical signatures fail closed before any trust
 decision. Version 1 statements are rejected.
+
+## Executor/verifier evidence (2026-11-11)
+
+Verification acceptance requires durable attempt evidence with canonical result binding and a
+per-invocation nonce; replayed, cross-Task, legacy, malformed, duplicated or tampered
+evidence fails closed before the verification command runs. An unbound verifier can run a
+command for diagnostics but cannot accept. This applies to every provider and does not
+change platform isolation claims.
