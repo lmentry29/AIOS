@@ -115,6 +115,14 @@ describe('ToolAbstractionService — enable / disable', () => {
     expect(svc.get(installed.entity_id)?.version).toBe(1);
   });
 
+  it('exposes no plugin invocation path, so installed metadata cannot execute', async () => {
+    const svc = new ToolAbstractionService();
+    const plugin = await svc.install(pluginSpec());
+    expect(plugin.install_status).toBe('installed');
+    expect('invoke' in svc).toBe(false);
+    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(svc))).not.toContain('invoke');
+  });
+
   it('throws PluginNotFoundError for an unknown id', async () => {
     const svc = new ToolAbstractionService();
     await expect(svc.enable(crypto.randomUUID())).rejects.toThrow(PluginNotFoundError);

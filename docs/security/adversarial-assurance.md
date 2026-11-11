@@ -15,10 +15,13 @@ Security workflow with real binaries.
 | Forged verification evidence | covered | `evidence-binding.test.ts`, `verifier-binding.test.ts`, `managed-execution.test.ts`; verifier cannot accept without a durable bound attempt |
 | Credential / identity leakage across executor and verifier | covered | reserved `AIOS_*` environment filtering in `command-executor.ts`; executor/verifier binding tests; env-injection tests in `evidence-binding.test.ts` |
 | Privilege escalation across sandbox/executor boundary | measured on Linux only | `sandbox-live.test.ts`, `seccomp-live.test.ts`, `workspace-quota-live.test.ts`, `adversarial-drill.mjs` (bubblewrap, rootful Docker, gVisor) |
-| Unauthorized delegation / excessive agency | unmeasured | AIOS has no connector/tool execution loop or agent-to-agent delegation path in this runtime. Residual risk becomes active when such a surface is added; it must reuse exact authorization and verifier separation. |
-| Connector/tool poisoning | unmeasured | No connector or tool adapter executes in this runtime. Connector output must never be treated as authorization. |
-| Memory/context poisoning affecting a privileged decision | unmeasured | Founder memory has human-approved writes and no privileged decision path; the agent/LLM memory loop does not exist here. |
-| Prompt injection reaching a privileged or destructive path | unmeasured | Executor output is untrusted and cannot self-attest; there is no LLM/tool loop that can invoke privileged host actions. `adversarial-drill.mjs` covers malformed agent output reaching verification, not a live LLM. |
+| Unauthorized delegation / excessive agency | covered at the existing boundary; no delegation surface | `orchestration-kernel.test.ts` requires exact `execute`/`coordinate` grants before execution; `agent-runner.ts` is lifecycle-only and `tool-service.ts` has no `invoke`; `tool-service.test.ts` asserts the absence of an invocation method. No sub-agent spawn exists. |
+| Connector/tool poisoning | covered for read-only connector evidence; tool execution absent | `local-connectors.test.ts` denies before fetch on authorization failure, rejects malformed/oversized results and now proves provider-supplied `source_id` cannot choose provenance (prompt-like text remains data). `tool-service.test.ts` proves installed Plugin metadata cannot execute. |
+| Memory/context poisoning affecting a privileged decision | covered for writes; no privileged decision consumer | `memory-approval.test.ts` covers missing, unknown, expired, replayed and altered-content approvals; `local-runtime.ts` does not feed LearningService memory into authorization or lifecycle decisions. |
+| Prompt injection reaching a privileged or destructive path | covered at host boundary; model-level path absent | `adversarial-drill.mjs` case 17 proves hostile Task metadata is data with an exact argv digest and does not reach evidence; there is no LLM/tool loop in the runtime. Model-level prompt injection is unmeasured. |
+
+See [privileged-surface-inventory.md](privileged-surface-inventory.md) for the searches and modules
+behind the connector, tool, delegation, memory and prompt conclusions.
 
 ## Running the suites
 
@@ -42,8 +45,11 @@ the controls rather than passing vacuously.
 ## Residual risk
 
 - macOS and rootless Docker are not measured. Linux results are not extrapolated.
-- Connector, tool, memory/context-poisoning and prompt-injection classes are unmeasured because
-  the corresponding privileged runtime does not exist; adding one requires a new adversarial
-  review before it can be trusted.
+- Connector and tool metadata surfaces exist but are read-only/non-executing; the connector
+  evidence path and the absence of plugin invocation are directly tested. A future execution
+  adapter or model consumer must repeat the adversarial review.
+- Memory writes are approval-gated but memory content is not a privileged decision input today;
+  model-level prompt injection and memory poisoning remain unmeasured until such a consumer exists.
+- Linux live results are not extrapolated to macOS or rootless Docker.
 - Archive handling relies on Docker/OCI export and re-measurement rather than parsing arbitrary
   tar streams in the host.

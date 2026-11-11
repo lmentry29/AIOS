@@ -101,3 +101,14 @@ Strict parsers, signed evidence, build attestations, symlink accounting and atom
 have seeded mutation/property tests and fault injection in the gate. Two signature controls were
 temporarily removed to show their tests fail, then restored. The coverage matrix records each
 class as covered or unmeasured; no macOS/rootless-Docker extrapolation is made.
+
+## F-026 — prior “surface does not exist” claim was unproven
+
+**Status:** corrected; read-only connector and metadata-only tool surfaces are now evidenced.
+
+The prior matrix asserted connector/tool/memory/prompt surfaces were absent without inventory.
+Concrete modules were found: `local-connectors.ts`, `tool-service.ts`, `agent-runner.ts` and
+`learning-service.ts`. Tests now prove connector provenance cannot be chosen by the provider,
+tool metadata has no invocation path, orchestration requires exact grants, and memory promotion
+requires a content-bound approval. Model-level prompt injection remains unmeasured because no
+LLM/tool loop exists. See `docs/security/privileged-surface-inventory.md`.

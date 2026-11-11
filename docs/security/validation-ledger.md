@@ -1301,3 +1301,18 @@ provisioned and are not claimed.
 - Control-bypass demonstration: removing either signature check failed its targeted test;
   restoring it produced the green gate. Coverage matrix and unmeasured classes are in
   `docs/security/adversarial-assurance.md`.
+
+## Privileged-surface verification (2026-11-11, `9116ad3`)
+
+- Verified the real surfaces instead of trusting the prior matrix: `local-connectors.ts` is a
+  read-only, separately authorized evidence reader; `tool-service.ts` is metadata-only with no
+  `invoke`; `agent-runner.ts` is lifecycle-only; `LearningService` permanent promotion requires
+  a human-authorized, content-bound approval; no LLM/prompt/tool loop exists in the host.
+- Added connector poisoning regression proving provider-supplied `source_id`/`source_type` cannot
+  choose provenance, and a tool-service regression proving no invocation method exists.
+- Re-ran host JSON reporter: 264 total, 247 passed, 17 skipped, 0 failed; skipped files are the
+  three live sandbox suites, executed by Security. All matrix-named host tests exist and pass.
+- Full uncached gate: 46/46 tasks, 0 cached; host 247 passed / 17 skipped after the connector
+  and tool regressions; integration 43; conformance 107; orchestration 30.
+- Control-bypass re-verification: temporarily removed the build-attestation signature check and
+  observed its forged-signature test fail, then restored it and reran the gate green.
