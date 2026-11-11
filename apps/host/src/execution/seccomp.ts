@@ -74,6 +74,40 @@ export interface SeccompProfile {
   filter: Buffer;
 }
 
+export interface DockerSeccompProfile {
+  profile: string;
+  sha256: string;
+}
+
+/**
+ * Docker's libseccomp profile for the same deny-list used by bubblewrap.
+ *
+ * Docker reads this JSON on the client side and sends the parsed policy to the daemon;
+ * the workload cannot alter it. `SCMP_ACT_KILL` produces SIGSYS, matching the bubblewrap
+ * filter's kill-on-denied-syscall behavior. The architecture guard is explicit so a
+ * foreign ABI cannot bypass the syscall names.
+ */
+export function buildDockerSeccompProfile(arch: string = process.arch): DockerSeccompProfile {
+  const architecture = ARCHITECTURES[arch];
+  if (architecture === undefined) {
+    throw new Error(`No Docker seccomp profile is defined for architecture ${arch}.`);
+  }
+  const profile = JSON.stringify({
+    defaultAction: 'SCMP_ACT_ALLOW',
+    architectures: [architecture.key === 'x64' ? 'SCMP_ARCH_X86_64' : 'SCMP_ARCH_AARCH64'],
+    syscalls: [
+      {
+        names: Object.keys(DENIED_SYSCALLS),
+        action: 'SCMP_ACT_KILL',
+      },
+    ],
+  });
+  return {
+    profile,
+    sha256: createHash('sha256').update(profile).digest('hex'),
+  };
+}
+
 function instruction(code: number, jt: number, jf: number, k: number): Buffer {
   const bytes = Buffer.alloc(8);
   bytes.writeUInt16LE(code, 0);

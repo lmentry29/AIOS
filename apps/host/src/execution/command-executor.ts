@@ -17,6 +17,7 @@ import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
 const MAX_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_BYTES = 1_048_576;
+const BOUNDARY_PROVIDERS = new Set(['bubblewrap', 'docker']);
 
 function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
@@ -132,9 +133,9 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (result.cancelled) {
       throw new TaskCancelledError(task.entity_id);
     }
-    // The bubblewrap adapter must provide proof that the system-call filter was active
+    // Every production boundary must provide proof that its system-call filter was active
     // before exec. Missing or failed evidence is a denial, never an unfiltered success.
-    if (this.provider.id === 'bubblewrap' && result.filter?.applied !== true) {
+    if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.filter?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxFilterUnavailableError(
         `The system-call filter was not active for this run: ${result.filter?.reason ?? 'no filter evidence'}.`,
@@ -142,7 +143,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     // Resource limits are part of the same pre-exec proof: a run whose limits were not
     // installed is denied rather than allowed to consume unbounded host resources.
-    if (this.provider.id === 'bubblewrap' && result.limits?.applied !== true) {
+    if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.limits?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxResourceLimitUnavailableError(
         `The per-run resource limits were not active: ${result.limits?.reason ?? 'no resource-limit evidence'}.`,
@@ -187,6 +188,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       ...(result.limits === undefined
         ? []
         : [
+            `resource_limit_mechanism:${result.limits.mechanism ?? 'unknown'}`,
             `resource_limit_memory_bytes:${result.limits.memory_bytes}`,
             `resource_limit_cpu_seconds:${result.limits.cpu_seconds}`,
             `resource_limit_processes:${result.limits.processes}`,
@@ -226,12 +228,12 @@ export class LocalCommandExecutor implements AgentExecutionPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
-        if (this.provider.id === 'bubblewrap' && this.availability.filterFailure === true) {
+        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.filterFailure === true) {
           throw new SandboxFilterUnavailableError(
             `Local execution is unavailable because the system-call filter failed: ${this.availability.reason}`,
           );
         }
-        if (this.provider.id === 'bubblewrap' && this.availability.resourceLimitFailure === true) {
+        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.resourceLimitFailure === true) {
           throw new SandboxResourceLimitUnavailableError(
             `Local execution is unavailable because the per-run resource limits failed: ${this.availability.reason}`,
           );
@@ -248,12 +250,12 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {
-      if (this.provider.id === 'bubblewrap' && check.filterFailure === true) {
+      if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.filterFailure === true) {
         throw new SandboxFilterUnavailableError(
           `Local execution is unavailable because the system-call filter failed: ${check.reason}`,
         );
       }
-      if (this.provider.id === 'bubblewrap' && check.resourceLimitFailure === true) {
+      if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.resourceLimitFailure === true) {
         throw new SandboxResourceLimitUnavailableError(
           `Local execution is unavailable because the per-run resource limits failed: ${check.reason}`,
         );

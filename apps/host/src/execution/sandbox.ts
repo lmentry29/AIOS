@@ -3,9 +3,18 @@ import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, wri
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { SandboxProviderKind } from '../config.js';
-import { HostUnavailableError, SandboxFilterUnavailableError } from '../errors.js';
-import { runCapturedProcess } from './process.js';
-import { buildSeccompProfile, type SeccompProfile } from './seccomp.js';
+import {
+  HostUnavailableError,
+  SandboxFilterUnavailableError,
+  SandboxResourceLimitUnavailableError,
+} from '../errors.js';
+import { runCapturedProcess, type CapturedProcessResult } from './process.js';
+import {
+  buildDockerSeccompProfile,
+  buildSeccompProfile,
+  type DockerSeccompProfile,
+  type SeccompProfile,
+} from './seccomp.js';
 
 export type SandboxAssurance = 'container' | 'kernel-namespace' | 'seatbelt' | 'test-only-process';
 
@@ -43,6 +52,8 @@ export interface SandboxResourceLimitEvidence {
   cpu_seconds: number;
   processes: number;
   applied: boolean;
+  /** The enforcement mechanism actually proven by the provider. */
+  mechanism?: 'rlimit' | 'docker-cgroup';
   reason?: string;
 }
 
@@ -50,6 +61,14 @@ export interface SandboxResourceLimitEvidence {
 export const BWRAP_MEMORY_MAX_BYTES = 1280 * 1024 * 1024;
 /** RLIMIT_NPROC applied to the sandboxed UID. */
 export const BWRAP_MAX_PROCESSES = 128;
+
+/** Docker's aggregate memory ceiling, with swap disabled by an equal memory-swap value. */
+export const DOCKER_MEMORY_BYTES = 512 * 1024 * 1024;
+/** Docker's aggregate PID ceiling; the per-process RLIMIT_NPROC is installed as well. */
+export const DOCKER_MAX_PROCESSES = 128;
+/** Docker's aggregate CPU quota. The deadline-aligned RLIMIT_CPU is installed too. */
+export const DOCKER_CPU_LIMIT = 1;
+export const DOCKER_NANO_CPUS = DOCKER_CPU_LIMIT * 1_000_000_000;
 
 /** RLIMIT_CPU is aligned to the run's own deadline, in whole seconds. */
 export function bubblewrapCpuSeconds(timeoutMs: number): number {
@@ -122,6 +141,34 @@ function assertWorkspace(workspaceDirectory: string): string {
   return resolve(workspaceDirectory);
 }
 
+interface DockerInspect {
+  Config?: { User?: string };
+  HostConfig?: {
+    ReadonlyRootfs?: boolean;
+    NetworkMode?: string;
+    CapDrop?: string[];
+    SecurityOpt?: string[];
+    PidsLimit?: number | null;
+    Memory?: number;
+    MemorySwap?: number;
+    NanoCpus?: number;
+    Ulimits?: Array<{ Name?: string; Soft?: number; Hard?: number }>;
+  };
+  Mounts?: Array<{ Type?: string; Source?: string; Destination?: string; RW?: boolean }>;
+  State?: { ExitCode?: number; Running?: boolean };
+}
+
+function dockerWorkdir(cwd: string | undefined): string {
+  if (cwd === undefined || cwd === '' || cwd === '.') return '/workspace';
+  if (isAbsolute(cwd) || cwd.includes('\0') || cwd.includes('\\')) {
+    throw new HostUnavailableError('Docker cwd must be a relative POSIX path inside the workspace.');
+  }
+  if (cwd.split('/').includes('..')) {
+    throw new HostUnavailableError('Docker cwd must stay inside the run workspace.');
+  }
+  return `/workspace/${cwd}`;
+}
+
 class DockerSandbox implements SandboxProvider {
   readonly id = 'docker';
   readonly assurance = 'container' as const;
@@ -129,74 +176,151 @@ class DockerSandbox implements SandboxProvider {
   constructor(private readonly image: string) {}
 
   async check(): Promise<SandboxCheck> {
-    const info = await runCapturedProcess(
-      'docker',
-      ['info', '--format', '{{.ServerVersion}}'],
-      { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }, timeoutMs: 5_000, maxOutputBytes: 1024 },
-    );
-    if (info.spawnError) return { available: false, reason: 'The Docker CLI is not installed or not on PATH.' };
-    if (info.exitCode !== 0) {
-      return { available: false, reason: 'The Docker daemon is not reachable; a container sandbox cannot be established.' };
+    const info = await this.docker(['info', '--format', '{{.ServerVersion}}'], 5_000, 1024);
+    if (info.spawnError) {
+      return { available: false, reason: 'The Docker CLI is not installed or not on PATH.' };
     }
-    const inspected = await runCapturedProcess(
-      'docker',
+    if (info.exitCode !== 0) {
+      return {
+        available: false,
+        reason: `The Docker daemon is not reachable: ${DockerSandbox.detail(info)}`,
+      };
+    }
+    const inspected = await this.docker(
       ['image', 'inspect', this.image, '--format', '{{.Id}}'],
-      { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }, timeoutMs: 10_000, maxOutputBytes: 1024 },
+      10_000,
+      1024,
     );
-    if (inspected.exitCode !== 0) {
+    if (inspected.spawnError || inspected.exitCode !== 0) {
       return {
         available: false,
         reason: `The configured sandbox image "${this.image}" is not present locally; the host does not pull images implicitly.`,
       };
     }
-    return { available: true, reason: 'Docker daemon and sandbox image are available.' };
+
+    // Daemon and image presence are not enough: cgroup, seccomp, mount, or namespace
+    // support may still be missing. Start the same boundary once with a harmless probe.
+    const directory = mkdtempSync(join(tmpdir(), 'aios-docker-probe-'));
+    try {
+      const probe = await this.run({
+        argv: ['/bin/true'],
+        workspaceDirectory: directory,
+        cwd: '.',
+        timeoutMs: 5_000,
+        maxOutputBytes: 1024,
+        env: {},
+      });
+      if (probe.spawnError !== undefined || probe.exitCode !== 0) {
+        return { available: false, reason: 'The Docker sandbox probe did not complete successfully.' };
+      }
+      if (probe.filter?.applied !== true) {
+        return {
+          available: false,
+          filterFailure: true,
+          reason: `The custom seccomp profile was not proven active: ${probe.filter?.reason ?? 'no filter evidence'}`,
+        };
+      }
+      if (probe.limits?.applied !== true) {
+        return {
+          available: false,
+          resourceLimitFailure: true,
+          reason: `The Docker isolation limits were not proven active: ${probe.limits?.reason ?? 'no limit evidence'}`,
+        };
+      }
+      return { available: true, reason: 'Docker passed its container, seccomp and resource-limit probe.' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error';
+      return {
+        available: false,
+        ...(error instanceof SandboxFilterUnavailableError ? { filterFailure: true } : {}),
+        ...(error instanceof SandboxResourceLimitUnavailableError ? { resourceLimitFailure: true } : {}),
+        reason: `The Docker sandbox probe failed: ${message}`,
+      };
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   }
 
   async run(spec: SandboxRunSpec): Promise<SandboxResult> {
     const workspace = assertWorkspace(spec.workspaceDirectory);
+    if (workspace.includes(',') || workspace.includes('\n') || workspace.includes('\r')) {
+      throw new HostUnavailableError('The Docker workspace path contains an unsupported delimiter.');
+    }
+    if (spec.argv.length === 0 || spec.argv[0] === undefined || spec.argv[0].length === 0) {
+      throw new HostUnavailableError('A Docker sandbox command must have a non-empty argv.');
+    }
+    const workdir = dockerWorkdir(spec.cwd);
+    const cpuSeconds = bubblewrapCpuSeconds(spec.timeoutMs);
+    const profile = buildDockerSeccompProfile();
+    const profileDirectory = mkdtempSync(join(tmpdir(), 'aios-docker-seccomp-'));
+    const profilePath = join(profileDirectory, 'profile.json');
+    writeFileSync(profilePath, profile.profile, { mode: 0o600 });
     const containerName = `aios-${randomUUID()}`;
-    const mount = `type=bind,src=${workspace},dst=/workspace,rw`;
-    const workdir = spec.cwd === undefined ? '/workspace' : `/workspace/${spec.cwd}`;
-    // The workspace is mode 0700. Running the container as the host UID/GID keeps
-    // that permission meaningful; a fixed nobody UID would make every command fail
-    // to read its own workspace. On non-POSIX hosts the container default is used.
     const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
     const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
     const user = uid === undefined || gid === undefined ? undefined : `${uid}:${gid}`;
     const args = [
-      'run',
-      '--rm',
+      'create',
       '--name', containerName,
+      '--init',
       '--network=none',
       '--read-only',
       '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
       '--cap-drop=ALL',
       '--security-opt=no-new-privileges',
-      '--pids-limit=128',
-      '--memory=512m',
-      '--cpus=1',
-      '--mount', mount,
+      '--security-opt', `seccomp=${profilePath}`,
+      '--pids-limit', String(DOCKER_MAX_PROCESSES),
+      '--memory', String(DOCKER_MEMORY_BYTES),
+      '--memory-swap', String(DOCKER_MEMORY_BYTES),
+      '--cpus', String(DOCKER_CPU_LIMIT),
+      '--ulimit', `as=${BWRAP_MEMORY_MAX_BYTES}:${BWRAP_MEMORY_MAX_BYTES}`,
+      '--ulimit', `cpu=${cpuSeconds}:${cpuSeconds}`,
+      '--mount', `type=bind,src=${workspace},dst=/workspace,rw`,
       '--workdir', workdir,
       ...(user === undefined ? [] : ['--user', user]),
+      '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
       '--env', 'HOME=/tmp',
       '--env', 'TMPDIR=/tmp',
       ...Object.entries(spec.env).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
+      '--entrypoint', spec.argv[0],
       this.image,
-      ...spec.argv,
+      ...spec.argv.slice(1),
     ];
-    // Killing the Docker CLI alone leaves the container running. On cancellation, issue an
-    // explicit `docker kill` for this run's unique container name. The kill is best-effort
-    // relative to the CLI abort; `--rm` still removes the container after it stops.
+    let created = false;
     const killContainer = () => {
-      void runCapturedProcess('docker', ['kill', containerName], {
-        env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
-        timeoutMs: 5_000,
-        maxOutputBytes: 1024,
-      });
+      if (!created) return;
+      void this.docker(['kill', containerName], 5_000, 1024);
     };
-    spec.signal?.addEventListener('abort', killContainer, { once: true });
+    const onAbort = () => killContainer();
+    if (spec.signal?.aborted) onAbort();
+    else spec.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      return await spawnProvider('docker', args, {
+      const creation = await this.docker(args, 15_000, 4096);
+      if (creation.spawnError !== undefined) {
+        throw new HostUnavailableError(`The Docker CLI could not start: ${creation.spawnError}`);
+      }
+      if (creation.exitCode !== 0) {
+        throw new HostUnavailableError(`The Docker container could not be created: ${DockerSandbox.detail(creation)}`);
+      }
+      created = true;
+
+      // Inspect before execution. These are daemon-reported controls, not workload
+      // self-report: read-only root, no network, dropped capabilities, no-new-privileges,
+      // cgroup memory/PID/CPU limits, per-process rlimits, workspace mount, and non-root UID.
+      const before = await this.inspect(containerName);
+      const controls = this.controlEvidence(before, workspace, profile, cpuSeconds, user);
+      if (!controls.filter.applied) {
+        throw new SandboxFilterUnavailableError(
+          `The Docker seccomp profile was not active: ${controls.filter.reason ?? 'no filter evidence'}.`,
+        );
+      }
+      if (!controls.limits.applied) {
+        throw new SandboxResourceLimitUnavailableError(
+          `The Docker resource limits were not active: ${controls.limits.reason ?? 'no limit evidence'}.`,
+        );
+      }
+
+      const started = await spawnProvider('docker', ['start', '--attach', containerName], {
         id: this.id,
         assurance: this.assurance,
         timeoutMs: spec.timeoutMs,
@@ -204,9 +328,111 @@ class DockerSandbox implements SandboxProvider {
         env: {},
         ...(spec.signal === undefined ? {} : { signal: spec.signal }),
       });
+      let exitCode = started.exitCode;
+      if (!started.timedOut && !started.cancelled && started.spawnError === undefined) {
+        const after = await this.inspect(containerName);
+        if (after.State?.ExitCode !== undefined) exitCode = after.State.ExitCode;
+      }
+      return { ...started, exitCode, filter: controls.filter, limits: controls.limits };
     } finally {
-      spec.signal?.removeEventListener('abort', killContainer);
+      spec.signal?.removeEventListener('abort', onAbort);
+      if (created) {
+        // The CLI dying does not stop the container. Remove it explicitly for normal
+        // exits, timeouts, cancellation, quota aborts, and provider errors.
+        await this.docker(['kill', containerName], 5_000, 1024);
+        await this.docker(['rm', '--force', containerName], 5_000, 1024);
+      }
+      rmSync(profileDirectory, { recursive: true, force: true });
     }
+  }
+
+  private async inspect(containerName: string): Promise<DockerInspect> {
+    const result = await this.docker(
+      ['inspect', '--format', '{{json .}}', containerName],
+      10_000,
+      256 * 1024,
+    );
+    if (result.spawnError !== undefined || result.exitCode !== 0) {
+      throw new HostUnavailableError(`The Docker container could not be inspected: ${DockerSandbox.detail(result)}`);
+    }
+    try {
+      return JSON.parse(result.stdout.toString('utf8')) as DockerInspect;
+    } catch {
+      throw new HostUnavailableError('The Docker inspect output was not valid JSON.');
+    }
+  }
+
+  private controlEvidence(
+    inspected: DockerInspect,
+    workspace: string,
+    profile: DockerSeccompProfile,
+    cpuSeconds: number,
+    user: string | undefined,
+  ): { filter: SandboxFilterEvidence; limits: SandboxResourceLimitEvidence } {
+    const host = inspected.HostConfig ?? {};
+    const security = Array.isArray(host.SecurityOpt) ? host.SecurityOpt : [];
+    const capDrop = Array.isArray(host.CapDrop) ? host.CapDrop : [];
+    const ulimits = Array.isArray(host.Ulimits) ? host.Ulimits : [];
+    const hasUlimit = (name: string, value: number): boolean => ulimits.some(
+      (entry) => entry.Name === name && entry.Soft === value && entry.Hard === value,
+    );
+    const mount = (inspected.Mounts ?? []).find((entry) => entry.Destination === '/workspace');
+    const seccompApplied = security.some((entry) => entry.startsWith('seccomp=') && entry !== 'seccomp=unconfined');
+    const checks: Array<[string, boolean]> = [
+      ['read-only root filesystem', host.ReadonlyRootfs === true],
+      ['network none', host.NetworkMode === 'none'],
+      ['all capabilities dropped', capDrop.includes('ALL')],
+      ['no-new-privileges', security.some((entry) => entry.startsWith('no-new-privileges'))],
+      ['PID limit', host.PidsLimit === DOCKER_MAX_PROCESSES],
+      ['memory limit', host.Memory === DOCKER_MEMORY_BYTES],
+      ['swap disabled', host.MemorySwap === DOCKER_MEMORY_BYTES],
+      ['CPU quota', host.NanoCpus === DOCKER_NANO_CPUS],
+      ['address-space rlimit', hasUlimit('as', BWRAP_MEMORY_MAX_BYTES)],
+      ['CPU rlimit', hasUlimit('cpu', cpuSeconds)],
+      [
+        'workspace only mount',
+        mount !== undefined
+          && mount.Type === 'bind'
+          && mount.RW === true
+          && mount.Source !== undefined
+          && resolve(mount.Source) === resolve(workspace),
+      ],
+      ...(user === undefined ? [] : [['non-root user', inspected.Config?.User === user] as [string, boolean]]),
+    ];
+    const missing = checks.filter(([, applied]) => !applied).map(([name]) => name);
+    return {
+      filter: {
+        profile: profile.profile,
+        sha256: profile.sha256,
+        applied: seccompApplied,
+        ...(seccompApplied ? {} : { reason: 'the custom seccomp profile is absent from HostConfig.SecurityOpt' }),
+      },
+      limits: {
+        memory_bytes: DOCKER_MEMORY_BYTES,
+        cpu_seconds: cpuSeconds,
+        processes: DOCKER_MAX_PROCESSES,
+        applied: missing.length === 0,
+        mechanism: 'docker-cgroup',
+        ...(missing.length === 0 ? {} : { reason: `missing or mismatched controls: ${missing.join(', ')}` }),
+      },
+    };
+  }
+
+  private async docker(
+    args: string[],
+    timeoutMs: number,
+    maxOutputBytes: number,
+  ): Promise<CapturedProcessResult> {
+    return runCapturedProcess('docker', args, {
+      env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
+      timeoutMs,
+      maxOutputBytes,
+    });
+  }
+
+  private static detail(result: CapturedProcessResult): string {
+    const line = result.stderr.toString('utf8').trim().split('\n')[0] ?? '';
+    return (line.length > 0 ? line : `exit ${result.exitCode ?? 'unknown'}`).slice(0, 240);
   }
 }
 
@@ -381,6 +607,7 @@ class BubblewrapSandbox implements SandboxProvider {
           cpu_seconds: cpuSeconds,
           processes: BWRAP_MAX_PROCESSES,
           applied: limitsApplied,
+          mechanism: 'rlimit',
           ...(limitsApplied ? {} : { reason: marker.length > 0 ? `resource-limit marker was "${marker}"` : 'resource-limit marker was not written' }),
         },
       };

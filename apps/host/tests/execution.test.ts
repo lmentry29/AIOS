@@ -179,11 +179,49 @@ describe('docker provider command construction', () => {
     const directory = mkdtempSync(join(tmpdir(), 'aios-fake-docker-'));
     const argsFile = join(directory, 'args.txt');
     const docker = join(directory, 'docker');
-    writeFileSync(docker, `#!/bin/sh
-if [ "$1" = "info" ]; then echo 'test-daemon'; exit 0; fi
-if [ "$1" = "image" ]; then echo 'sha256:test'; exit 0; fi
-if [ "$1" = "run" ]; then printf '%s\\n' "$@" > '${argsFile}'; exit 0; fi
-exit 1
+    writeFileSync(docker, `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const argsFile = ${JSON.stringify(argsFile)};
+if (args[0] === 'info') { console.log('test-daemon'); process.exit(0); }
+if (args[0] === 'image') { console.log('sha256:test'); process.exit(0); }
+if (args[0] === 'create') {
+  fs.writeFileSync(argsFile, args.join('\\n'));
+  console.log('fake-container');
+  process.exit(0);
+}
+if (args[0] === 'inspect') {
+  const saved = fs.readFileSync(argsFile, 'utf8').split('\\n');
+  const mount = saved[saved.indexOf('--mount') + 1] ?? '';
+  const source = /src=([^,]+)/.exec(mount)?.[1] ?? '/tmp/fake-workspace';
+  const cpuArg = saved.find((entry) => entry.startsWith('cpu=')) ?? 'cpu=1:1';
+  const cpu = Number(cpuArg.split('=')[1].split(':')[0]);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const gid = typeof process.getgid === 'function' ? process.getgid() : 0;
+  console.log(JSON.stringify({
+    Config: { User: uid + ':' + gid },
+    HostConfig: {
+      ReadonlyRootfs: true,
+      NetworkMode: 'none',
+      CapDrop: ['ALL'],
+      SecurityOpt: ['no-new-privileges:true', 'seccomp=/tmp/fake-seccomp.json'],
+      PidsLimit: 128,
+      Memory: 536870912,
+      MemorySwap: 536870912,
+      NanoCpus: 1000000000,
+      Ulimits: [
+        { Name: 'as', Soft: 1342177280, Hard: 1342177280 },
+        { Name: 'cpu', Soft: cpu, Hard: cpu },
+      ],
+    },
+    Mounts: [{ Type: 'bind', Source: source, Destination: '/workspace', RW: true }],
+    State: { ExitCode: 0, Running: false },
+  }));
+  process.exit(0);
+}
+if (args[0] === 'start') process.exit(0);
+if (args[0] === 'kill' || args[0] === 'rm') process.exit(0);
+process.exit(1);
 `);
     chmodSync(docker, 0o755);
     const originalPath = process.env.PATH;
@@ -201,16 +239,55 @@ exit 1
         env: { LANG: 'C' },
       });
       expect(result.exitCode).toBe(0);
+      expect(result.filter).toMatchObject({ applied: true });
+      expect(result.limits).toMatchObject({ applied: true, mechanism: 'docker-cgroup' });
       const args = readFileSync(argsFile, 'utf8').trim().split('\n');
+      expect(args[0]).toBe('create');
       expect(args).toContain('--network=none');
       expect(args).toContain('--read-only');
       expect(args).toContain('--cap-drop=ALL');
       expect(args).toContain('--security-opt=no-new-privileges');
-      expect(args).toContain('--pids-limit=128');
-      expect(args).toContain('--memory=512m');
-      expect(args).toContain('--cpus=1');
+      expect(args.some((entry) => entry.startsWith('seccomp='))).toBe(true);
+      expect(args).toContain('--pids-limit');
+      expect(args[args.indexOf('--pids-limit') + 1]).toBe('128');
+      expect(args).toContain('--memory');
+      expect(args[args.indexOf('--memory') + 1]).toBe('536870912');
+      expect(args).toContain('--cpus');
+      expect(args[args.indexOf('--cpus') + 1]).toBe('1');
+      expect(args).toContain('--ulimit');
+      expect(args.some((entry) => entry.startsWith('as='))).toBe(true);
+      expect(args.some((entry) => entry.startsWith('cpu='))).toBe(true);
+      expect(args).toContain('--entrypoint');
+      expect(args[args.indexOf('--entrypoint') + 1]).toBe('/bin/echo');
       expect(args).toContain('aios-test:local');
-      expect(args.slice(-2)).toEqual(['/bin/echo', 'hello world']);
+      expect(args.slice(-2)).toEqual(['aios-test:local', 'hello world']);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+});
+
+describe('provider selection', () => {
+  it('keeps bubblewrap as the Linux auto default and never silently substitutes Docker', async () => {
+    const auto = createSandboxProvider({ provider: 'auto' });
+    if (process.platform === 'linux') expect(auto.id).toBe('bubblewrap');
+    if (process.platform === 'darwin') expect(auto.id).toBe('seatbelt');
+    expect(() => createSandboxProvider({ provider: 'docker' })).toThrow(/image/);
+
+    const directory = mkdtempSync(join(tmpdir(), 'aios-no-docker-'));
+    const docker = join(directory, 'docker');
+    writeFileSync(docker, '#!/bin/sh\necho "permission denied" >&2\nexit 1\n');
+    chmodSync(docker, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${directory}${delimiter}${originalPath ?? ''}`;
+    try {
+      const requested = createSandboxProvider({ provider: 'docker', image: 'aios-test:local' });
+      expect(requested.id).toBe('docker');
+      await expect(requested.check()).resolves.toMatchObject({
+        available: false,
+        reason: expect.stringMatching(/daemon is not reachable/i),
+      });
+      expect(requested.id).toBe('docker');
     } finally {
       process.env.PATH = originalPath;
     }

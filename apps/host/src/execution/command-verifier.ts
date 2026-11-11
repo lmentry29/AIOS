@@ -16,6 +16,8 @@ import type { SandboxProvider } from './sandbox.js';
 import { SECCOMP_DENIED_EXIT_CODE } from './seccomp.js';
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
 
+const BOUNDARY_PROVIDERS = new Set(['bubblewrap', 'docker']);
+
 /** Late-bound reference to the host's durable execution ledger. */
 export interface ExecutionLedgerRef {
   current?: ExecutionLedger;
@@ -138,17 +140,22 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof SandboxFilterUnavailableError) {
+      if (error instanceof SandboxFilterUnavailableError
+        || error instanceof SandboxResourceLimitUnavailableError) {
         this.workspaces.discard(request.task.entity_id);
+        const filterFailure = error instanceof SandboxFilterUnavailableError;
+        const failure = filterFailure ? 'sandbox_filter_unavailable' : 'sandbox_resource_limit_unavailable';
         return {
           accepted: false,
-          reason: 'The verification command could not be launched under the system-call filter.',
+          reason: filterFailure
+            ? 'The verification command could not be launched under the system-call filter.'
+            : 'The verification command could not be launched under the per-run resource limits.',
           verifier_id: this.verifier_id,
           evidence: [
             `verifier:${this.verifier_id}`,
             `task:${request.task.entity_id}`,
-            'verification_failure:sandbox_filter_unavailable',
-            `filter_error_sha256:${digest(error.message)}`,
+            `verification_failure:${failure}`,
+            `${filterFailure ? 'filter' : 'resource_limit'}_error_sha256:${digest(error.message)}`,
             ...(boundAttempt === undefined
               ? []
               : [
@@ -189,7 +196,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
       };
     }
 
-    if (this.provider.id === 'bubblewrap' && result.filter?.applied !== true) {
+    if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.filter?.applied !== true) {
       this.workspaces.discard(request.task.entity_id);
       return {
         accepted: false,
@@ -210,7 +217,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         ],
       };
     }
-    if (this.provider.id === 'bubblewrap' && result.limits?.applied !== true) {
+    if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.limits?.applied !== true) {
       this.workspaces.discard(request.task.entity_id);
       return {
         accepted: false,
@@ -291,6 +298,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         ...(result.limits === undefined
           ? []
           : [
+              `resource_limit_mechanism:${result.limits.mechanism ?? 'unknown'}`,
               `resource_limit_memory_bytes:${result.limits.memory_bytes}`,
               `resource_limit_cpu_seconds:${result.limits.cpu_seconds}`,
               `resource_limit_processes:${result.limits.processes}`,
@@ -319,12 +327,12 @@ export class LocalCommandVerifier implements TaskVerificationPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
-        if (this.provider.id === 'bubblewrap' && this.availability.filterFailure === true) {
+        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.filterFailure === true) {
           throw new SandboxFilterUnavailableError(
             `Independent verification is unavailable because the system-call filter failed: ${this.availability.reason}`,
           );
         }
-        if (this.provider.id === 'bubblewrap' && this.availability.resourceLimitFailure === true) {
+        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.resourceLimitFailure === true) {
           throw new SandboxResourceLimitUnavailableError(
             `Independent verification is unavailable because the per-run resource limits failed: ${this.availability.reason}`,
           );
@@ -341,12 +349,12 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {
-      if (this.provider.id === 'bubblewrap' && check.filterFailure === true) {
+      if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.filterFailure === true) {
         throw new SandboxFilterUnavailableError(
           `Independent verification is unavailable because the system-call filter failed: ${check.reason}`,
         );
       }
-      if (this.provider.id === 'bubblewrap' && check.resourceLimitFailure === true) {
+      if (BOUNDARY_PROVIDERS.has(this.provider.id) && check.resourceLimitFailure === true) {
         throw new SandboxResourceLimitUnavailableError(
           `Independent verification is unavailable because the per-run resource limits failed: ${check.reason}`,
         );

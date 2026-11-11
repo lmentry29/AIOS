@@ -2,8 +2,10 @@
 /**
  * Adversarial drill for the production sandbox and independent-verification path.
  *
- * Run only after `pnpm --filter @aios/host build`, with a real bubblewrap binary:
+ * Run only after `pnpm --filter @aios/host build`, with a real boundary:
  *   AIOS_BWRAP_DIR=/path/to/bwrap-dir node tools/security/adversarial-drill.mjs
+ *   AIOS_SANDBOX_PROVIDER=docker AIOS_DOCKER_IMAGE=aios-sandbox:local \
+ *     node tools/security/adversarial-drill.mjs
  *
  * Every case below attempts hostile behaviour against the real provider, executor,
  * durable execution ledger, or verifier. A case passes only when the concrete denial or
@@ -34,9 +36,19 @@ import { createSandboxProvider } from '../../apps/host/dist/execution/sandbox.js
 import { RunWorkspaceManager } from '../../apps/host/dist/execution/workspace.js';
 import { DurableOperationalStore } from '../../apps/host/dist/persistence/operational-store.js';
 
+const requestedProvider = process.env.AIOS_SANDBOX_PROVIDER ?? 'bubblewrap';
+assert.ok(
+  requestedProvider === 'bubblewrap' || requestedProvider === 'docker',
+  'AIOS_SANDBOX_PROVIDER must be bubblewrap or docker',
+);
 const bwrapDirectory = process.env.AIOS_BWRAP_DIR;
-assert.ok(bwrapDirectory, 'AIOS_BWRAP_DIR must point at a directory containing bwrap');
-process.env.PATH = `${bwrapDirectory}:${process.env.PATH ?? ''}`;
+const dockerImage = process.env.AIOS_DOCKER_IMAGE;
+if (requestedProvider === 'bubblewrap') {
+  assert.ok(bwrapDirectory, 'AIOS_BWRAP_DIR must point at a directory containing bwrap');
+  process.env.PATH = `${bwrapDirectory}:${process.env.PATH ?? ''}`;
+} else {
+  assert.ok(dockerImage, 'AIOS_DOCKER_IMAGE must name a locally present Docker image');
+}
 
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
 const VERIFIER_ID = '22222222-2222-4222-8222-222222222222';
@@ -45,15 +57,23 @@ const config = {
   workspace_directory: root,
   agent_id: AGENT_ID,
   verifier_id: VERIFIER_ID,
-  provider: 'bubblewrap',
+  provider: requestedProvider,
+  ...(dockerImage === undefined ? {} : { image: dockerImage }),
   default_timeout_ms: 15_000,
   max_output_bytes: 65_536,
   workspace_max_bytes: 1024 * 1024,
   max_concurrent_tasks: 1,
 };
-const provider = createSandboxProvider({ provider: 'bubblewrap' });
+const provider = createSandboxProvider({
+  provider: requestedProvider,
+  ...(dockerImage === undefined ? {} : { image: dockerImage }),
+});
 const availability = await provider.check();
-assert.equal(availability.available, true, `bubblewrap boundary is unavailable: ${availability.reason}`);
+assert.equal(
+  availability.available,
+  true,
+  `${requestedProvider} boundary is unavailable: ${availability.reason}`,
+);
 const workspaces = new RunWorkspaceManager(root);
 const executor = new LocalCommandExecutor(config, provider, workspaces);
 const cases = [];
@@ -129,6 +149,7 @@ function assertNotRead(result, secret, label) {
     exit_code: result.exitCode,
     filter_sha256: result.filter?.sha256,
     workspace: directory,
+    host_system_mount: requestedProvider === 'bubblewrap' ? 'host system bind' : 'none',
   });
 }
 
@@ -370,10 +391,22 @@ function assertNotRead(result, secret, label) {
     maxOutputBytes: 4096,
     env: {},
   });
-  assert.ok(
-    mount.exitCode === 128 + 31 || mount.signal === 'SIGSYS',
-    'mount syscall was not killed by the filter',
-  );
+  if (requestedProvider === 'bubblewrap') {
+    assert.ok(
+      mount.exitCode === 128 + 31 || mount.signal === 'SIGSYS',
+      'mount syscall was not killed by the filter',
+    );
+  } else {
+    // Docker may deny mount with SIGSYS (custom profile) or EPERM (capability drop).
+    // Either is a denial; the workload must never see the syscall return.
+    assert.ok(mount.exitCode !== 0, 'mount syscall unexpectedly returned in the Docker boundary');
+    assert.ok(
+      mount.exitCode === 128 + 31
+        || mount.signal === 'SIGSYS'
+        || /Operation not permitted|EPERM/i.test(mount.stderr.toString('utf8')),
+      'mount syscall failed for an unexpected reason',
+    );
+  }
   assert.ok(!mount.stdout.toString('utf8').includes('mount-survived'), 'mount syscall returned');
 
   assert.ok(existsSync('/usr/sbin/chroot'), 'drill host has no chroot binary to test against');
@@ -407,7 +440,13 @@ function assertNotRead(result, secret, label) {
   assert.equal(limits.exitCode, 0, 'limit probe failed');
   const limitOutput = limits.stdout.toString('utf8');
   assert.match(limitOutput, /^3$/m, 'RLIMIT_CPU was not aligned to the 3 s deadline');
-  assert.match(limitOutput, /^Max processes\s+128\s+128\s+processes/m, 'RLIMIT_NPROC was not 128');
+  if (requestedProvider === 'bubblewrap') {
+    assert.match(limitOutput, /^Max processes\s+128\s+128\s+processes/m, 'RLIMIT_NPROC was not 128');
+  } else {
+    assert.equal(limits.limits?.applied, true, 'Docker limit probe did not record applied evidence');
+    assert.equal(limits.limits?.mechanism, 'docker-cgroup');
+    assert.equal(limits.limits?.processes, 128, 'Docker PID limit was not recorded as 128');
+  }
 
   const burner = await provider.run({
     argv: ['/bin/sh', '-c', 'while :; do :; done'],

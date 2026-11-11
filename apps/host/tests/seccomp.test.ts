@@ -12,7 +12,11 @@ import {
 import { LocalCommandExecutor } from '../src/execution/command-executor.js';
 import { LocalCommandVerifier } from '../src/execution/command-verifier.js';
 import { ManagedExecutionPort } from '../src/execution/managed-execution.js';
-import { buildSeccompProfile, SECCOMP_DENIED_EXIT_CODE } from '../src/execution/seccomp.js';
+import {
+  buildDockerSeccompProfile,
+  buildSeccompProfile,
+  SECCOMP_DENIED_EXIT_CODE,
+} from '../src/execution/seccomp.js';
 import type { SandboxProvider, SandboxResult, SandboxRunSpec } from '../src/execution/sandbox.js';
 import { RunWorkspaceManager } from '../src/execution/workspace.js';
 import { DurableOperationalStore } from '../src/persistence/operational-store.js';
@@ -87,6 +91,31 @@ describe('generated seccomp profile', () => {
 
   it('refuses to invent a filter for an unsupported architecture', () => {
     expect(() => buildSeccompProfile('mips')).toThrow(/No seccomp profile/);
+  });
+
+  it('builds the Docker libseccomp profile with the same deny-list and architecture guard', () => {
+    const docker = buildDockerSeccompProfile('x64');
+    const document = JSON.parse(docker.profile) as {
+      defaultAction: string;
+      architectures: string[];
+      syscalls: Array<{ names: string[]; action: string }>;
+    };
+    expect(document.defaultAction).toBe('SCMP_ACT_ALLOW');
+    expect(document.architectures).toEqual(['SCMP_ARCH_X86_64']);
+    expect(document.syscalls).toHaveLength(1);
+    expect(document.syscalls[0]?.action).toBe('SCMP_ACT_KILL');
+    expect(document.syscalls[0]?.names).toEqual(expect.arrayContaining([
+      'mount',
+      'ptrace',
+      'unshare',
+      'bpf',
+      'io_uring_setup',
+    ]));
+    expect(docker.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(buildDockerSeccompProfile('x64').sha256).toBe(docker.sha256);
+    expect(JSON.parse(buildDockerSeccompProfile('arm64').profile).architectures)
+      .toEqual(['SCMP_ARCH_AARCH64']);
+    expect(() => buildDockerSeccompProfile('mips')).toThrow(/No Docker seccomp profile/);
   });
 });
 

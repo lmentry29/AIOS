@@ -35,6 +35,11 @@ jobs:
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/resource-limit-drill.mjs
       # Filesystem, secret, network, capability, resource, orphan and verification attacks.
       - run: AIOS_BWRAP_DIR="$(dirname "$(command -v bwrap)")" node tools/security/adversarial-drill.mjs
+      # Build the image locally so the Docker run does not depend on an implicit pull.
+      - name: Build the Docker sandbox image
+        run: docker build --pull -t aios-sandbox:local -f tools/security/docker-sandbox.Dockerfile tools/security
+      # The same 21-case matrix through the explicit Docker provider and real verifier.
+      - run: AIOS_SANDBOX_PROVIDER=docker AIOS_DOCKER_IMAGE=aios-sandbox:local node tools/security/adversarial-drill.mjs
       # Operator CLI against a real host process: list/rotate/revoke, live denial, restart.
       - run: node tools/security/session-operator-drill.mjs
 
