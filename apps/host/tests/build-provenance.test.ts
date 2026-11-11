@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, createPrivateKey, sign as cryptoSign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { createTrustRoot, generateSigningKey } from '../src/execution/artifact-signing.js';
+import { createTrustRoot, createTrustRootFromKeys, generateSigningKey } from '../src/execution/artifact-signing.js';
 import {
   BuildAttestationError,
   createBuildAttestation,
@@ -158,6 +158,81 @@ describe('signed build provenance', () => {
     expect(failureCode(() => verifyBuildAttestation({ attestation, trust_root: expired, now: new Date('2026-02-01T00:00:00.000Z') }))).toBe('KEY_EXPIRED');
   });
 
+  it('rejects the wrong pinned key id and a previous attestation version', () => {
+    const { attestation, trustRoot, expected, key } = fixture();
+    expect(verifyBuildAttestation({
+      attestation,
+      trust_root: trustRoot,
+      expected: { ...expected, key_id: attestation.signing_key.key_id },
+    }).key_id).toBe(attestation.signing_key.key_id);
+    const other = generateSigningKey();
+    expect(failureCode(() => verifyBuildAttestation({
+      attestation,
+      trust_root: trustRoot,
+      expected: { ...expected, key_id: other.key_id },
+    }))).toBe('WRONG_KEY');
+
+    const previous = structuredClone(attestation);
+    (previous as unknown as { version: number }).version = 0;
+    expect(failureCode(() => verifyBuildAttestation({
+      attestation: reSign(previous, key.private_key_pem),
+      trust_root: trustRoot,
+    }))).toBe('UNSUPPORTED_VERSION');
+  });
+
+  it('accepts overlapping rotation, then rejects the retired key after its window', () => {
+    const oldKey = generateSigningKey();
+    const newKey = generateSigningKey();
+    const { attestation, artifacts } = fixture();
+    const root = createTrustRootFromKeys([
+      {
+        key_id: oldKey.key_id,
+        public_key_pem: oldKey.public_key_pem,
+        not_before: '2020-01-01T00:00:00.000Z',
+        not_after: '2026-06-01T00:00:00.000Z',
+      },
+      {
+        key_id: newKey.key_id,
+        public_key_pem: newKey.public_key_pem,
+        not_before: '2025-01-01T00:00:00.000Z',
+        not_after: '2035-01-01T00:00:00.000Z',
+      },
+    ]);
+    const oldAttestation = createBuildAttestation({
+      private_key_pem: oldKey.private_key_pem,
+      key_id: oldKey.key_id,
+      source: attestation.source,
+      builder: attestation.builder,
+      artifacts,
+      created_at: '2026-01-01T00:00:00.000Z',
+      attestation_id: 'rotation-old',
+    });
+    const newAttestation = createBuildAttestation({
+      private_key_pem: newKey.private_key_pem,
+      key_id: newKey.key_id,
+      source: attestation.source,
+      builder: attestation.builder,
+      artifacts,
+      created_at: '2026-07-01T00:00:00.000Z',
+      attestation_id: 'rotation-new',
+    });
+    expect(verifyBuildAttestation({
+      attestation: oldAttestation,
+      trust_root: root,
+      now: new Date('2026-02-01T00:00:00.000Z'),
+    }).key_id).toBe(oldKey.key_id);
+    expect(failureCode(() => verifyBuildAttestation({
+      attestation: oldAttestation,
+      trust_root: root,
+      now: new Date('2026-07-01T00:00:00.000Z'),
+    }))).toBe('KEY_EXPIRED');
+    expect(verifyBuildAttestation({
+      attestation: newAttestation,
+      trust_root: root,
+      now: new Date('2026-07-01T00:00:00.000Z'),
+    }).key_id).toBe(newKey.key_id);
+  });
+
   it('rejects wrong repository, commit, builder and workflow identities', () => {
     const { attestation, trustRoot, expected } = fixture();
     expect(failureCode(() => verifyBuildAttestation({ attestation, trust_root: trustRoot, expected: { ...expected, repository: 'other/repo' } }))).toBe('WRONG_REPOSITORY');
@@ -235,6 +310,79 @@ describe('signed build provenance', () => {
     }
     expect(rejected).toBeGreaterThan(150);
     expect(accepted + rejected).toBe(200);
+  });
+
+  it('rejects symlinked attestation and trust-root inputs', () => {
+    const { attestation, trustRoot, artifacts, root } = fixture();
+    const attestationPath = join(root, 'real-attestation.json');
+    const trustRootPath = join(root, 'real-trust-root.json');
+    writeFileSync(attestationPath, JSON.stringify(attestation), { mode: 0o600 });
+    writeFileSync(trustRootPath, JSON.stringify(trustRoot), { mode: 0o600 });
+    const attestationLink = join(root, 'attestation-link.json');
+    const trustRootLink = join(root, 'trust-root-link.json');
+    symlinkSync(attestationPath, attestationLink);
+    symlinkSync(trustRootPath, trustRootLink);
+    const tool = fileURLToPath(new URL('../../../tools/security/build-provenance.mjs', import.meta.url));
+    const artifactArgs = artifacts.flatMap((artifact) => ['--artifact', `${artifact.name}=${artifact.path}`]);
+    for (const [label, attestationArgument, trustRootArgument] of [
+      ['attestation', attestationLink, trustRootPath],
+      ['trust root', attestationPath, trustRootLink],
+    ] as const) {
+      const rejected = spawnSync(process.execPath, [
+        tool, 'verify', '--attestation', attestationArgument, '--trust-root', trustRootArgument, ...artifactArgs,
+      ], { encoding: 'utf8' });
+      expect(rejected.status, label).not.toBe(0);
+      expect(JSON.parse(rejected.stdout), label).toMatchObject({ ok: false });
+    }
+  });
+
+  it('generates and verifies the same local provenance statement offline', () => {
+    const { key, trustRoot, artifacts, root } = fixture();
+    const keyPath = join(root, 'local-key.pem');
+    const trustRootPath = join(root, 'local-trust-root.json');
+    const outPath = join(root, 'local-attestation.json');
+    writeFileSync(keyPath, key.private_key_pem, { mode: 0o600 });
+    writeFileSync(trustRootPath, JSON.stringify(trustRoot), { mode: 0o600 });
+    const tool = fileURLToPath(new URL('../../../tools/security/build-provenance.mjs', import.meta.url));
+    const artifactArgs = artifacts.flatMap((artifact) => ['--artifact', `${artifact.name}=${artifact.path}`]);
+    const generateArgs = [
+      'generate', '--local', '--key', keyPath, '--out', outPath,
+      '--repository', REPOSITORY, '--commit', COMMIT, '--builder-id', 'local:test-builder',
+      '--workflow-ref', 'local:test-workflow', '--ref', 'refs/heads/local', '--run-id', '0',
+      '--run-attempt', '1', '--created-at', '2026-01-01T00:00:00.000Z',
+      '--attestation-id', 'local-fixture', ...artifactArgs,
+    ];
+    const generated = spawnSync(process.execPath, [tool, ...generateArgs], { encoding: 'utf8' });
+    expect(generated.status).toBe(0);
+    const generatedEvidence = JSON.parse(generated.stdout) as { attestation_sha256: string; commit: string };
+    expect(generatedEvidence.commit).toBe(COMMIT);
+    const persisted = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      attestation_id: string;
+      builder: { id: string; provider: string };
+      source: { commit: string };
+    };
+    expect(persisted).toMatchObject({
+      attestation_id: 'local-fixture',
+      builder: { id: 'local:test-builder', provider: 'local' },
+      source: { commit: COMMIT },
+    });
+    const verified = spawnSync(process.execPath, [
+      tool, 'verify', '--attestation', outPath, '--trust-root', trustRootPath,
+      '--expect-key-id', key.key_id, '--expect-repository', REPOSITORY,
+      '--expect-commit', COMMIT, '--expect-builder-id', 'local:test-builder',
+      '--expect-workflow-ref', 'local:test-workflow', '--expect-run-id', '0',
+      '--expect-run-attempt', '1', ...artifactArgs,
+    ], { encoding: 'utf8' });
+    expect(verified.status).toBe(0);
+    expect(JSON.parse(verified.stdout)).toMatchObject({
+      ok: true, key_id: key.key_id, source: { commit: COMMIT }, builder: { id: 'local:test-builder' },
+    });
+
+    const sentinel = JSON.stringify({ sentinel: true });
+    writeFileSync(outPath, sentinel);
+    const overwrite = spawnSync(process.execPath, [tool, ...generateArgs], { encoding: 'utf8' });
+    expect(overwrite.status).not.toBe(0);
+    expect(readFileSync(outPath, 'utf8')).toBe(sentinel);
   });
 
   it('accepts in a separate process and rejects a forged attestation', () => {

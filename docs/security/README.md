@@ -8,6 +8,8 @@ that was not exercised on a host is labelled `unverified`.
 - [`sandbox-matrix.md`](sandbox-matrix.md) — isolation providers compared from primary sources, with the evidence status of each adapter.
 - [`findings-ledger.md`](findings-ledger.md) — open, fixed, and accepted security findings.
 - [`validation-ledger.md`](validation-ledger.md) — exact commands, host facts, and observed results for every validation run.
+- [`trust-root-lifecycle.md`](trust-root-lifecycle.md) — provisioning, rotation, revocation, local build provenance and trust-root residuals.
+- [`artifact-signing.md`](artifact-signing.md) and [`build-provenance.md`](build-provenance.md) — signed artifact and source-to-build evidence contracts.
 
 Rules for this directory:
 

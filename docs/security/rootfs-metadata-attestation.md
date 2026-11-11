@@ -119,7 +119,9 @@ would leave the resolved platform manifest unpinned.
 - The Debian snapshot used by the image build must remain available for a future rebuild.
 - Runtime pins and rootfs manifests are signed with detached Ed25519 statements verified
   against the repository trust root; missing, foreign, revoked, expired or future-dated
-  signatures fail closed. The checked-in trust root is intentionally empty until a real
-  operator key is provisioned, and CI's ephemeral drill key is not production custody.
-  The OCI index/base-image and Debian snapshot pins are not independently signed beyond
-  the signed rootfs manifest and its recorded build provenance.
+  signatures fail closed. `tools/security/trust-root.mjs` now provides tested key generation,
+  initialization, overlapping rotation and revocation, so the lifecycle is operable. The
+  checked-in trust root is still intentionally empty until an operator provisions a public
+  key, and CI's ephemeral drill key is not production custody. The OCI index/base-image and
+  Debian snapshot pins are not independently signed beyond the signed rootfs manifest and its
+  recorded build provenance.

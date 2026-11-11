@@ -138,18 +138,21 @@ function main() {
   if (command === 'verify') {
     const artifactKind = kind();
     const artifactPath = regularFile(flag('artifact'), 'artifact');
+    const expectedKeyId = flag('expect-key-id', false);
     const verified = verifyArtifactSignature({
       artifact_kind: artifactKind,
       artifact_path: artifactPath,
       signature_path: regularFile(flag('signature'), 'signature'),
       trust_root_path: regularFile(flag('trust-root'), 'trust root'),
       expected_subject: subjectFor(artifactKind, artifactPath),
+      ...(expectedKeyId === undefined ? {} : { expected_key_id: expectedKeyId }),
     });
     printEvidence('verify', verified, artifactPath);
     return;
   }
   if (command === 'verify-all') {
     const trustRootPath = regularFile(flag('trust-root'), 'trust root');
+    const expectedKeyId = flag('expect-key-id', false);
     for (const [artifactKind, artifactFlag, signatureFlag] of [
       ['gvisor-runtime-pin', 'pin', 'pin-signature'],
       ['gvisor-rootfs-manifest', 'manifest', 'manifest-signature'],
@@ -161,6 +164,7 @@ function main() {
         signature_path: regularFile(flag(signatureFlag), signatureFlag),
         trust_root_path: trustRootPath,
         expected_subject: subjectFor(artifactKind, artifactPath),
+        ...(expectedKeyId === undefined ? {} : { expected_key_id: expectedKeyId }),
       });
       printEvidence('verify-all', verified, artifactPath);
     }

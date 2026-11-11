@@ -1212,10 +1212,10 @@ steps 1–21 with no skipped step:
 - Same head: CI run `42963634937`, Conformance `42963635037`, Schema Check `42963634950`
   all green. Release is `workflow_dispatch`-only and is recorded with the documentation head.
 
-**Still not established:** signature verification, key rotation and SLSA provenance
-(Priority 2); pins and manifests remain unsigned. Rootless Docker, macOS Seatbelt and Apple
-Containerization remain unmeasured or unavailable. No result is extrapolated across
-platforms.
+**Status at that checkpoint (superseded below):** signature verification, key rotation and
+SLSA provenance were not yet established, so pins and manifests were unsigned at that head.
+Rootless Docker, macOS Seatbelt and Apple Containerization remained unmeasured or unavailable.
+No result is extrapolated across platforms.
 
 ## Signed provenance artifacts (2026-11-11)
 
@@ -1316,3 +1316,35 @@ provisioned and are not claimed.
   and tool regressions; integration 43; conformance 107; orchestration 30.
 - Control-bypass re-verification: temporarily removed the build-attestation signature check and
   observed its forged-signature test fail, then restored it and reran the gate green.
+
+## Trust-root lifecycle and local provenance (2026-11-11)
+
+- New `tools/security/trust-root.mjs`: atomic no-replace `init`, overlapping `rotate`,
+  immediate `revoke`, `list` and `validate` against the same `TrustRoot` schema consumed by
+  `loadTrustRoot`. `keygen` writes private keys only to runtime paths with mode `0600`; the
+  committed root remains empty and fail-closed. `--replace-empty` can provision the placeholder
+  only when it has no keys.
+- `verifyArtifactSignature` and `verifyBuildAttestation` now accept an expected key id.
+  Build provenance adds `WRONG_KEY` (exit 19), `provider: "local"` and a `generate --local`
+  producer using the same canonical Ed25519 statement as CI. Generation uses no-replace linking;
+  an existing attestation is left byte-identical.
+- `apps/host/tests/trust-root-lifecycle.test.ts` (3): key generation permissions, init,
+  overlapping rotate, old-key accept during overlap, revoke, post-revocation denial, new-key
+  acceptance and refusal to overwrite a non-empty root.
+- `apps/host/tests/build-provenance.test.ts` (13): accept, forged signature, unknown schema,
+  duplicate keys, absent/revoked/not-yet-valid/expired keys, wrong pinned key, previous-version
+  rollback, rotation then expiry, wrong repository/commit/builder/workflow, replay, artifact
+  digest/missing/extra, splices, symlinked attestation/trust-root files, local generate/verify,
+  no-replace output and separate-process accept/reject.
+- `apps/host/tests/artifact-signing.test.ts` (14): expected key pin, overlapping rotation then
+  expiry, unknown/revoked/expired keys, modified/moved/malformed artifacts, subject mismatch,
+  tampered signature and empty root.
+- CI now captures the run-scoped key id, pins it in `verify-all` and the build-provenance
+  verifier, and verifies the actual artifact files. Workflow permissions remain `contents:
+  read`; actions remain commit-pinned.
+- Focused lifecycle/signing/provenance: **30/30**. Founder: **95/95**. Host: **261 passed / 17
+  skipped** across 29 files (26 passed files, 3 skipped files). Full uncached gate: **46/46
+  tasks, 0 cached**, exit 0.
+- Remaining: production trust-root/key provisioning and custody, base/snapshot signing,
+  OIDC/Fulcio/Rekor identity, external custody/trusted timestamps, SLSA/in-toto conformance and
+  macOS/rootless-Docker measurement. No standard level is claimed.

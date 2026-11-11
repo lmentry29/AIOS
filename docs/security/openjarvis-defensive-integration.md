@@ -17,6 +17,7 @@ imported, and no Python/Rust runtime dependency was added.
 | Capability inventory | Implemented | `packages/founder/src/security/capability-inventory.ts` | Single source for policy validation, exact-resource authorization and human-only administrative actions | `packages/founder/tests/capability-inventory.test.ts`, `packages/founder/tests/authorization.test.ts` |
 | Atomic persistence | Verified, one durability gap closed | Existing `Journal`, gVisor staging/promotion and evidence-bundle code | Directory fsync after evidence-bundle export and gVisor promotion; no second store created | `apps/host/tests/evidence-bundle.test.ts`, `apps/host/tests/gvisor-provenance.test.ts` |
 | No-follow file reads | Implemented | `apps/host/src/security/file-integrity.ts` | Build attestations, trust roots, gVisor runtime/rootfs pins, rootfs manifest and Dockerfile verification | `apps/host/tests/security-file-integrity.test.ts`, existing provenance/signing suites |
+| Trust-root lifecycle and build provenance | Implemented | `tools/security/trust-root.mjs`, `tools/security/build-provenance.mjs`, `apps/host/src/execution/artifact-signing.ts`, `apps/host/src/execution/build-provenance.ts` | External Ed25519 root with multiple active keys, overlapping rotation, revocation, expiry and key-id pinning; CI and offline local provenance bind commit, builder, workflow, run and exact artifacts | `apps/host/tests/trust-root-lifecycle.test.ts`, `apps/host/tests/build-provenance.test.ts`, `apps/host/tests/artifact-signing.test.ts` |
 
 ## SSRF contract
 
@@ -99,6 +100,24 @@ values that mean directory fsync is unavailable on the platform/filesystem; perm
 I/O and missing-directory failures propagate. File content has already been fsynced before
 the rename.
 
+## Supply-chain lifecycle evidence
+
+The trust root consumed by the runtime/rootfs verifier, provenance verifier and evidence-bundle
+verifier is now provisionable and rotatable with `tools/security/trust-root.mjs`. It supports
+multiple distinct active keys, overlapping windows, `revoke`, `list` and `validate`. Private
+keys are written only to operator-supplied runtime paths with mode `0600`; the checked-in root
+remains empty and fail-closed. `tools/security/build-provenance.mjs` now has a local/offline
+producer using the same signed statement as CI, and `verify` can pin the exact key id
+(`WRONG_KEY`, exit 19) in addition to repository, commit, builder, workflow, run/attempt and
+real artifact bytes. Generation is atomic and no-replace.
+
+Named tests cover unknown/revoked/expired keys, overlap rotation then expiry, rollback to a
+previous attestation version, wrong key id, wrong commit, artifact digest, forged builder,
+symlinked attestation/trust-root files, local generate/verify and refusal to overwrite an
+existing attestation or non-empty trust root. Focused lifecycle/signing/provenance:
+**30/30**. Full evidence is in [`trust-root-lifecycle.md`](trust-root-lifecycle.md) and
+[`build-provenance.md`](build-provenance.md).
+
 ## Verification evidence (2026-11-11)
 
 Full uncached gate:
@@ -110,9 +129,9 @@ Full uncached gate:
 Result: **46/46 tasks successful, 0 cached, exit status 0**. Test totals:
 
 - `@aios/founder`: 95 passed across 10 files.
-- `@aios/host`: 253 passed, 17 skipped across 28 files (25 passed files, 3 skipped files).
+- `@aios/host`: 261 passed, 17 skipped across 29 files (26 passed files, 3 skipped files).
   The skips are live gVisor/Docker/rootfs probes that require a host environment; they are
-  not counted as passing evidence.
+  not counted as passing evidence. The new lifecycle and local-provenance tests are included.
 - conformance: 107 passed; integration: 43 passed; orchestration: 30 passed. The remaining
   packages' configured tasks, including `--passWithNoTests` where applicable, succeeded.
 
@@ -139,6 +158,9 @@ The baseline is reported here rather than claimed as a passing gate.
 - Filesystem containment cannot be made fully race-free portably without kernel
   `openat2`; the no-follow final-component check and canonical containment are the
   strongest portable controls used here.
+- The repository trust root remains empty until an operator provisions a public key. The
+  lifecycle is implemented and tested, but production key custody, provisioning authority and
+  external transparency/identity remain open; no Sigstore or SLSA conformance is claimed.
 
 ## Verification commands
 

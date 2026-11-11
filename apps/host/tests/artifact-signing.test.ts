@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   canonicalJson,
   createTrustRoot,
+  createTrustRootFromKeys,
   generateSigningKey,
   signArtifact,
   verifyArtifactSignature,
@@ -344,19 +345,31 @@ describe('artifact signing', () => {
     })).toThrow(/not valid for key/);
   });
 
-  it('accepts an overlapping rotated key and rejects an empty trust root', () => {
+  it('accepts an overlapping rotated key, then rejects it after its window', () => {
     const oldKey = generateSigningKey();
     const newKey = generateSigningKey();
+    const oldRoot = trustedRoot(oldKey, {
+      not_before: iso(-2 * 60 * 60 * 1000),
+      not_after: iso(-30 * 60 * 1000),
+    });
     const fixture = writeSignedArtifact({
       kind: 'gvisor-runtime-pin',
       artifact: runtimePin,
       subject: runtimeSubject,
-      trustRoot: trustedRoot(oldKey),
+      trustRoot: oldRoot,
       privateKey: oldKey.private_key_pem,
       keyId: oldKey.key_id,
+      signedAt: iso(-45 * 60 * 1000),
     });
-    const rotated = trustedRoot(oldKey);
-    rotated.keys.push(...trustedRoot(newKey, { not_before: iso(-30 * 60 * 1000) }).keys);
+    const rotated = createTrustRootFromKeys([
+      oldRoot.keys[0],
+      {
+        key_id: newKey.key_id,
+        public_key_pem: newKey.public_key_pem,
+        not_before: iso(-3 * 60 * 60 * 1000),
+        not_after: iso(60 * 60 * 1000),
+      },
+    ]);
     writeFileSync(fixture.trustRootPath, `${JSON.stringify(rotated, null, 2)}\n`);
     expect(verifyArtifactSignature({
       artifact_kind: 'gvisor-runtime-pin',
@@ -364,7 +377,44 @@ describe('artifact signing', () => {
       signature_path: fixture.signaturePath,
       trust_root_path: fixture.trustRootPath,
       expected_subject: runtimeSubject,
+      now: new Date(now - 40 * 60 * 1000),
     }).key_id).toBe(oldKey.key_id);
+    expect(() => verifyArtifactSignature({
+      artifact_kind: 'gvisor-runtime-pin',
+      artifact_path: fixture.artifactPath,
+      signature_path: fixture.signaturePath,
+      trust_root_path: fixture.trustRootPath,
+      expected_subject: runtimeSubject,
+    })).toThrow(/expired/);
+  });
+
+  it('pins the expected signing key id and rejects an empty trust root', () => {
+    const key = generateSigningKey();
+    const fixture = writeSignedArtifact({
+      kind: 'gvisor-runtime-pin',
+      artifact: runtimePin,
+      subject: runtimeSubject,
+      trustRoot: trustedRoot(key),
+      privateKey: key.private_key_pem,
+      keyId: key.key_id,
+    });
+    expect(verifyArtifactSignature({
+      artifact_kind: 'gvisor-runtime-pin',
+      artifact_path: fixture.artifactPath,
+      signature_path: fixture.signaturePath,
+      trust_root_path: fixture.trustRootPath,
+      expected_subject: runtimeSubject,
+      expected_key_id: key.key_id,
+    }).key_id).toBe(key.key_id);
+    const other = generateSigningKey();
+    expect(() => verifyArtifactSignature({
+      artifact_kind: 'gvisor-runtime-pin',
+      artifact_path: fixture.artifactPath,
+      signature_path: fixture.signaturePath,
+      trust_root_path: fixture.trustRootPath,
+      expected_subject: runtimeSubject,
+      expected_key_id: other.key_id,
+    })).toThrow(/pinned key/);
 
     const empty = join(directory(), 'empty-trust-root.json');
     writeFileSync(empty, `${JSON.stringify({ schema_version: 1, keys: [] })}\n`);

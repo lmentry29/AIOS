@@ -330,27 +330,56 @@ export function generateSigningKey(): GeneratedSigningKey {
   return { private_key_pem: privateKeyPem, public_key_pem: publicKeyPem, key_id: keyIdForPublicKey(publicKeyPem) };
 }
 
-export function createTrustRoot(key: {
+export interface TrustRootKeyInput {
   key_id: string;
   public_key_pem: string;
   not_before: string;
   not_after: string;
   status?: KeyStatus;
-}): TrustRoot {
+}
+
+function trustRootKey(key: TrustRootKeyInput, index: number): TrustedKey {
   if (!KEY_ID.test(key.key_id) || key.key_id !== keyIdForPublicKey(key.public_key_pem)) {
-    throw new SigningError('The trusted key id does not match its public key.');
+    throw new SigningError(`The trusted key ${index} id does not match its public key.`);
+  }
+  const status = key.status ?? 'trusted';
+  if (status !== 'trusted' && status !== 'revoked') {
+    throw new SigningError(`The trusted key ${key.key_id} has an invalid status.`);
+  }
+  const notBefore = requireTimestamp(key.not_before, `keys[${index}].not_before`);
+  const notAfter = requireTimestamp(key.not_after, `keys[${index}].not_after`);
+  if (Date.parse(notBefore) >= Date.parse(notAfter)) {
+    throw new SigningError(`The trusted key ${key.key_id} has an empty validity window.`);
   }
   return {
-    schema_version: 1,
-    keys: [{
-      key_id: key.key_id,
-      algorithm: 'ed25519',
-      public_key_pem: key.public_key_pem,
-      status: key.status ?? 'trusted',
-      not_before: requireTimestamp(key.not_before, 'keys.not_before'),
-      not_after: requireTimestamp(key.not_after, 'keys.not_after'),
-    }],
+    key_id: key.key_id,
+    algorithm: 'ed25519',
+    public_key_pem: key.public_key_pem,
+    status,
+    not_before: notBefore,
+    not_after: notAfter,
   };
+}
+
+/** Build one trust root with an explicitly supplied key set. */
+export function createTrustRootFromKeys(keys: readonly TrustRootKeyInput[]): TrustRoot {
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_TRUSTED_KEYS) {
+    throw new SigningError(`A trust root must contain between 1 and ${MAX_TRUSTED_KEYS} keys.`);
+  }
+  const seen = new Set<string>();
+  const normalized: TrustedKey[] = [];
+  for (const [index, key] of keys.entries()) {
+    if (seen.has(key.key_id)) {
+      throw new SigningError(`The trust root contains duplicate key id ${key.key_id}.`);
+    }
+    seen.add(key.key_id);
+    normalized.push(trustRootKey(key, index));
+  }
+  return { schema_version: 1, keys: normalized };
+}
+
+export function createTrustRoot(key: TrustRootKeyInput): TrustRoot {
+  return createTrustRootFromKeys([key]);
 }
 
 export function loadTrustRoot(path: string): TrustRoot {
@@ -559,6 +588,8 @@ export function verifyArtifactSignature(options: {
   signature_path: string;
   trust_root_path: string;
   expected_subject: SignatureSubject;
+  /** Pin the signer to one trust-root key instead of accepting any valid trusted key. */
+  expected_key_id?: string;
   now?: Date;
 }): VerifiedSignature {
   const artifact = readCappedFile(options.artifact_path, 'artifact', MAX_ARTIFACT_BYTES);
@@ -566,6 +597,16 @@ export function verifyArtifactSignature(options: {
   const statement = parseSignedStatement(signatureBytes.toString('utf8'));
   if (statement.artifact_kind !== options.artifact_kind) {
     throw new SigningError(`The signature is for ${statement.artifact_kind}, not ${options.artifact_kind}.`);
+  }
+  if (options.expected_key_id !== undefined) {
+    if (!KEY_ID.test(options.expected_key_id)) {
+      throw new SigningError('The expected signing key id is malformed.');
+    }
+    if (statement.key_id !== options.expected_key_id) {
+      throw new SigningError(
+        `The signature key ${statement.key_id} does not match the pinned key ${options.expected_key_id}.`,
+      );
+    }
   }
   const expectedSubject = validateSubject(options.expected_subject, 'expected');
   const trustRoot = loadTrustRoot(options.trust_root_path);

@@ -20,13 +20,17 @@ the artifact.
 `tools/security/trust-root.json` is the checked-in trust anchor. This repository ships it
 with an **empty key list**, which makes verification fail closed until an operator
 provisions a key. The private key must never be committed; keep it in an offline signer or
-a CI secret and commit only the public half.
+a CI secret and commit only the public half. The full provisioning, rotation, revocation and
+custody procedure is in [`trust-root-lifecycle.md`](trust-root-lifecycle.md).
 
 ```sh
-# Provision (private key stays out of the repository)
-node tools/security/sign-artifacts.mjs generate-key \
-  --private /secure/aios-signing-key.pem --trust-root /secure/trust-root.json
-# Sign both artifact kinds
+# Provision a development/test root; private key stays on the runtime path.
+node tools/security/trust-root.mjs keygen \
+  --private /secure/aios-signing-key.pem --public /secure/aios-signing-key.pub.pem
+node tools/security/trust-root.mjs init \
+  --trust-root /secure/trust-root.json --public-key /secure/aios-signing-key.pub.pem \
+  --not-before 2026-01-01T00:00:00.000Z --not-after 2027-01-01T00:00:00.000Z
+# Sign both artifact kinds.
 node tools/security/sign-artifacts.mjs sign --kind runtime-pin \
   --artifact tools/security/gvisor-runtime.pin.json \
   --key /secure/aios-signing-key.pem --trust-root /secure/trust-root.json \
@@ -35,15 +39,20 @@ node tools/security/sign-artifacts.mjs sign --kind rootfs-manifest \
   --artifact "$AIOS_GVISOR_ROOTFS_MANIFEST" \
   --key /secure/aios-signing-key.pem --trust-root /secure/trust-root.json \
   --out "$AIOS_GVISOR_ROOTFS_MANIFEST.sig.json"
+# Optional operator pin: reject any signer other than the expected key id.
+node tools/security/sign-artifacts.mjs verify --kind runtime-pin \
+  --artifact tools/security/gvisor-runtime.pin.json \
+  --signature tools/security/gvisor-runtime.pin.sig.json \
+  --trust-root /secure/trust-root.json --expect-key-id "$KEY_ID"
 ```
 
-- **Rotation:** overlapping validity windows are supported. Add the new key as `trusted`
-  before its `not_before`, sign new artifacts with it, keep the old key until every artifact
-  signed by it has been re-signed or retired, then remove it. A signature names exactly one
-  key id; verification never falls back to another key.
-- **Revocation:** `"status": "revoked"` applies to all future verifications, including
-  signatures created while the key was valid. Revocation is a repository change, so it is
-  reviewable in history.
+- **Rotation:** `trust-root.mjs rotate` adds the new key while retaining the old key and its
+  existing validity window. Old signatures remain accepted until the old key's `not_after`;
+  re-sign before then. A signature names exactly one key id and verification never falls back
+  to another key.
+- **Revocation:** `trust-root.mjs revoke` sets `"status": "revoked"`, which applies to all
+  future verifications, including signatures created while the key was valid. Revocation is a
+  repository change, so it is reviewable in history.
 - **Expiry:** a signature must have been created inside its key's window and is rejected
   once `not_after` has passed; re-sign before expiry.
 - **No implicit keys:** public keys embedded in or next to artifacts are never loaded.
@@ -67,10 +76,12 @@ Evidence records `pin_signature_key_id`, `pin_signature_sha256`,
 `apps/host/tests/artifact-signing.test.ts` verifies the happy path for both kinds and
 rejects: modified artifact, signature moved from another valid artifact, missing statement,
 malformed statement, key absent from the trust root, revoked key, expired key, subject
-mismatch, corrupted signature bytes and an empty trust root. It also accepts an overlapping
-rotated key. `apps/host/tests/gvisor.test.ts` proves the provider fails closed without a
-trust root, with a missing pin/signature, and with a pin whose signed subject does not match
-the measured runtime.
+mismatch, corrupted signature bytes, a wrong pinned key id and an empty trust root. Its
+overlapping-rotation test accepts the old key inside its window and rejects it after expiry.
+`apps/host/tests/trust-root-lifecycle.test.ts` exercises the provisioning/rotation/revocation
+CLI against the real verifier. `apps/host/tests/gvisor.test.ts` proves the provider fails
+closed without a trust root, with a missing pin/signature, and with a pin whose signed
+subject does not match the measured runtime.
 
 ## Evaluation and honest limits
 
@@ -83,12 +94,13 @@ weaker identity binding.
 - **Proven what is proven:** the offline trust chain, rotation/revocation rules, exact-byte
   and subject binding, and fail-closed consumption are implemented and exercised locally and
   in the Security workflow with a run-scoped key.
-- **Not proven:** a production trust root and long-lived key are not provisioned; no keyless
-  Fulcio certificate, Rekor transparency entry, hardware-backed key or SLSA provenance exists,
-  so this is **not** a Sigstore or SLSA conformance claim. The `source` fields are
-  self-asserted by whoever holds the signing key; they are metadata, not a CI identity
-  attestation. The Security workflow log shows the run-scoped key id and digest, not a
-  trusted workload identity.
+- **Not proven:** a production trust root and long-lived key are not provisioned in this
+  repository, even though the provisioning/rotation/revocation CLI is implemented and tested.
+  No keyless Fulcio certificate, Rekor transparency entry, hardware-backed key or SLSA
+  provenance exists, so this is **not** a Sigstore or SLSA conformance claim. The `source`
+  fields are self-asserted by whoever holds the signing key; they are metadata, not a CI
+  identity attestation. The Security workflow log shows the run-scoped key id and digest, not
+  a trusted workload identity.
 
 ## Adversarial hardening — statement v2 (2026-11-11)
 
@@ -122,7 +134,9 @@ Coverage in `apps/host/tests/artifact-signing-adversarial.test.ts` (12 tests):
 digest, the measured rootfs digest and the provider evidence are equal, and a rootfs modified
 after signing fails closed before `runsc` is invoked.
 
-Measured locally: focused 54/54; full uncached gate 46/46 tasks with 0 cached, host 209 passed
-/ 17 skipped, integration 43, orchestration 30. The remaining open items are unchanged:
-production trust-root/key provisioning, Sigstore/Fulcio/Rekor identity, SLSA provenance, and
-separate macOS/rootless-Docker measurement. No Sigstore or SLSA conformance is claimed.
+Measured locally: signing, adversarial-signing, gVisor and provenance files **56/56**; full
+uncached gate **46/46 tasks with 0 cached**; Founder **95**, Host **261 passed / 17 skipped**,
+integration **43**, orchestration **30**. The lifecycle CLI and local provenance producer are
+now operable; production trust-root/key provisioning and custody, Sigstore/Fulcio/Rekor
+identity, SLSA provenance and separate macOS/rootless-Docker measurement remain open. No
+Sigstore or SLSA conformance is claimed.

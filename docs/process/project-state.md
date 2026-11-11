@@ -1,9 +1,8 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Latest measured security code head: `378e7d6` (pinned gVisor build inputs and
-independent-image rootfs reproduction, following `ef02f27`); its documentation checkpoint
-follows. The historical heads below
+evidence from observed CI. Current security branch base: `db2f5b3` (signed provenance fixes);
+the trust-root lifecycle and local-provenance pass is recorded at the end of this file. The historical heads below
 remain the last explicitly recorded CI evidence in this file; re-check the pushed head
 instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
 the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
@@ -16,10 +15,10 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `community/open-source-foundation`
+- Active implementation branch: `security/openjarvis-defensive-integration`
 - Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
 - PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Measured security code head: `378e7d6` (`fix(security): normalize gVisor rootfs build state`; pinned base/snapshot/packages, independent-image comparison, and path-level reproducibility diagnostics).
+- Current security branch base: `db2f5b3` (`fix(security): close provenance verification gaps`); the trust-root lifecycle and local provenance pass is recorded at the end of this file.
 - Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic CI rootfs manifest, fail-closed tamper/missing-pin probes, and provenance evidence).
 - Pinned-input code commit: `103b521` (`feat(security): pin gVisor rootfs build inputs`; base digest, Debian snapshot, exact packages, input guard, independent image build, and drift regressions).
 - Prior security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors, drill/CI integration, and Docker engine metadata).
@@ -28,8 +27,8 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
 - Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
 - Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
 - Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for this pass: the branch tip after `378e7d6`; read
-  `git log --oneline -3` for the exact docs SHA.
+- Documentation checkpoint for the current pass: the branch tip after `db2f5b3`; the
+  lifecycle/provenance evidence is recorded at the end of this file.
 - Historical policy pass: `4422229` with docs commit `aa86a4e`.
 - Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
   mergeable/clean.
@@ -406,8 +405,9 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    remains trusted-local only. Docker has measured aggregate cgroups but no per-process
    `RLIMIT_AS`; rootless Docker, Seatbelt, and Apple Containerization remain unverified, while
    gVisor is measured in ADR-0032 with a repository-pinned runtime and reproducible rootfs
-   digest; signed pin/manifest verification is implemented but production trust-root
-   provisioning, snapshot availability, single-UID, and no-host-cgroup residuals remain.
+   digest; signed pin/manifest verification and a tested trust-root lifecycle CLI are
+   implemented, but the repository root remains unprovisioned. Production key custody,
+   base/snapshot signing, snapshot availability, single-UID and no-host-cgroup residuals remain.
    Node/libuv is currently killed by the seccomp io_uring denial at startup.
 2. **Verifier provenance.** A distinct configured verifier plus an independently executed
    command is implemented, but there is no signed decision, key rotation, or protection from
@@ -470,15 +470,17 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 ## Signed provenance (2026-11-11)
 
 Implemented and locally verified: detached Ed25519 signatures for the gVisor runtime pin and
-rootfs manifest, checked-in (empty, fail-closed) trust root, rotation/revocation rules,
-provider-side verification bound to the measured rootfs and materialized runtime, and
-deterministic rejection tests. Open: production key/trust-root provisioning, CI workload
-identity (Fulcio/OIDC) and SLSA provenance. No conformance level is claimed.
+rootfs manifest, an empty but fail-closed committed trust root, an operable
+`tools/security/trust-root.mjs` lifecycle (keygen, init, overlapping rotate, revoke, list,
+validate), provider-side verification bound to the measured rootfs and materialized runtime,
+and deterministic rejection tests. Open: production key/trust-root provisioning and custody,
+CI workload identity (Fulcio/OIDC) and SLSA provenance. No conformance level is claimed.
 
 Statement v2 (2026-11-11) hardens signed-artifact parsing: strict JSON with no duplicate or
 prototype keys, bounded size/depth, exact fields, canonical signatures and a v1 rejection.
-Adversarial regression tests and seeded mutation fuzzing pass locally; production trust-root
-provisioning remains the blocking operator action.
+Adversarial regression tests and seeded mutation fuzzing pass locally. The lifecycle code gap
+is closed; provisioning a production public key and protecting its private key remain operator
+actions.
 
 Execution evidence (2026-11-11) is now attempt-bound canonical plain data with strict evidence
 parsing, per-invocation nonce replay rejection and mandatory durable-ledger acceptance. Local
@@ -498,3 +500,25 @@ and measured artifact digests to an offline-verifiable Ed25519 attestation. CI g
 checks it with the run-scoped key and real artifact files. No OIDC/Sigstore/SLSA/in-toto
 conformance or external custody is claimed; production key provisioning and macOS/rootless
 Docker remain open.
+
+## Trust-root lifecycle and local provenance (2026-11-11)
+
+Implemented and locally verified on `security/openjarvis-defensive-integration`:
+
+- `tools/security/trust-root.mjs` provides atomic, no-replace `keygen`, `init`, overlapping
+  `rotate`, `revoke`, `list` and `validate` for the exact schema consumed by
+  `loadTrustRoot`. Private keys are runtime-only (mode `0600`); only public keys enter the
+  trust root. The committed root remains empty and fail-closed.
+- The verifier can pin an expected key id for artifacts and build provenance; provenance gained
+  `WRONG_KEY` (exit 19) and a local/offline producer using the same statement as CI. Generation
+  is atomic and refuses to overwrite an existing attestation.
+- Named tests: `trust-root-lifecycle.test.ts` (3), `build-provenance.test.ts` (13) and
+  `artifact-signing.test.ts` (14) cover key generation, init, overlap rotation, old-key expiry,
+  revocation, wrong/unknown/expired keys, previous-version rollback, wrong commit/builder/
+  workflow/artifact digest/key id, symlinked provenance/trust-root files, local generate/verify
+  and no-replace output.
+- Focused lifecycle/signing/provenance: **30/30**. Founder: **95/95**. Host: **261 passed / 17
+  skipped** across 29 files. Uncached workspace gate: **46/46 tasks, 0 cached**, exit 0.
+- Still open: an operator must provision and protect a production key/trust root; CI uses an
+  ephemeral run-scoped key, not OIDC/Fulcio/Rekor identity or external custody. Base/snapshot
+  inputs remain unsigned. No Sigstore, SLSA or in-toto conformance is claimed.

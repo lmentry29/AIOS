@@ -295,7 +295,7 @@ mount.
 | No netstack | The measured configuration uses `--network=none`; external networking is intentionally absent. |
 | OCI rlimits, no host cgroup | The Sentry enforces `RLIMIT_AS`, CPU, NPROC, and NOFILE; there is no aggregate host cgroup for the workload, and the executor still samples workspace usage every 25 ms rather than using a hard quota. |
 | No custom seccomp claim | The gVisor boundary is the Sentry/OCI configuration. The provider does not claim a host seccomp filter; `mount` was observed denied with `EPERM`, and the gVisor OCI seccomp action tested for process-kill was rejected by `runsc` as unsupported. |
-| Runtime/rootfs supply chain | `runsc` is fetched from the pinned release and checked against archive SHA-512, extracted SHA-256, and expected version on every invocation. The rootfs is built from a base image pinned by manifest-list digest, the fixed `snapshot.debian.org` timestamp, and exact package versions; CI builds two independent no-cache images and requires the same canonical digest, and the drill requires the manifest. Neither artifact is Sigstore-signed; the pin, base/snapshot inputs, and manifest are unsigned repository trust anchors, the snapshot must remain available, and the manifest excludes ownership/timestamps. |
+| Runtime/rootfs supply chain | `runsc` is fetched from the pinned release and checked against archive SHA-512, extracted SHA-256, and expected version on every invocation. The rootfs is built from a base image pinned by manifest-list digest, the fixed `snapshot.debian.org` timestamp, and exact package versions; CI builds two independent no-cache images and requires the same canonical digest, and the drill requires the manifest. The pin and manifest are Ed25519-signed; they are not Sigstore-signed, and base/snapshot inputs remain unsigned repository trust anchors. The snapshot must remain available; manifest v2 attests ownership, permissions, timestamps and extended attributes. |
 | Shared host kernel | gVisor is not a VM. The Sentry and gofer make host syscalls; a Sentry or host-kernel vulnerability remains in scope. |
 | CPU termination | The burner ended by the provider deadline (`SIGKILL`), not a distinct `SIGXCPU`; the OCI CPU rlimit value was separately probed. |
 | Case 1 image detail | The rootfs removes `/etc/shadow`; case 1 proves the controlled rootfs lacks that credential file, not that a hostile operator-supplied rootfs is trustworthy. |
@@ -329,9 +329,9 @@ remains the Linux default.
 
 - gVisor is a first-class explicit provider with a measured 21-case production path, per-case
   evidence, fail-closed selection, cleanup, and repository-pinned runtime/rootfs provenance.
-- The runtime/rootfs provenance is content attestation, not a signed release. The unsigned pin
-  and manifest, Debian snapshot availability, metadata exclusion, and host-writer trust remain
-  explicit residuals (F-017); F-018 is closed because the base image, apt snapshot, and package
+- The runtime/rootfs provenance is content attestation, not a Sigstore release. The pin and
+  manifest are Ed25519-signed, while base/snapshot signing, production trust-root provisioning,
+  Debian snapshot availability and host-writer trust remain explicit residuals (F-017); F-018 is closed because the base image, apt snapshot, and package
   versions are pinned and independent image builds agree. gVisor is still not the Linux default.
 - The Docker row now states the measured engine (`28.0.4`) and daemon mode (**rootful**); the
   earlier unstated-daemon residual is closed, while rootless Docker remains open.
@@ -348,9 +348,11 @@ The pin and rootfs manifest are now authenticated with detached Ed25519 statemen
 against `tools/security/trust-root.json`; a public key shipped beside an artifact is never
 trusted. The provider requires the signed manifest's `rootfs_sha256`/`entries` to equal the
 measured rootfs, and that measurement is the one materialized and re-checked for execution.
-The checked-in trust root is empty until provisioned, so the provider fails closed by
-default. Sigstore keyless verification was evaluated and rejected as the primary path because
-it requires network access to Fulcio/Rekor; no Sigstore or SLSA conformance is claimed.
+`tools/security/trust-root.mjs` provides tested key generation, initialization, overlapping
+rotation and revocation, so the trust-root lifecycle is operable. The checked-in trust root is
+still empty until an operator provisions a public key, so the provider fails closed by default.
+Sigstore keyless verification was evaluated and rejected as the primary path because it
+requires network access to Fulcio/Rekor; no Sigstore or SLSA conformance is claimed.
 
 ## Amendment — statement v2 hostile-input parsing (2026-11-11)
 

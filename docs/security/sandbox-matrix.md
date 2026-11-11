@@ -32,7 +32,8 @@ repository-pinned gVisor runtime and a reproducible rootfs digest.
   compatibility/performance cost. The runtime and build inputs are now repository-pinned: the
   base image is referenced by manifest-list digest, apt reads the fixed `snapshot.debian.org`
   timestamp, and package versions are exact. CI builds two independent no-cache images and
-  requires the same canonical rootfs digest; neither artifact is signed.
+  requires the same canonical rootfs digest; the runtime pin and rootfs manifest are signed,
+  while base/snapshot inputs remain unsigned.
 - Docker uses `create` → inspect → `start --attach` → cleanup, not `docker run`, so the
   daemon's reported controls are checked before execution and the named container is killed
   and removed on every exit path. The daemon's non-default seccomp report and the generated
@@ -114,10 +115,10 @@ marker and fails the case.
   against the pinned SHA-512 and extracted SHA-256 before use; the provider also hashes the
   actual executable and canonical rootfs on every check/run. CI builds the rootfs twice from
   `aios-sandbox:local` and requires identical content digests, and the drill requires the
-  manifest to match. Neither the pin nor the rootfs is Sigstore-signed; the pin, base/snapshot
-  inputs, and manifest are unsigned repository trust anchors, the Debian snapshot must remain
-  available for a future rebuild, and a host writer can replace the runtime/rootfs after
-  hashing.
+  manifest to match. The pin and rootfs manifest are Ed25519-signed, but they are not
+  Sigstore-signed and base/snapshot inputs remain unsigned repository trust anchors. The
+  Debian snapshot must remain available for a future rebuild, and a same-UID host writer can
+  still influence the runtime/rootfs inside the host trust boundary.
   There is no host cgroup for the workload; OCI rlimits are enforced by the Sentry. gVisor is a
   user-space kernel, not a VM, and shares the host kernel through the Sentry/gofer. The measured
   CPU burner ended with `SIGKILL` at the deadline, not `SIGXCPU`; case 1 proves the rootfs lacks
@@ -153,9 +154,10 @@ action pin, timeout, or severity was changed for the gVisor run.
 
 gVisor, all platforms: the runtime pin and rootfs manifest must verify against the configured
 trust root before use, and the signed rootfs digest must equal the measured and executed
-rootfs. With the repository's unprovisioned (empty) trust root the provider is unavailable;
-CI and drills supply a run-scoped trust root to exercise the offline chain. This row does not
-imply keyless identity or SLSA provenance.
+rootfs. `tools/security/trust-root.mjs` supplies tested provisioning, overlapping rotation and
+revocation. With the repository's unprovisioned (empty) trust root the provider remains
+unavailable; CI and drills supply a run-scoped trust root to exercise the offline chain. This
+row does not imply keyless identity or SLSA provenance.
 
 Statement v2 additionally requires strict, bounded JSON: duplicate/prototype keys, unknown
 fields, oversized/deep documents and non-canonical signatures fail closed before any trust

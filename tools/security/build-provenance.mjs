@@ -6,7 +6,7 @@
  * artifact files. It does not open the host store, use the network or trust the environment.
  */
 import { createPrivateKey, createPublicKey, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, fsyncSync, linkSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { keyIdForPublicKey, loadTrustRoot } from '../../apps/host/dist/execution/artifact-signing.js';
 import {
@@ -27,6 +27,7 @@ const EXIT = {
   KEY_NOT_YET_VALID: 9,
   KEY_EXPIRED: 9,
   TRUST_ROOT: 9,
+  WRONG_KEY: 19,
   WRONG_REPOSITORY: 11,
   WRONG_COMMIT: 12,
   WRONG_BUILDER: 13,
@@ -79,27 +80,47 @@ function requiredEnvironment(name) {
   return value;
 }
 
+function requiredFlag(name) {
+  const value = flag(name, false);
+  if (value === undefined) fail(`--${name} is required in local mode`);
+  return value;
+}
+
 function output(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 function writeJsonAtomic(path, value) {
   const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
-  const descriptor = openSync(temporary, 'wx', 0o600);
+  let descriptor;
   try {
+    descriptor = openSync(temporary, 'wx', 0o600);
     writeFileSync(descriptor, JSON.stringify(value), 'utf8');
     fsyncSync(descriptor);
-  } catch (error) {
     closeSync(descriptor);
+    descriptor = undefined;
+    chmodSync(temporary, 0o600);
+    // link(2) is no-replace: a pre-existing attestation is never overwritten.
+    linkSync(temporary, path);
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // The complete target exists; leave only an invocation-owned temporary file.
+    }
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // Best-effort cleanup of the invocation-owned temporary file only.
+    }
     throw error;
   }
-  closeSync(descriptor);
-  chmodSync(temporary, 0o600);
-  renameSync(temporary, path);
 }
 
 function expected() {
   return {
+    ...(flag('expect-key-id', false) === undefined ? {} : { key_id: flag('expect-key-id', false) }),
     ...(flag('expect-repository', false) === undefined ? {} : { repository: flag('expect-repository', false) }),
     ...(flag('expect-commit', false) === undefined ? {} : { commit: flag('expect-commit', false) }),
     ...(flag('expect-builder-id', false) === undefined ? {} : { builder_id: flag('expect-builder-id', false) }),
@@ -116,29 +137,44 @@ function main() {
     const keyPath = resolve(flag('key'));
     const outPath = resolve(flag('out'));
     const artifacts = artifactArguments();
+    const local = process.argv.includes('--local');
     if (artifacts.length === 0) fail('at least one --artifact name=path is required');
-    const workflowRef = requiredEnvironment('GITHUB_WORKFLOW_REF');
+    const workflowRef = local
+      ? flag('workflow-ref', false) ?? 'local:build-provenance'
+      : requiredEnvironment('GITHUB_WORKFLOW_REF');
     const privateKeyPem = readFileSync(keyPath, 'utf8');
     const publicKeyPem = createPublicKey(createPrivateKey(privateKeyPem)).export({ type: 'spki', format: 'pem' }).toString();
     const attestation = createBuildAttestation({
       private_key_pem: privateKeyPem,
       key_id: keyIdForPublicKey(publicKeyPem),
-      source: {
-        repository: requiredEnvironment('GITHUB_REPOSITORY'),
-        commit: flag('commit', false) ?? requiredEnvironment('GITHUB_SHA'),
-        ref: requiredEnvironment('GITHUB_REF'),
-        event: requiredEnvironment('GITHUB_EVENT_NAME'),
-        workflow_ref: workflowRef,
-        run_id: requiredEnvironment('GITHUB_RUN_ID'),
-        run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? '1',
-      },
+      source: local
+        ? {
+            repository: requiredFlag('repository'),
+            commit: requiredFlag('commit'),
+            ref: flag('ref', false) ?? 'refs/heads/local',
+            event: flag('event', false) ?? 'local',
+            workflow_ref: workflowRef,
+            run_id: flag('run-id', false) ?? '0',
+            run_attempt: flag('run-attempt', false) ?? '1',
+          }
+        : {
+            repository: requiredEnvironment('GITHUB_REPOSITORY'),
+            commit: flag('commit', false) ?? requiredEnvironment('GITHUB_SHA'),
+            ref: requiredEnvironment('GITHUB_REF'),
+            event: requiredEnvironment('GITHUB_EVENT_NAME'),
+            workflow_ref: workflowRef,
+            run_id: requiredEnvironment('GITHUB_RUN_ID'),
+            run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? '1',
+          },
       builder: {
-        id: flag('builder-id', false) ?? `github-actions:${workflowRef}`,
-        provider: 'github-actions',
-        runner_os: process.env.RUNNER_OS ?? 'unknown',
-        runner_arch: process.env.RUNNER_ARCH ?? 'unknown',
+        id: flag('builder-id', false) ?? (local ? 'local:build-provenance' : `github-actions:${workflowRef}`),
+        provider: local ? 'local' : 'github-actions',
+        runner_os: flag('runner-os', false) ?? process.env.RUNNER_OS ?? process.platform,
+        runner_arch: flag('runner-arch', false) ?? process.env.RUNNER_ARCH ?? process.arch,
       },
       artifacts,
+      ...(flag('created-at', false) === undefined ? {} : { created_at: flag('created-at', false) }),
+      ...(flag('attestation-id', false) === undefined ? {} : { attestation_id: flag('attestation-id', false) }),
     });
     writeJsonAtomic(outPath, attestation);
     output({ ok: true, command: 'generate', out: outPath, attestation_id: attestation.attestation_id, attestation_sha256: attestation.attestation_sha256, commit: attestation.source.commit, workflow_ref: attestation.source.workflow_ref, artifacts: attestation.artifacts });
@@ -165,7 +201,7 @@ function main() {
     }
     return;
   }
-  fail('usage: build-provenance.mjs <generate|verify> [flags]');
+  fail('usage: build-provenance.mjs <generate|verify> [flags] (generate --local requires --repository and --commit)');
 }
 
 try {

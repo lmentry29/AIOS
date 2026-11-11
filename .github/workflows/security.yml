@@ -96,10 +96,11 @@ jobs:
           set -euo pipefail
           KEY="$RUNNER_TEMP/aios-signing-key.pem"
           ROOT="$RUNNER_TEMP/aios-trust-root.json"
-          node tools/security/sign-artifacts.mjs generate-key --private "$KEY" --trust-root "$ROOT"
+          node tools/security/sign-artifacts.mjs generate-key --private "$KEY" --trust-root "$ROOT" > "$RUNNER_TEMP/aios-signing-key.json"
+          KEY_ID=$(node -e 'process.stdout.write(require(process.argv[1]).key_id)' "$RUNNER_TEMP/aios-signing-key.json")
           node tools/security/sign-artifacts.mjs sign --kind runtime-pin --artifact tools/security/gvisor-runtime.pin.json --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-runtime.pin.sig.json"
           node tools/security/sign-artifacts.mjs sign --kind rootfs-manifest --artifact "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --key "$KEY" --trust-root "$ROOT" --out "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json"
-          node tools/security/sign-artifacts.mjs verify-all --pin tools/security/gvisor-runtime.pin.json --pin-signature "$RUNNER_TEMP/gvisor-runtime.pin.sig.json" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --manifest-signature "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json" --trust-root "$ROOT"
+          node tools/security/sign-artifacts.mjs verify-all --pin tools/security/gvisor-runtime.pin.json --pin-signature "$RUNNER_TEMP/gvisor-runtime.pin.sig.json" --manifest "$RUNNER_TEMP/gvisor-rootfs.manifest.json" --manifest-signature "$RUNNER_TEMP/gvisor-rootfs.manifest.sig.json" --trust-root "$ROOT" --expect-key-id "$KEY_ID"
       # Bind the exact source commit/workflow identity to the artifact set actually produced
       # by this run. The run-scoped key and trust root are the same offline chain used above;
       # this is not an OIDC, Sigstore or SLSA identity claim.
@@ -110,6 +111,7 @@ jobs:
           set -euo pipefail
           KEY="$RUNNER_TEMP/aios-signing-key.pem"
           ROOT="$RUNNER_TEMP/aios-trust-root.json"
+          KEY_ID=$(node -e 'process.stdout.write(require(process.argv[1]).key_id)' "$RUNNER_TEMP/aios-signing-key.json")
           PROVENANCE="$RUNNER_TEMP/build-provenance.json"
           node tools/security/build-provenance.mjs generate \
             --key "$KEY" \
@@ -122,6 +124,7 @@ jobs:
           node tools/security/build-provenance.mjs verify \
             --attestation "$PROVENANCE" \
             --trust-root "$ROOT" \
+            --expect-key-id "$KEY_ID" \
             --expect-repository "$GITHUB_REPOSITORY" \
             --expect-commit "$SOURCE_COMMIT" \
             --expect-builder-id "github-actions:$GITHUB_WORKFLOW_REF" \

@@ -38,6 +38,7 @@ export type BuildAttestationFailure =
   | 'KEY_REVOKED'
   | 'KEY_NOT_YET_VALID'
   | 'KEY_EXPIRED'
+  | 'WRONG_KEY'
   | 'SIGNATURE'
   | 'ATTESTATION_DIGEST'
   | 'WRONG_REPOSITORY'
@@ -70,9 +71,11 @@ export interface BuildSource {
   run_attempt: string;
 }
 
+export type BuilderProvider = 'github-actions' | 'local';
+
 export interface BuilderIdentity {
   id: string;
-  provider: 'github-actions';
+  provider: BuilderProvider;
   runner_os: string;
   runner_arch: string;
 }
@@ -186,12 +189,12 @@ function validateSource(value: unknown): BuildSource {
 function validateBuilder(value: unknown): BuilderIdentity {
   if (!isRecord(value)) fail('MALFORMED_ATTESTATION', 'The attestation builder must be an object.');
   onlyFields(value, ['id', 'provider', 'runner_os', 'runner_arch'], 'builder');
-  if (value.provider !== 'github-actions') {
-    fail('MALFORMED_ATTESTATION', 'builder.provider must be github-actions.');
+  if (value.provider !== 'github-actions' && value.provider !== 'local') {
+    fail('MALFORMED_ATTESTATION', 'builder.provider must be github-actions or local.');
   }
   return {
     id: requireString(value.id, 'builder.id', 512),
-    provider: 'github-actions',
+    provider: value.provider,
     runner_os: requireString(value.runner_os, 'builder.runner_os', 64),
     runner_arch: requireString(value.runner_arch, 'builder.runner_arch', 64),
   };
@@ -376,6 +379,8 @@ export function verifyBuildAttestation(options: {
   expected?: {
     repository?: string;
     commit?: string;
+    /** Pin the signer to one trust-root key instead of accepting any valid trusted key. */
+    key_id?: string;
     builder_id?: string;
     workflow_ref?: string;
     run_id?: string;
@@ -429,6 +434,9 @@ export function verifyBuildAttestation(options: {
   if (!valid) fail('SIGNATURE', 'The attestation signature is invalid.');
 
   const expected = options.expected ?? {};
+  if (expected.key_id !== undefined && expected.key_id !== attestation.signing_key.key_id) {
+    fail('WRONG_KEY', 'The attestation signing key does not match the pinned key id.');
+  }
   if (expected.repository !== undefined && expected.repository !== attestation.source.repository) {
     fail('WRONG_REPOSITORY', 'The attestation repository does not match the expected repository.');
   }
