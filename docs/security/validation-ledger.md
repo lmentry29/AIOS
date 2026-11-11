@@ -1121,8 +1121,7 @@ documentation checkpoint follows this code head; read `git log --oneline -3` for
 
 ## 2026-11-11 — artifact staging, metadata-attesting manifest v2 and verify-to-execute binding
 
-Code head: the commit that introduces this section; CI evidence is appended below once the
-workflows for that commit complete.
+Code head: `cc8c1df…`; the documentation head follows it and Release is dispatched there.
 
 ### Implemented
 
@@ -1178,3 +1177,42 @@ workflows for that commit complete.
 - Pins and manifests remain unsigned (F-017).
 - Rootless Docker, macOS Seatbelt and Apple Containerization are unchanged and remain
   unmeasured or unavailable; no result here is extrapolated to those platforms.
+
+### CI evidence and iteration (code head `cc8c1df`)
+
+The first four Security runs on this change each failed on a reproducible defect; each failure
+was diagnosed from the run log, fixed, and re-run rather than waived.
+
+| Code head | Security run | Observed failure | Fix |
+| --- | --- | --- | --- |
+| `20e1131` | `42961763395` | `getfattr: invalid regular expression "*"` while building the rootfs | invoke `getfattr -R -h -d`; `-m` is a regex, and `-h` avoids following symlinks |
+| `6f50933` | `42962192528` | `sidecar "gvisor_sentry" not usable ... gvisor-bin/gvisor_sentry` | materialize the runtime tree (`runsc` plus `gvisor-bin`), not only the binary |
+| `ff21f9c` | `42962683783` | the probe rootfs gained one entry (runsc scratch state) | execute an invocation-owned rootfs copy that measures identically |
+| `0351076` | `42963299015` | the copy's `metadata_sha256` differed (mode preservation) | copy entries explicitly and apply the source modes |
+
+At `cc8c1df5488c9e63a3d38aef44ad784d3e5d608a`, Security run `42963634931` (2m15s) passed
+steps 1–21 with no skipped step:
+
+- Step 6 installed `bubblewrap` and `attr`; step 12 verified build pin
+  `9fccac3eac4bb9e5c0adde39816dc7b858c3ea1b5105d3e79b91046c15c6174d`.
+- Step 13 verified the pinned index contains the platform manifest: index
+  `sha256:734a72b3…`, platform `sha256:c67e92c8…`.
+- Steps 14–15: Docker engine `28.0.4`, rootful, **21/21** cases denied or contained.
+- Step 17 installed `runsc release-20261102.0`, binary `c5a5a7ba…`, archive `2e6671bb…`,
+  pin `20c017d9…`; step 18 observed the tampered-archive and missing-pin refusals.
+- Step 19 built independent images `sha256:8702c6e9…` and `sha256:de61bccf…`; both produced
+  manifest-v2 rootfs
+  `8d7514aea1e5ec188a1b7b1dc3a1c884e6b376ab12ea37b839d6f7e857fa180c` with 6,195 entries,
+  `content_sha256 6e1376d8…` (the historical v1 digest, unchanged), `metadata_sha256
+  bf8da6b6…`, `timestamps_sha256 65364f98…`, `xattrs: captured`, Dockerfile `af14f800…`,
+  manifest-file `8fa81ae9…`.
+- Step 20 ran the gVisor drill **21/21** with per-case provenance `d0f27232…`, runtime
+  `c5a5a7ba…`, rootfs `8d7514ae…`; step 21 passed the session-operator drill; steps 9–11
+  passed the bubblewrap live suite, resource-limit drill and bubblewrap **21/21** drill.
+- Same head: CI run `42963634937`, Conformance `42963635037`, Schema Check `42963634950`
+  all green. Release is `workflow_dispatch`-only and is recorded with the documentation head.
+
+**Still not established:** signature verification, key rotation and SLSA provenance
+(Priority 2); pins and manifests remain unsigned. Rootless Docker, macOS Seatbelt and Apple
+Containerization remain unmeasured or unavailable. No result is extrapolated across
+platforms.

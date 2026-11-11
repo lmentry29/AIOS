@@ -210,6 +210,15 @@ hashing. A Sigstore-signed release and immutable runtime mount remain future wor
   Docker daemon is available. The extended-attribute reader is invoked as `getfattr -R -h -d`;
   `-h` prevents symlink dereference into the host, and `Operation not supported` is the only
   tolerated reader error (empty set for symlinks) while other errors abort.
+- CI at `cc8c1df` (Security run `42963634931`, 2m15s) passed steps 1–21: platform-index check
+  `734a72b3…` → `c67e92c8…`; independent images `8702c6e9…`/`de61bccf…` both produced
+  manifest-v2 rootfs `8d7514ae…` (6,195 entries; `content_sha256 6e1376d8…`, `metadata_sha256
+  bf8da6b6…`, xattrs captured); gVisor drill **21/21** with provenance `d0f27232…`; Docker
+  **21/21**; bubblewrap **21/21**; session-operator drill passed. Same-head CI, Conformance
+  and Schema Check were green. Four earlier Security runs (`42961763395`, `42962192528`,
+  `42962683783`, `42963299015`) each exposed a concrete defect in this change (getfattr
+  pattern, missing Sentry sidecars, runtime rootfs writes, copy mode preservation); each was
+  fixed and re-run, not waived.
 
 ### Earlier CI at `54344f1`
 

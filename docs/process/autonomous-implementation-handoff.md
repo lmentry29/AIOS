@@ -142,6 +142,12 @@ canonical collections, and the live bubblewrap controls remain in place from
   every case. Security workflow steps 12 and 15–19 validate the pin, rebuild the image
   independently, prove tampered/missing pins fail closed, build the rootfs, and run the drill.
   Bubblewrap/Docker steps and all existing assertions remain untouched.
+- CI at `cc8c1df`: Security run `42963634931`, steps 12–21; platform digest `c67e92c8…`
+  verified as the child of index `734a72b3…`; independent images `8702c6e9…`/`de61bccf…`
+  both produced manifest-v2 rootfs `8d7514ae…` (6,195 entries; `content_sha256 6e1376d8…`,
+  `metadata_sha256 bf8da6b6…`, xattrs captured); gVisor **21/21** with provenance `d0f27232…`;
+  Docker **21/21**; bubblewrap **21/21**; CI `42963634937`, Conformance `42963635037`, Schema
+  `42963634950` green.
 - CI at `378e7d6`: Security run `42956393498`, live job `130312417881`; pin guard `9fccac3e…`;
   install measured `runsc release-20261102.0`, binary `c5a5a7ba…`, archive `2e6671bb…`, pin
   `20c017d9…`; independent run-scoped images `89eacf2a…` and `a8abdab0…` both produced rootfs `6e1376d8…`

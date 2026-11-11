@@ -171,6 +171,12 @@ passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `sch
   manifest attests uid/gid, permission bits, mtime and extended attributes (`--require-xattrs`
   in CI); the runtime executes from a private measured copy and the rootfs executes from an
   invocation-owned copy that must measure identically.
+- CI at `cc8c1df` (Security run `42963634931`, steps 12–21) re-validated the change end to end:
+  platform digest `c67e92c8…` proven as the child of index `734a72b3…`; independent images
+  `8702c6e9…` and `de61bccf…` both produced manifest-v2 rootfs `8d7514ae…` (6,195 entries;
+  `content_sha256 6e1376d8…`, `metadata_sha256 bf8da6b6…`, xattrs captured); gVisor **21/21**
+  (provenance `d0f27232…`), Docker **21/21**, bubblewrap **21/21**, session-operator drill all
+  pass; same-head CI `42963634937`, Conformance `42963635037`, Schema `42963634950` green.
 - CI at `378e7d6` (Security run `42956393498`, live job `130312417881`) passed: pin guard step 12;
   Docker build/drill steps 13–14 (**21/21**); independent image build step 15; install step 16
   measured `runsc release-20261102.0`, binary
