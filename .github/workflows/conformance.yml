@@ -5,7 +5,7 @@ on:
     paths:
       - "packages/**"
       - "tests/conformance/**"
-      - "vitest.workspace.ts"
+      - "vitest.config.ts"
       - "pnpm-workspace.yaml"
       - ".github/workflows/conformance.yml"
       - "docs/architecture/conformance-standard.md"

@@ -478,8 +478,9 @@ reverse.)
 **Original problem.** `tests/integration/` was empty and *could not hold a
 working test*: `pnpm-workspace.yaml` declared only `packages/*`, so nothing
 under `tests/` was a workspace package and nothing there could resolve
-`@aios/*` imports. `vitest.workspace.ts` defined `integration` and
-`conformance` projects with nothing runnable in them.
+`@aios/*` imports. The root Vitest configuration (then `vitest.workspace.ts`,
+now `vitest.config.ts`) defined `integration` and `conformance` projects with
+nothing runnable in them.
 
 That meant no package met implementation-playbook.md §8's per-package
 Definition of Done, which requires "an integration test covering its

@@ -94,7 +94,7 @@ Copy from `SOURCE_DIR` (or the vault, once its path is confirmed) to `REPO_ROOT`
 
 Follow `AIOS-Repository-Design-Specification.md` §1.1–§1.9 exactly for content/config of each:
 
-- Root: `README.md`, `AGENTS.md`, `CLAUDE.md` (pointer to `AGENTS.md`), `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`, `biome.json`, `vitest.workspace.ts`, `.nvmrc`, `.gitignore`, `.gitattributes`, `.env.example`.
+- Root: `README.md`, `AGENTS.md`, `CLAUDE.md` (pointer to `AGENTS.md`), `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`, `biome.json`, `vitest.config.ts`, `.nvmrc`, `.gitignore`, `.gitattributes`, `.env.example`.
 - `.github/CODEOWNERS` (per spec §1.5), `.github/workflows/ci.yml`, `.github/workflows/schema-check.yml`, `.github/workflows/conformance.yml`, `.github/workflows/release.yml` (per spec §1.9).
 - `.changeset/config.json` (Changesets init).
 - Nine packages under `packages/`, each with `package.json` (name `@aios/<name>`), `tsconfig.json` extending root, empty `src/index.ts`, empty `tests/` folder. **Scaffolding only — no implementation logic.**
