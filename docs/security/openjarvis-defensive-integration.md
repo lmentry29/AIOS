@@ -179,6 +179,10 @@ all job contents are unchanged. Security run **43234936169**
 succeeded. Earlier run **43136322627** passed for code head
 `d232c91f8f439091649b83b79c8e691e47ffd1a3`.
 
+The infrastructure and scheduler implementation head `31f477f0c4f21e59eae11543fc4d9a662b3de39f`
+passed run **43241705811** (https://github.com/lmentry29/AIOS/actions/runs/43241705811),
+with both the live-sandbox and supply-chain jobs successful.
+
 The first branch run, **43135546414**
 (https://github.com/lmentry29/AIOS/actions/runs/43135546414), failed at
 `session-operator-drill.mjs`: the drill still wrote a host config without the required
