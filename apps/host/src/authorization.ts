@@ -1,5 +1,9 @@
-import type { AuthorizationService, FounderAuthorizationPort, FounderAuthorizationRequest } from '@aios/founder';
-import { currentRequestId } from './request-context.js';
+import type {
+  AuthorizationService,
+  FounderAuthorizationPort,
+  FounderAuthorizationRequest,
+} from "@aios/founder";
+import { currentRequestId } from "./request-context.js";
 
 /**
  * The one authorization boundary in the process.

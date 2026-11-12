@@ -12,7 +12,7 @@ export class HostHttpError extends Error {
     message = code,
   ) {
     super(message);
-    this.name = 'HostHttpError';
+    this.name = "HostHttpError";
   }
 }
 
@@ -20,7 +20,7 @@ export class HostHttpError extends Error {
 export class HostConfigError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'HostConfigError';
+    this.name = "HostConfigError";
   }
 }
 
@@ -33,7 +33,7 @@ export class HostConfigError extends Error {
 export class HostUnavailableError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'HostUnavailableError';
+    this.name = "HostUnavailableError";
   }
 }
 
@@ -46,7 +46,7 @@ export class HostUnavailableError extends Error {
 export class HostExecutionError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'HostExecutionError';
+    this.name = "HostExecutionError";
   }
 }
 
@@ -60,7 +60,7 @@ export class HostExecutionError extends Error {
 export class WorkspaceQuotaExceededError extends HostExecutionError {
   constructor(message: string) {
     super(message);
-    this.name = 'WorkspaceQuotaExceededError';
+    this.name = "WorkspaceQuotaExceededError";
   }
 }
 
@@ -68,7 +68,7 @@ export class WorkspaceQuotaExceededError extends HostExecutionError {
 export class SandboxFilterUnavailableError extends HostExecutionError {
   constructor(message: string) {
     super(message);
-    this.name = 'SandboxFilterUnavailableError';
+    this.name = "SandboxFilterUnavailableError";
   }
 }
 
@@ -76,7 +76,7 @@ export class SandboxFilterUnavailableError extends HostExecutionError {
 export class SandboxIsolationUnavailableError extends HostExecutionError {
   constructor(message: string) {
     super(message);
-    this.name = 'SandboxIsolationUnavailableError';
+    this.name = "SandboxIsolationUnavailableError";
   }
 }
 
@@ -84,7 +84,7 @@ export class SandboxIsolationUnavailableError extends HostExecutionError {
 export class SandboxResourceLimitUnavailableError extends HostExecutionError {
   constructor(message: string) {
     super(message);
-    this.name = 'SandboxResourceLimitUnavailableError';
+    this.name = "SandboxResourceLimitUnavailableError";
   }
 }
 
@@ -95,6 +95,6 @@ export class SandboxSyscallDeniedError extends HostExecutionError {
     readonly filterSha256?: string,
   ) {
     super(message);
-    this.name = 'SandboxSyscallDeniedError';
+    this.name = "SandboxSyscallDeniedError";
   }
 }

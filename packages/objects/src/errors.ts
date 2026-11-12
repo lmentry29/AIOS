@@ -7,7 +7,7 @@
 export class EntityIdConflictError extends Error {
   constructor(entityId: string) {
     super(`entity_id "${entityId}" already exists in the store and cannot be reused (COM §9).`);
-    this.name = 'EntityIdConflictError';
+    this.name = "EntityIdConflictError";
   }
 }
 
@@ -15,7 +15,7 @@ export class EntityIdConflictError extends Error {
 export class EntityNotFoundError extends Error {
   constructor(entityId: string) {
     super(`No entity found with entity_id "${entityId}".`);
-    this.name = 'EntityNotFoundError';
+    this.name = "EntityNotFoundError";
   }
 }
 
@@ -37,9 +37,9 @@ export class EntityNotFoundError extends Error {
 export class ImmutableObjectiveFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `Cannot modify definition field(s) [${fields.join(', ')}] on Objective "${entityId}" — an Objective's definition is immutable after creation (COM §5.3, ADR-0010). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `Cannot modify definition field(s) [${fields.join(", ")}] on Objective "${entityId}" — an Objective's definition is immutable after creation (COM §5.3, ADR-0010). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableObjectiveFieldError';
+    this.name = "ImmutableObjectiveFieldError";
   }
 }
 
@@ -62,9 +62,9 @@ export class ImmutableObjectiveFieldError extends Error {
 export class ImmutableProjectFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `Cannot modify field(s) [${fields.join(', ')}] on Project "${entityId}" — Project DNA is immutable after creation (COM §5.4, ADR-0011; Part XI Ch.4 calls it the project's "constitutional document"). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `Cannot modify field(s) [${fields.join(", ")}] on Project "${entityId}" — Project DNA is immutable after creation (COM §5.4, ADR-0011; Part XI Ch.4 calls it the project's "constitutional document"). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableProjectFieldError';
+    this.name = "ImmutableProjectFieldError";
   }
 }
 
@@ -79,9 +79,9 @@ export class ImmutableProjectFieldError extends Error {
 export class ImmutableEntityError extends Error {
   constructor(entityId: string) {
     super(
-      `entity_id "${entityId}" is a completed Memory Object and is immutable (COM §5.1). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `entity_id "${entityId}" is a completed Memory Object and is immutable (COM §5.1). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableEntityError';
+    this.name = "ImmutableEntityError";
   }
 }
 
@@ -102,9 +102,9 @@ export class ImmutableEntityError extends Error {
 export class AppendOnlyFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — these history/relationship fields are append-only. Use transitionLifecycle(), addRelationship()/linkRelationship(), or appendProjectStatus() as appropriate (COM §11, Project Ch.7).`
+      `update() cannot modify [${fields.join(", ")}] on entity_id "${entityId}" — these history/relationship fields are append-only. Use transitionLifecycle(), addRelationship()/linkRelationship(), or appendProjectStatus() as appropriate (COM §11, Project Ch.7).`,
     );
-    this.name = 'AppendOnlyFieldError';
+    this.name = "AppendOnlyFieldError";
   }
 }
 
@@ -116,9 +116,9 @@ export class AppendOnlyFieldError extends Error {
 export class LifecycleTransitionError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — lifecycle fields must be changed through transitionLifecycle() so lifecycle_history remains append-only (COM §3.2, §11).`,
+      `update() cannot modify [${fields.join(", ")}] on entity_id "${entityId}" — lifecycle fields must be changed through transitionLifecycle() so lifecycle_history remains append-only (COM §3.2, §11).`,
     );
-    this.name = 'LifecycleTransitionError';
+    this.name = "LifecycleTransitionError";
   }
 }
 
@@ -131,7 +131,7 @@ export class ProjectStatusTransitionError extends Error {
     super(
       `update() cannot modify project_status on entity_id "${entityId}" — use appendProjectStatus() so the status change and audit history are committed together (Project Ch.7).`,
     );
-    this.name = 'ProjectStatusTransitionError';
+    this.name = "ProjectStatusTransitionError";
   }
 }
 
@@ -145,14 +145,16 @@ export class AccessPolicyMutationError extends Error {
     super(
       `ordinary writes cannot attach or modify access_policy on entity_id "${entityId}" — policy attachment and revocation require the trusted authorization-administration path.`,
     );
-    this.name = 'AccessPolicyMutationError';
+    this.name = "AccessPolicyMutationError";
   }
 }
 
 /** Thrown when a lifecycle transition is not permitted by the canonical state graph. */
 export class InvalidLifecycleTransitionError extends Error {
   constructor(entityId: string, from: string, to: string) {
-    super(`Cannot transition entity "${entityId}" from lifecycle state "${from}" to "${to}" (ADR-0003, state-machines.md).`);
-    this.name = 'InvalidLifecycleTransitionError';
+    super(
+      `Cannot transition entity "${entityId}" from lifecycle state "${from}" to "${to}" (ADR-0003, state-machines.md).`,
+    );
+    this.name = "InvalidLifecycleTransitionError";
   }
 }

@@ -96,49 +96,48 @@ const applyLifecycleContract = (moduleName, exportName, schema, mod, sharedModul
 
   const sourceModule =
     contract.substateModule === moduleName ? mod : sharedModules[contract.substateModule];
-  const substates = contract.substateEnum
-    ? sourceModule[contract.substateEnum].options
-    : [];
+  const substates = contract.substateEnum ? sourceModule[contract.substateEnum].options : [];
 
-  const constraints = substates.length === 0
-    ? [
-        { not: { required: ["lifecycle_substate"] } },
-        {
-          not: {
-            properties: {
-              lifecycle_history: {
-                contains: { required: ["substate"] },
+  const constraints =
+    substates.length === 0
+      ? [
+          { not: { required: ["lifecycle_substate"] } },
+          {
+            not: {
+              properties: {
+                lifecycle_history: {
+                  contains: { required: ["substate"] },
+                },
               },
             },
           },
-        },
-      ]
-    : [
-        {
-          if: { required: ["lifecycle_substate"] },
-          [JSON_SCHEMA_THEN]: {
-            properties: {
-              lifecycle_state: { const: "active" },
-              lifecycle_substate: { enum: substates },
+        ]
+      : [
+          {
+            if: { required: ["lifecycle_substate"] },
+            [JSON_SCHEMA_THEN]: {
+              properties: {
+                lifecycle_state: { const: "active" },
+                lifecycle_substate: { enum: substates },
+              },
             },
           },
-        },
-        {
-          properties: {
-            lifecycle_history: {
-              items: {
-                if: { required: ["substate"] },
-                [JSON_SCHEMA_THEN]: {
-                  properties: {
-                    state: { const: "active" },
-                    substate: { enum: substates },
+          {
+            properties: {
+              lifecycle_history: {
+                items: {
+                  if: { required: ["substate"] },
+                  [JSON_SCHEMA_THEN]: {
+                    properties: {
+                      state: { const: "active" },
+                      substate: { enum: substates },
+                    },
                   },
                 },
               },
             },
           },
-        },
-      ];
+        ];
 
   return { ...schema, allOf: [...(schema.allOf ?? []), ...constraints] };
 };
@@ -192,7 +191,7 @@ if (!existsSync(distSchemaDir)) {
 }
 
 const sharedModules = {
-  'canonical-object': await import(pathToFileURL(join(distSchemaDir, 'canonical-object.js')).href),
+  "canonical-object": await import(pathToFileURL(join(distSchemaDir, "canonical-object.js")).href),
 };
 
 mkdirSync(outDir, { recursive: true });
@@ -239,7 +238,9 @@ for (const moduleName of modules) {
       },
     });
     definitions[exportName] = sortDeep(
-      rejectUnknownProperties(applyLifecycleContract(moduleName, exportName, schema, mod, sharedModules)),
+      rejectUnknownProperties(
+        applyLifecycleContract(moduleName, exportName, schema, mod, sharedModules),
+      ),
     );
   }
 

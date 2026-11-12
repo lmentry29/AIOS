@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-import { parseArgs } from 'node:util';
-import { join } from 'node:path';
-import { loadHostConfig } from './config.js';
-import { AppendOnlyJournal } from './persistence/journal.js';
-import { DurableOperationalStore } from './persistence/operational-store.js';
-import { createLocalExecutionAdapters, type ExecutionLedgerRef } from './execution/index.js';
-import { provisionPolicies, revokePolicies } from './policy-admin.js';
-import { runOperatorSessionCommand } from './operator-session.js';
-import { createHostRuntime } from './runtime.js';
-import { createHostServer } from './server.js';
+import { parseArgs } from "node:util";
+import { join } from "node:path";
+import { loadHostConfig } from "./config.js";
+import { AppendOnlyJournal } from "./persistence/journal.js";
+import { DurableOperationalStore } from "./persistence/operational-store.js";
+import { createLocalExecutionAdapters, type ExecutionLedgerRef } from "./execution/index.js";
+import { provisionPolicies, revokePolicies } from "./policy-admin.js";
+import { runOperatorSessionCommand } from "./operator-session.js";
+import { createHostRuntime } from "./runtime.js";
+import { createHostServer } from "./server.js";
 
 /**
  * Local host CLI.
@@ -34,14 +34,19 @@ const USAGE = `Usage:
 `;
 
 function writeStartupFailure(message: string): void {
-  process.stderr.write(`${JSON.stringify({ event: 'host_start_failed', error: message })}\n`);
+  process.stderr.write(`${JSON.stringify({ event: "host_start_failed", error: message })}\n`);
 }
 
 async function serve(configPath: string): Promise<void> {
   const config = loadHostConfig(configPath);
   const obsidianPassword = process.env.AIOS_OBSIDIAN_PASSWORD;
-  if (config.obsidian && (obsidianPassword === undefined || Buffer.byteLength(obsidianPassword) < 32)) {
-    throw new Error('AIOS_OBSIDIAN_PASSWORD must contain at least 32 bytes when evidence readers are configured.');
+  if (
+    config.obsidian &&
+    (obsidianPassword === undefined || Buffer.byteLength(obsidianPassword) < 32)
+  ) {
+    throw new Error(
+      "AIOS_OBSIDIAN_PASSWORD must contain at least 32 bytes when evidence readers are configured.",
+    );
   }
 
   let adapters: Awaited<ReturnType<typeof createLocalExecutionAdapters>> | undefined;
@@ -53,10 +58,15 @@ async function serve(configPath: string): Promise<void> {
     try {
       adapters = await createLocalExecutionAdapters(config.execution, executionLedger);
     } catch (error) {
-      process.stderr.write(`${JSON.stringify({
-        event: 'execution_unavailable',
-        reason: error instanceof Error ? error.message : 'Local execution provider could not be initialized.',
-      })}\n`);
+      process.stderr.write(
+        `${JSON.stringify({
+          event: "execution_unavailable",
+          reason:
+            error instanceof Error
+              ? error.message
+              : "Local execution provider could not be initialized.",
+        })}\n`,
+      );
     }
   }
 
@@ -68,22 +78,24 @@ async function serve(configPath: string): Promise<void> {
       : {
           execution: adapters.execution,
           verification: adapters.verification,
-          resolveAgent: async () => config.execution?.agent_id ?? '',
+          resolveAgent: async () => config.execution?.agent_id ?? "",
         }),
   });
   executionLedger.current = runtime.executions;
   const server = createHostServer(runtime);
   try {
     const address = await server.listen();
-    process.stdout.write(`${JSON.stringify({
-      event: 'host_started',
-      host: address.host,
-      port: address.port,
-      authorization: 'shared',
-      dispatch: runtime.executionConfigured && runtime.verificationConfigured,
-      execution_provider: adapters?.provider.id ?? null,
-      evidence: runtime.evidenceConfigured,
-    })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({
+        event: "host_started",
+        host: address.host,
+        port: address.port,
+        authorization: "shared",
+        dispatch: runtime.executionConfigured && runtime.verificationConfigured,
+        execution_provider: adapters?.provider.id ?? null,
+        evidence: runtime.evidenceConfigured,
+      })}\n`,
+    );
   } catch (error) {
     runtime.close();
     throw error;
@@ -93,14 +105,14 @@ async function serve(configPath: string): Promise<void> {
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
-    process.stdout.write(`${JSON.stringify({ event: 'host_stopping', signal })}\n`);
+    process.stdout.write(`${JSON.stringify({ event: "host_stopping", signal })}\n`);
     try {
       await server.close();
     } finally {
       runtime.close();
     }
   };
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       void shutdown(signal).then(
         () => process.exit(0),
@@ -115,34 +127,34 @@ async function main(): Promise<void> {
     args: process.argv.slice(2),
     allowPositionals: true,
     options: {
-      config: { type: 'string' },
-      policy: { type: 'string' },
-      revocation: { type: 'string' },
-      archive: { type: 'string' },
-      'token-file': { type: 'string' },
-      'session-id': { type: 'string' },
+      config: { type: "string" },
+      policy: { type: "string" },
+      revocation: { type: "string" },
+      archive: { type: "string" },
+      "token-file": { type: "string" },
+      "session-id": { type: "string" },
     },
   });
   const command = parsed.positionals[0];
-  if (command === 'serve') {
-    if (!parsed.values.config) throw new Error('serve requires --config.');
+  if (command === "serve") {
+    if (!parsed.values.config) throw new Error("serve requires --config.");
     await serve(parsed.values.config);
     return;
   }
-  if (command === 'publish-policy') {
+  if (command === "publish-policy") {
     if (!parsed.values.config || !parsed.values.policy) {
-      throw new Error('publish-policy requires --config and --policy.');
+      throw new Error("publish-policy requires --config and --policy.");
     }
     const result = await provisionPolicies({
       configPath: parsed.values.config,
       provisioningPath: parsed.values.policy,
     });
-    process.stdout.write(`${JSON.stringify({ event: 'policy_published', ...result })}\n`);
+    process.stdout.write(`${JSON.stringify({ event: "policy_published", ...result })}\n`);
     return;
   }
-  if (command === 'compact-journal') {
+  if (command === "compact-journal") {
     if (!parsed.values.config || !parsed.values.archive) {
-      throw new Error('compact-journal requires --config and --archive.');
+      throw new Error("compact-journal requires --config and --archive.");
     }
     const config = loadHostConfig(parsed.values.config);
     // Must run with the host stopped: the journal holds a single-process lock.
@@ -152,40 +164,44 @@ async function main(): Promise<void> {
     });
     try {
       const result = store.compact(parsed.values.archive);
-      process.stdout.write(`${JSON.stringify({ event: 'journal_compacted', ...result })}\n`);
+      process.stdout.write(`${JSON.stringify({ event: "journal_compacted", ...result })}\n`);
     } finally {
       store.close();
     }
     return;
   }
-  if (command === 'restore-journal') {
+  if (command === "restore-journal") {
     if (!parsed.values.config || !parsed.values.archive) {
-      throw new Error('restore-journal requires --config and --archive.');
+      throw new Error("restore-journal requires --config and --archive.");
     }
     const config = loadHostConfig(parsed.values.config);
     const result = AppendOnlyJournal.restore({
-      filePath: join(config.operational_store.directory, 'operational.jsonl'),
+      filePath: join(config.operational_store.directory, "operational.jsonl"),
       archivePath: parsed.values.archive,
     });
-    process.stdout.write(`${JSON.stringify({ event: 'journal_restored', ...result })}\n`);
+    process.stdout.write(`${JSON.stringify({ event: "journal_restored", ...result })}\n`);
     return;
   }
-  if (command === 'revoke-policy') {
+  if (command === "revoke-policy") {
     if (!parsed.values.config || !parsed.values.revocation) {
-      throw new Error('revoke-policy requires --config and --revocation.');
+      throw new Error("revoke-policy requires --config and --revocation.");
     }
     const result = await revokePolicies({
       configPath: parsed.values.config,
       revocationPath: parsed.values.revocation,
     });
-    process.stdout.write(`${JSON.stringify({ event: 'policy_revoked', ...result })}\n`);
+    process.stdout.write(`${JSON.stringify({ event: "policy_revoked", ...result })}\n`);
     return;
   }
-  if (command === 'list-sessions' || command === 'rotate-session' || command === 'revoke-session') {
+  if (command === "list-sessions" || command === "rotate-session" || command === "revoke-session") {
     process.exitCode = await runOperatorSessionCommand(command, {
       ...(parsed.values.config === undefined ? {} : { configPath: parsed.values.config }),
-      ...(parsed.values['token-file'] === undefined ? {} : { tokenFile: parsed.values['token-file'] }),
-      ...(parsed.values['session-id'] === undefined ? {} : { sessionId: parsed.values['session-id'] }),
+      ...(parsed.values["token-file"] === undefined
+        ? {}
+        : { tokenFile: parsed.values["token-file"] }),
+      ...(parsed.values["session-id"] === undefined
+        ? {}
+        : { sessionId: parsed.values["session-id"] }),
     });
     return;
   }
@@ -194,6 +210,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  writeStartupFailure(error instanceof Error ? error.message : 'Unknown startup error.');
+  writeStartupFailure(error instanceof Error ? error.message : "Unknown startup error.");
   process.exitCode = 1;
 });

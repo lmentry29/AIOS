@@ -1,4 +1,4 @@
-import type { HostSessionEntry } from './config.js';
+import type { HostSessionEntry } from "./config.js";
 import {
   SessionState,
   type AuthenticatedSession,
@@ -9,21 +9,21 @@ import {
   type SessionBinding,
   type SessionRecord,
   type SessionScope,
-} from './persistence/session-store.js';
+} from "./persistence/session-store.js";
 
 export type {
   AuthenticatedSession,
   AuthenticationResult,
   SessionBinding,
   SessionScope,
-} from './persistence/session-store.js';
+} from "./persistence/session-store.js";
 export {
   SessionConflictError,
   SessionDeniedError,
   SessionNotFoundError,
   SessionScopeError,
   parseSessionScope,
-} from './persistence/session-store.js';
+} from "./persistence/session-store.js";
 
 interface SessionAuthority {
   authenticate(
@@ -45,7 +45,7 @@ interface SessionAuthority {
 const HUMAN_PRINCIPAL = /^human:[^\s:*]+$/;
 
 export function isHumanPrincipal(value: unknown): value is string {
-  return typeof value === 'string' && HUMAN_PRINCIPAL.test(value);
+  return typeof value === "string" && HUMAN_PRINCIPAL.test(value);
 }
 
 /**
@@ -62,9 +62,9 @@ export class TrustedIdentityService {
   constructor(authority: SessionAuthority | readonly HostSessionEntry[]) {
     this.authority = Array.isArray(authority)
       ? new SessionState(authority as readonly HostSessionEntry[])
-      : authority as SessionAuthority;
+      : (authority as SessionAuthority);
     if (this.authority.list().length === 0) {
-      throw new Error('Trusted identity requires at least one configured session.');
+      throw new Error("Trusted identity requires at least one configured session.");
     }
   }
 

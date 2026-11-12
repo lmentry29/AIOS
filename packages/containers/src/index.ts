@@ -5,4 +5,4 @@
 // field-level specification in the certified corpus, so they have no schema and no
 // store here. runtime-interfaces.md §2.5's ContainerService is NOT implemented — see
 // project-store.ts and docs/process/divergence-log.md conflict #2.
-export * from './project-store.js';
+export * from "./project-store.js";

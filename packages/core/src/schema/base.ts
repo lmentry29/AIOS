@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 // Explicit collection bounds are a security control, not cosmetic: Zod < 4.6.6
 // accumulated one issue per failing container element, and 4.6.6+ only rejects an
@@ -10,34 +10,29 @@ export const MAX_LIFECYCLE_HISTORY_ITEMS = 1024;
 
 // --- 3.1 Identity ---
 
-export const EntityType = z.enum([
-  'agent',
-  'task',
-  'workflow',
-  'plugin',
-  'canonical_object',
-]);
+export const EntityType = z.enum(["agent", "task", "workflow", "plugin", "canonical_object"]);
 export type EntityType = z.infer<typeof EntityType>;
 
 // --- 3.2 Lifecycle (ADR-0003) ---
 
 export const LifecycleState = z.enum([
-  'created',
-  'validated',
-  'active',
-  'monitored',
-  'suspended', // optional per ADR-0003 — entities may skip this stage
-  'completed',
-  'archived',
+  "created",
+  "validated",
+  "active",
+  "monitored",
+  "suspended", // optional per ADR-0003 — entities may skip this stage
+  "completed",
+  "archived",
 ]);
 export type LifecycleState = z.infer<typeof LifecycleState>;
 
 // §9: entity_id / actor identity scheme — UUIDv4 or "human:<founder_id>",
 // never reused/reassigned, never identified by `name` alone.
-export const ActorRef = z.string().refine(
-  (val) => z.string().uuid().safeParse(val).success || /^human:.+$/.test(val),
-  { message: 'actor must be a UUID (entity_id) or "human:<founder_id>"' }
-);
+export const ActorRef = z
+  .string()
+  .refine((val) => z.string().uuid().safeParse(val).success || /^human:.+$/.test(val), {
+    message: 'actor must be a UUID (entity_id) or "human:<founder_id>"',
+  });
 
 export const LifecycleHistoryEntry = z.object({
   state: LifecycleState,
@@ -51,7 +46,7 @@ export type LifecycleHistoryEntry = z.infer<typeof LifecycleHistoryEntry>;
 // NEVER merge work_hierarchy_parent and organizational_containers — that
 // merge was the exact defect ADR-0004 Amendment A corrected.
 
-export const WorkHierarchyLevel = z.enum(['mission', 'objective', 'task']);
+export const WorkHierarchyLevel = z.enum(["mission", "objective", "task"]);
 export type WorkHierarchyLevel = z.infer<typeof WorkHierarchyLevel>;
 
 export const WorkHierarchyParent = z.object({
@@ -61,15 +56,15 @@ export const WorkHierarchyParent = z.object({
 export type WorkHierarchyParent = z.infer<typeof WorkHierarchyParent>;
 
 export const ContainerType = z.enum([
-  'project',
-  'program',
-  'release',
-  'milestone',
-  'epic',
-  'feature',
-  'roadmap',
-  'vision',
-  'workspace',
+  "project",
+  "program",
+  "release",
+  "milestone",
+  "epic",
+  "feature",
+  "roadmap",
+  "vision",
+  "workspace",
 ]);
 export type ContainerType = z.infer<typeof ContainerType>;
 
@@ -81,24 +76,24 @@ export type OrganizationalContainerRef = z.infer<typeof OrganizationalContainerR
 
 // --- 7. Ownership model ---
 
-export const OwnerType = z.enum(['agent', 'human']);
+export const OwnerType = z.enum(["agent", "human"]);
 export type OwnerType = z.infer<typeof OwnerType>;
 
 // --- 8. Relationship model ---
 // Floor, not ceiling (§6 item 5) — open vocabulary beyond this minimum set.
 
 export const RelationshipType = z.enum([
-  'supersedes',
-  'superseded_by',
-  'assigned_to',
-  'depends_on',
-  'blocks',
-  'derived_from',
-  'contains',
+  "supersedes",
+  "superseded_by",
+  "assigned_to",
+  "depends_on",
+  "blocks",
+  "derived_from",
+  "contains",
 ]);
 export type RelationshipType = z.infer<typeof RelationshipType>;
 
-export const RelationshipDirection = z.enum(['outbound', 'inbound']);
+export const RelationshipDirection = z.enum(["outbound", "inbound"]);
 export type RelationshipDirection = z.infer<typeof RelationshipDirection>;
 
 export const Relationship = z.object({
@@ -143,7 +138,10 @@ export const CanonicalEntity = z.object({
   // (ADR-0011, Consequence 2). Consumers MUST branch on container_type and MUST
   // NOT assume any entity_id here is resolvable. Authoritative source:
   // docs/engineering/canonical-object-model.md:60.
-  organizational_containers: z.array(OrganizationalContainerRef).max(MAX_COLLECTION_ITEMS).default([]),
+  organizational_containers: z
+    .array(OrganizationalContainerRef)
+    .max(MAX_COLLECTION_ITEMS)
+    .default([]),
 
   // 3.5 Access and audit
   access_policy: z.string().uuid().optional(), // placeholder — unratified governance model (§6 item 1)

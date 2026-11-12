@@ -1,39 +1,42 @@
-import type { ArtifactEntity, CanonicalEntity, TaskEntity, WorkflowEntity } from '@aios/core';
-import { CanonicalEntity as CanonicalEntitySchema } from '@aios/core';
+import type { ArtifactEntity, CanonicalEntity, TaskEntity, WorkflowEntity } from "@aios/core";
+import { CanonicalEntity as CanonicalEntitySchema } from "@aios/core";
 import {
   AuthorizationService,
   AuthorizedLocalConnectorEvidenceReader,
   AuthorizedVaultEvidenceReader,
   FilePolicyRegistry,
   FounderInterface,
-} from '@aios/founder';
-import { LearningService } from '@aios/learning';
-import { ObjectStore } from '@aios/objects';
+} from "@aios/founder";
+import { LearningService } from "@aios/learning";
+import { ObjectStore } from "@aios/objects";
 import {
   OrchestrationKernel,
   type AgentExecutionPort,
   type TaskExecutionResult,
   type TaskVerificationDecision,
   type TaskVerificationPort,
-} from '@aios/orchestration';
-import { SharedAuthorizationBoundary } from './authorization.js';
-import type { HostConfig } from './config.js';
-import { loadTrustRoot } from './execution/artifact-signing.js';
-import { PolicyProvenanceAuthority } from './policy-provenance.js';
-import { HostUnavailableError } from './errors.js';
-import { TrustedIdentityService } from './identity.js';
-import { ManagedExecutionPort, type CancellableExecutionPort } from './execution/managed-execution.js';
-import type { ExecutionLedger } from './persistence/execution-ledger.js';
-import { DurableAuthorizationAuditStore } from './persistence/authorization-audit-store.js';
-import { DurableLearningStore } from './persistence/learning-store.js';
+} from "@aios/orchestration";
+import { SharedAuthorizationBoundary } from "./authorization.js";
+import type { HostConfig } from "./config.js";
+import { loadTrustRoot } from "./execution/artifact-signing.js";
+import { PolicyProvenanceAuthority } from "./policy-provenance.js";
+import { HostUnavailableError } from "./errors.js";
+import { TrustedIdentityService } from "./identity.js";
+import {
+  ManagedExecutionPort,
+  type CancellableExecutionPort,
+} from "./execution/managed-execution.js";
+import type { ExecutionLedger } from "./persistence/execution-ledger.js";
+import { DurableAuthorizationAuditStore } from "./persistence/authorization-audit-store.js";
+import { DurableLearningStore } from "./persistence/learning-store.js";
 import {
   DurableOperationalStore,
   type DurableCollection,
   type DurableRunCoordinator,
   type DurableTaskRepository,
-} from './persistence/operational-store.js';
+} from "./persistence/operational-store.js";
 
-const UNCONFIGURED_VERIFIER_ID = '00000000-0000-4000-8000-000000000000';
+const UNCONFIGURED_VERIFIER_ID = "00000000-0000-4000-8000-000000000000";
 
 /**
  * Actor recorded for host-initiated crash recovery.
@@ -43,7 +46,7 @@ const UNCONFIGURED_VERIFIER_ID = '00000000-0000-4000-8000-000000000000';
  * to this stable system actor instead. It is not a registered Agent and holds no
  * capability; it exists only to label recovery entries in append-only lifecycle history.
  */
-const HOST_RECOVERY_ACTOR_ID = '00000000-0000-4000-8000-0000000000a1';
+const HOST_RECOVERY_ACTOR_ID = "00000000-0000-4000-8000-0000000000a1";
 
 /**
  * Refuses execution until a real adapter is supplied.
@@ -55,15 +58,21 @@ const HOST_RECOVERY_ACTOR_ID = '00000000-0000-4000-8000-0000000000a1';
  */
 class UnconfiguredExecutionPort implements AgentExecutionPort {
   async validateAgent(): Promise<boolean> {
-    throw new HostUnavailableError('No Agent execution adapter is configured; dispatch is disabled.');
+    throw new HostUnavailableError(
+      "No Agent execution adapter is configured; dispatch is disabled.",
+    );
   }
 
   async executeTask(): Promise<TaskExecutionResult> {
-    throw new HostUnavailableError('No Agent execution adapter is configured; dispatch is disabled.');
+    throw new HostUnavailableError(
+      "No Agent execution adapter is configured; dispatch is disabled.",
+    );
   }
 
   async coordinate(): Promise<TaskExecutionResult> {
-    throw new HostUnavailableError('No Agent execution adapter is configured; coordination is disabled.');
+    throw new HostUnavailableError(
+      "No Agent execution adapter is configured; coordination is disabled.",
+    );
   }
 }
 
@@ -71,7 +80,7 @@ class UnconfiguredVerificationPort implements TaskVerificationPort {
   readonly verifier_id = UNCONFIGURED_VERIFIER_ID;
 
   async verify(): Promise<TaskVerificationDecision> {
-    throw new HostUnavailableError('No independent verifier is configured; dispatch is disabled.');
+    throw new HostUnavailableError("No independent verifier is configured; dispatch is disabled.");
   }
 }
 
@@ -101,7 +110,7 @@ export interface HostRuntime {
   /** Durable operational repositories (ADR-0015). */
   operational: DurableOperationalStore;
   /** Durable session authority shared by authentication and operator administration. */
-  sessions: DurableOperationalStore['sessions'];
+  sessions: DurableOperationalStore["sessions"];
   /** Approval-gated Learning System state, durable in learning.jsonl. */
   learning: LearningService;
   runs: DurableRunCoordinator;
@@ -151,22 +160,28 @@ function reconcileInterruptedWork(store: DurableOperationalStore): {
 
   for (const workflowId of affected) {
     const workflow = store.workflows.get(workflowId);
-    if (workflow && (workflow.lifecycle_state === 'active' || workflow.lifecycle_state === 'monitored')) {
-      store.workflows.transitionLifecycle(workflowId, 'suspended', HOST_RECOVERY_ACTOR_ID);
+    if (
+      workflow &&
+      (workflow.lifecycle_state === "active" || workflow.lifecycle_state === "monitored")
+    ) {
+      store.workflows.transitionLifecycle(workflowId, "suspended", HOST_RECOVERY_ACTOR_ID);
     }
     for (const task of store.tasks.listTasks()) {
       if (task.assigned_workflow !== workflowId) continue;
-      if (task.lifecycle_state !== 'active' && task.lifecycle_state !== 'monitored') continue;
-      store.tasks.transitionTaskLifecycle(task.entity_id, 'suspended', HOST_RECOVERY_ACTOR_ID);
+      if (task.lifecycle_state !== "active" && task.lifecycle_state !== "monitored") continue;
+      store.tasks.transitionTaskLifecycle(task.entity_id, "suspended", HOST_RECOVERY_ACTOR_ID);
     }
   }
   for (const taskId of directTasks) {
     const task = store.tasks.getTask(taskId);
-    if (task && (task.lifecycle_state === 'active' || task.lifecycle_state === 'monitored')) {
-      store.tasks.transitionTaskLifecycle(taskId, 'suspended', HOST_RECOVERY_ACTOR_ID);
+    if (task && (task.lifecycle_state === "active" || task.lifecycle_state === "monitored")) {
+      store.tasks.transitionTaskLifecycle(taskId, "suspended", HOST_RECOVERY_ACTOR_ID);
     }
   }
-  return { workflows: [...affected], executions: interruptedExecutions.map((record) => record.execution_id) };
+  return {
+    workflows: [...affected],
+    executions: interruptedExecutions.map((record) => record.execution_id),
+  };
 }
 
 function resolveAgentUnlessConfigured(
@@ -174,7 +189,7 @@ function resolveAgentUnlessConfigured(
 ): (task: TaskEntity) => Promise<string> {
   if (resolver) return resolver;
   return async () => {
-    throw new HostUnavailableError('No Agent resolver is configured; dispatch is disabled.');
+    throw new HostUnavailableError("No Agent resolver is configured; dispatch is disabled.");
   };
 }
 
@@ -206,20 +221,20 @@ function resolveAgentUnlessConfigured(
  * operator-supplied requirement, not a claim of this check.
  */
 export function assertSeparatePolicyAndVerifierKeys(
-  config: Pick<HostConfig, 'policy_provenance' | 'execution'>,
+  config: Pick<HostConfig, "policy_provenance" | "execution">,
 ): void {
   const execution = config.execution;
-  if (execution?.verifier_key_id === undefined
-    || execution.verifier_trust_root_file === undefined) return;
+  if (execution?.verifier_key_id === undefined || execution.verifier_trust_root_file === undefined)
+    return;
   if (execution.verifier_key_id === config.policy_provenance.key_id) {
     throw new Error(
-      'The policy signing key id must not be the configured verifier signing key id.',
+      "The policy signing key id must not be the configured verifier signing key id.",
     );
   }
-  const verifierRoot = loadTrustRoot(execution.verifier_trust_root_file, 'verifier');
+  const verifierRoot = loadTrustRoot(execution.verifier_trust_root_file, "verifier");
   if (verifierRoot.keys.some((key) => key.key_id === config.policy_provenance.key_id)) {
     throw new Error(
-      'The configured policy signing key must not be present in the verifier trust root.',
+      "The configured policy signing key must not be present in the verifier trust root.",
     );
   }
 }
@@ -229,10 +244,10 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   assertSeparatePolicyAndVerifierKeys(config);
 
   if (options.obsidianPassword !== undefined && Buffer.byteLength(options.obsidianPassword) < 32) {
-    throw new Error('Obsidian++ local password must contain at least 32 bytes.');
+    throw new Error("Obsidian++ local password must contain at least 32 bytes.");
   }
   if (config.obsidian && options.obsidianPassword === undefined) {
-    throw new Error('Evidence readers are configured but no Obsidian++ password was supplied.');
+    throw new Error("Evidence readers are configured but no Obsidian++ password was supplied.");
   }
 
   const policyProvenance = PolicyProvenanceAuthority.fromFiles({
@@ -283,11 +298,12 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         // An approval is a human governance action. Reuse the protected Founder decision
         // collection and its existing exact `intake` grant rather than inventing a new
         // authorization action; the evaluator still denies by default.
-        authorize: async (actorId) => boundary.authorize({
-          actor_id: actorId,
-          action: 'intake',
-          resource_id: config.decision_collection_id,
-        }),
+        authorize: async (actorId) =>
+          boundary.authorize({
+            actor_id: actorId,
+            action: "intake",
+            resource_id: config.decision_collection_id,
+          }),
       },
     );
 
@@ -329,7 +345,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         ? new AuthorizedVaultEvidenceReader(
             {
               baseUrl: config.obsidian.base_url,
-              password: options.obsidianPassword ?? '',
+              password: options.obsidianPassword ?? "",
               vaultResourceId: config.resources.vault,
               ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
             },
@@ -340,7 +356,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         ? new AuthorizedLocalConnectorEvidenceReader(
             {
               baseUrl: config.obsidian.base_url,
-              password: options.obsidianPassword ?? '',
+              password: options.obsidianPassword ?? "",
               gmailResourceId: config.resources.gmail,
               notionResourceId: config.resources.notion,
               ...(options.fetch === undefined ? {} : { fetch: options.fetch }),

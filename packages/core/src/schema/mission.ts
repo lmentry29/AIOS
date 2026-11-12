@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './canonical-object.js';
+import { z } from "zod";
+import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from "./canonical-object.js";
 
 // §5.2 Mission — Canonical Object subtype, added by ADR-0017 (amending ADR-0007's
 // reference-only treatment of Mission). Mission is the top rung of the Work Hierarchy,
@@ -16,7 +16,7 @@ import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from './cano
 // a work_hierarchy_parent because it is the hierarchy root; a Project must never be its
 // parent. It may be referenced by an Objective's work_hierarchy_parent at level 'mission'.
 const MissionEntityShape = CanonicalObjectEntityShape.extend({
-  entity_subtype: z.literal('mission'),
+  entity_subtype: z.literal("mission"),
   purpose: z.string().min(1),
 });
 
@@ -24,7 +24,7 @@ const MissionEntityWithoutParent = MissionEntityShape.refine(
   (mission: z.infer<typeof MissionEntityShape>) => mission.work_hierarchy_parent === undefined,
   {
     message:
-      'A Mission is the top of the Work Hierarchy and must not carry work_hierarchy_parent (ADR-0017)',
+      "A Mission is the top of the Work Hierarchy and must not carry work_hierarchy_parent (ADR-0017)",
   },
 );
 

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
 /**
  * Syscalls the workload may not use inside the bubblewrap boundary. This is a deny-list,
@@ -51,9 +51,9 @@ const DENIED_SYSCALLS: Record<string, { x64: number; arm64: number }> = {
   mount_setattr: { x64: 442, arm64: 442 },
 };
 
-const ARCHITECTURES: Record<string, { audit: number; key: 'x64' | 'arm64' }> = {
-  x64: { audit: 0xc000003e, key: 'x64' },
-  arm64: { audit: 0xc00000b7, key: 'arm64' },
+const ARCHITECTURES: Record<string, { audit: number; key: "x64" | "arm64" }> = {
+  x64: { audit: 0xc000003e, key: "x64" },
+  arm64: { audit: 0xc00000b7, key: "arm64" },
 };
 
 const BPF_LD_W_ABS = 0x20;
@@ -93,18 +93,18 @@ export function buildDockerSeccompProfile(arch: string = process.arch): DockerSe
     throw new Error(`No Docker seccomp profile is defined for architecture ${arch}.`);
   }
   const profile = JSON.stringify({
-    defaultAction: 'SCMP_ACT_ALLOW',
-    architectures: [architecture.key === 'x64' ? 'SCMP_ARCH_X86_64' : 'SCMP_ARCH_AARCH64'],
+    defaultAction: "SCMP_ACT_ALLOW",
+    architectures: [architecture.key === "x64" ? "SCMP_ARCH_X86_64" : "SCMP_ARCH_AARCH64"],
     syscalls: [
       {
         names: Object.keys(DENIED_SYSCALLS),
-        action: 'SCMP_ACT_KILL',
+        action: "SCMP_ACT_KILL",
       },
     ],
   });
   return {
     profile,
-    sha256: createHash('sha256').update(profile).digest('hex'),
+    sha256: createHash("sha256").update(profile).digest("hex"),
   };
 }
 
@@ -154,7 +154,7 @@ export function buildSeccompProfile(arch: string = process.arch): SeccompProfile
   const filter = Buffer.concat(program);
   return {
     profile: `aios-seccomp-deny-v1-${architecture.key}`,
-    sha256: createHash('sha256').update(filter).digest('hex'),
+    sha256: createHash("sha256").update(filter).digest("hex"),
     denied_syscalls: entries.map((entry) => entry.name),
     filter,
   };

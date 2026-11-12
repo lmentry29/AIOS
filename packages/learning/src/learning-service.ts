@@ -1,21 +1,25 @@
-import { createHash, randomUUID } from 'node:crypto';
-import type { Importance, MemoryObjectEntity as MemoryObjectEntityType, MemoryType } from '@aios/core';
-import { MemoryObjectEntity } from '@aios/core';
-import { ObjectStore } from '@aios/objects';
+import { createHash, randomUUID } from "node:crypto";
+import type {
+  Importance,
+  MemoryObjectEntity as MemoryObjectEntityType,
+  MemoryType,
+} from "@aios/core";
+import { MemoryObjectEntity } from "@aios/core";
+import { ObjectStore } from "@aios/objects";
 import {
   ArchivedKnowledgeError,
   InvalidStagePromotionError,
   KnowledgeNotFoundError,
   MemoryApprovalError,
-} from './errors.js';
-import { type KnowledgeStage, type PromotableStage, stageRank } from './knowledge-stage.js';
+} from "./errors.js";
+import { type KnowledgeStage, type PromotableStage, stageRank } from "./knowledge-stage.js";
 
 export interface ObservationOptions {
   memory_type?: MemoryType;
   importance?: Importance;
   confidence?: number;
   owner_id?: string;
-  owner_type?: 'agent' | 'human';
+  owner_type?: "agent" | "human";
 }
 
 /** What this service tracks per record, alongside the Memory Object in the Object Store. */
@@ -46,14 +50,14 @@ export interface KnowledgeRepositoryPort {
 }
 
 /** Stages that make a Memory record permanent. Draft stages need no approval. */
-export const PERMANENT_KNOWLEDGE_STAGES = ['published', 'institutional_standard'] as const;
+export const PERMANENT_KNOWLEDGE_STAGES = ["published", "institutional_standard"] as const;
 export type PermanentKnowledgeStage = (typeof PERMANENT_KNOWLEDGE_STAGES)[number];
 
 export function isPermanentKnowledgeStage(stage: KnowledgeStage): stage is PermanentKnowledgeStage {
-  return stage === 'published' || stage === 'institutional_standard';
+  return stage === "published" || stage === "institutional_standard";
 }
 
-export type MemoryApprovalStatus = 'pending' | 'approved' | 'rejected' | 'consumed';
+export type MemoryApprovalStatus = "pending" | "approved" | "rejected" | "consumed";
 
 /**
  * A recorded request to make one Memory record permanent, bound to the exact record,
@@ -100,9 +104,11 @@ const MIN_APPROVAL_TTL_MS = 1_000;
 const MAX_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 function isActorIdentifier(value: unknown): value is string {
-  return typeof value === 'string'
-    && (/^human:[^\s:*]+$/.test(value)
-      || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+  return (
+    typeof value === "string" &&
+    (/^human:[^\s:*]+$/.test(value) ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
+  );
 }
 
 function isHumanPrincipal(value: string): boolean {
@@ -112,24 +118,28 @@ function isHumanPrincipal(value: string): boolean {
 /** Deterministic serialization so an approval cannot be replayed against altered content. */
 function canonicalForHash(value: unknown): string {
   if (Array.isArray(value)) {
-    return `[${value.map((item) => (item === undefined ? 'null' : canonicalForHash(item))).join(',')}]`;
+    return `[${value.map((item) => (item === undefined ? "null" : canonicalForHash(item))).join(",")}]`;
   }
-  if (value !== null && typeof value === 'object') {
+  if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
     return `{${Object.keys(record)
       .sort()
       .filter((key) => record[key] !== undefined)
       .map((key) => `${JSON.stringify(key)}:${canonicalForHash(record[key])}`)
-      .join(',')}}`;
+      .join(",")}}`;
   }
-  if (value === undefined) return 'null';
+  if (value === undefined) return "null";
   return JSON.stringify(value) as string;
 }
 
-export function memoryWriteContentHash(memoryId: string, subject: string, content: unknown): string {
-  return createHash('sha256')
+export function memoryWriteContentHash(
+  memoryId: string,
+  subject: string,
+  content: unknown,
+): string {
+  return createHash("sha256")
     .update(canonicalForHash({ memory_id: memoryId, subject, content }))
-    .digest('hex');
+    .digest("hex");
 }
 
 /** In-memory approval adapter for tests and single-process development; not durable. */
@@ -163,7 +173,8 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepositoryPort {
   private readonly records = new Map<string, KnowledgeRecord>();
 
   create(record: KnowledgeRecord): void {
-    if (this.records.has(record.id)) throw new Error(`Knowledge record "${record.id}" already exists.`);
+    if (this.records.has(record.id))
+      throw new Error(`Knowledge record "${record.id}" already exists.`);
     this.records.set(record.id, cloneKnowledge(record));
   }
 
@@ -178,7 +189,9 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepositoryPort {
   }
 
   listByStage(stage: KnowledgeStage): KnowledgeRecord[] {
-    return [...this.records.values()].filter((record) => record.stage === stage).map(cloneKnowledge);
+    return [...this.records.values()]
+      .filter((record) => record.stage === stage)
+      .map(cloneKnowledge);
   }
 }
 
@@ -220,7 +233,7 @@ export class InMemoryKnowledgeRepository implements KnowledgeRepositoryPort {
 function cloneKnowledge(record: KnowledgeRecord): KnowledgeRecord {
   const seen = new WeakMap<object, unknown>();
   const cloneValue = (value: unknown): unknown => {
-    if (value === null || typeof value !== 'object') return value;
+    if (value === null || typeof value !== "object") return value;
     const existing = seen.get(value);
     if (existing !== undefined) return existing;
     if (value instanceof Date) return new Date(value.getTime());
@@ -261,10 +274,14 @@ export class LearningService {
     this.authority = authority ?? { authorize: async () => false };
     this.now = options.now ?? (() => new Date());
     this.approvalTtlMs = options.approval_ttl_ms ?? DEFAULT_APPROVAL_TTL_MS;
-    if (!Number.isSafeInteger(this.approvalTtlMs)
-      || this.approvalTtlMs < MIN_APPROVAL_TTL_MS
-      || this.approvalTtlMs > MAX_APPROVAL_TTL_MS) {
-      throw new MemoryApprovalError('Memory approval lifetime must be between one second and 24 hours.');
+    if (
+      !Number.isSafeInteger(this.approvalTtlMs) ||
+      this.approvalTtlMs < MIN_APPROVAL_TTL_MS ||
+      this.approvalTtlMs > MAX_APPROVAL_TTL_MS
+    ) {
+      throw new MemoryApprovalError(
+        "Memory approval lifetime must be between one second and 24 hours.",
+      );
     }
   }
 
@@ -276,30 +293,30 @@ export class LearningService {
   async recordObservation(
     subject: string,
     content: unknown,
-    options: ObservationOptions = {}
+    options: ObservationOptions = {},
   ): Promise<string> {
     const normalizedSubject = subject.trim();
-    if (!normalizedSubject) throw new Error('Knowledge subject must not be empty.');
+    if (!normalizedSubject) throw new Error("Knowledge subject must not be empty.");
     const now = new Date().toISOString();
-    const owner_id = options.owner_id ?? 'human:founder';
+    const owner_id = options.owner_id ?? "human:founder";
 
     const memory = this.memories.create(
       MemoryObjectEntity.parse({
         entity_id: randomUUID(),
-        entity_type: 'canonical_object',
-        entity_subtype: 'memory_object',
+        entity_type: "canonical_object",
+        entity_subtype: "memory_object",
         name: normalizedSubject,
         // 'episodic' — an observation is a record of something that happened
         // (Part VIII Ch.6's Memory Domains). Overridable; not a claim that every
         // observation is episodic.
-        memory_type: options.memory_type ?? 'episodic',
+        memory_type: options.memory_type ?? "episodic",
         // A raw observation is by definition the least-established stage of the
         // axis, so it starts at low confidence unless the caller knows better.
         confidence: options.confidence ?? 0.5,
-        importance: options.importance ?? 'medium',
+        importance: options.importance ?? "medium",
         evidence: [],
         source_references: [],
-        lifecycle_state: 'created',
+        lifecycle_state: "created",
         lifecycle_history: [],
         created_at: now,
         created_by: owner_id,
@@ -307,17 +324,19 @@ export class LearningService {
         version: 1,
         organizational_containers: [],
         owner_id,
-        owner_type: options.owner_type ?? 'human',
+        owner_type: options.owner_type ?? "human",
         relationships: [],
-      })
+      }),
     );
 
-    this.knowledge.create(cloneKnowledge({
-      id: memory.entity_id,
-      stage: 'observation',
-      subject: normalizedSubject,
-      content,
-    }));
+    this.knowledge.create(
+      cloneKnowledge({
+        id: memory.entity_id,
+        stage: "observation",
+        subject: normalizedSubject,
+        content,
+      }),
+    );
 
     return memory.entity_id;
   }
@@ -329,10 +348,14 @@ export class LearningService {
    * Deliberately does NOT touch lifecycle_state — that is the orthogonal axis, and
    * writing it here is the conflation §2.7 warns against.
    */
-  async promote(observationId: string, toStage: PromotableStage, approvalId?: string): Promise<void> {
+  async promote(
+    observationId: string,
+    toStage: PromotableStage,
+    approvalId?: string,
+  ): Promise<void> {
     const record = this.require(observationId);
 
-    if (record.stage === 'historical_archive') {
+    if (record.stage === "historical_archive") {
       throw new ArchivedKnowledgeError(observationId);
     }
 
@@ -351,7 +374,7 @@ export class LearningService {
     const promoted = { ...record, stage: toStage };
     const consumed: MemoryWriteApproval = {
       ...approval,
-      status: 'consumed',
+      status: "consumed",
       consumed_at: this.now().toISOString(),
     };
     if (this.knowledge.commitPromotion) {
@@ -372,13 +395,17 @@ export class LearningService {
     actorId: string,
   ): Promise<MemoryWriteApproval> {
     if (!isActorIdentifier(actorId)) {
-      throw new MemoryApprovalError('A permanent Memory approval request requires a valid authenticated actor identifier.');
+      throw new MemoryApprovalError(
+        "A permanent Memory approval request requires a valid authenticated actor identifier.",
+      );
     }
     if (!isPermanentKnowledgeStage(toStage)) {
-      throw new MemoryApprovalError('Only published or institutional_standard Memory promotions require approval.');
+      throw new MemoryApprovalError(
+        "Only published or institutional_standard Memory promotions require approval.",
+      );
     }
     const record = this.require(memoryId);
-    if (record.stage === 'historical_archive') throw new ArchivedKnowledgeError(memoryId);
+    if (record.stage === "historical_archive") throw new ArchivedKnowledgeError(memoryId);
     if (stageRank(toStage) <= stageRank(record.stage)) {
       throw new InvalidStagePromotionError(memoryId, record.stage, toStage);
     }
@@ -393,7 +420,7 @@ export class LearningService {
       requested_by: actorId,
       requested_at: now.toISOString(),
       expires_at: new Date(now.getTime() + this.approvalTtlMs).toISOString(),
-      status: 'pending',
+      status: "pending",
     });
   }
 
@@ -403,23 +430,32 @@ export class LearningService {
    */
   async decidePermanentPromotion(
     approvalId: string,
-    decision: 'approved' | 'rejected',
+    decision: "approved" | "rejected",
     actorId: string,
     reason?: string,
   ): Promise<MemoryWriteApproval> {
     if (!isActorIdentifier(actorId) || !isHumanPrincipal(actorId)) {
-      throw new MemoryApprovalError('Permanent Memory approvals can only be decided by an authenticated human principal.');
+      throw new MemoryApprovalError(
+        "Permanent Memory approvals can only be decided by an authenticated human principal.",
+      );
     }
-    if (decision !== 'approved' && decision !== 'rejected') {
-      throw new MemoryApprovalError('A permanent Memory approval decision must be approved or rejected.');
+    if (decision !== "approved" && decision !== "rejected") {
+      throw new MemoryApprovalError(
+        "A permanent Memory approval decision must be approved or rejected.",
+      );
     }
-    if (reason !== undefined && (typeof reason !== 'string' || reason.length > 1000)) {
-      throw new MemoryApprovalError('Approval reasons must be strings of at most 1,000 characters.');
+    if (reason !== undefined && (typeof reason !== "string" || reason.length > 1000)) {
+      throw new MemoryApprovalError(
+        "Approval reasons must be strings of at most 1,000 characters.",
+      );
     }
     const approval = this.approvals.get(approvalId);
-    if (!approval) throw new MemoryApprovalError(`No permanent Memory approval found with id "${approvalId}".`);
-    if (approval.status !== 'pending') {
-      throw new MemoryApprovalError(`Memory approval "${approvalId}" is already ${approval.status}.`);
+    if (!approval)
+      throw new MemoryApprovalError(`No permanent Memory approval found with id "${approvalId}".`);
+    if (approval.status !== "pending") {
+      throw new MemoryApprovalError(
+        `Memory approval "${approvalId}" is already ${approval.status}.`,
+      );
     }
     const now = this.now();
     if (Date.parse(approval.expires_at) <= now.getTime()) {
@@ -433,7 +469,9 @@ export class LearningService {
       allowed = false;
     }
     if (!allowed) {
-      throw new MemoryApprovalError(`Permanent Memory approval "${approvalId}" was denied for principal "${actorId}".`);
+      throw new MemoryApprovalError(
+        `Permanent Memory approval "${approvalId}" was denied for principal "${actorId}".`,
+      );
     }
 
     const trimmedReason = reason?.trim();
@@ -465,15 +503,17 @@ export class LearningService {
     if (!approval) {
       throw new MemoryApprovalError(`No permanent Memory approval found with id "${approvalId}".`);
     }
-    if (approval.status !== 'approved') {
+    if (approval.status !== "approved") {
       throw new MemoryApprovalError(
         `Permanent Memory approval "${approvalId}" is ${approval.status}; a pending, rejected, or consumed approval cannot authorize a write.`,
       );
     }
-    if (approval.memory_id !== record.id
-      || approval.from_stage !== record.stage
-      || approval.target_stage !== toStage
-      || approval.content_hash !== memoryWriteContentHash(record.id, record.subject, record.content)) {
+    if (
+      approval.memory_id !== record.id ||
+      approval.from_stage !== record.stage ||
+      approval.target_stage !== toStage ||
+      approval.content_hash !== memoryWriteContentHash(record.id, record.subject, record.content)
+    ) {
       throw new MemoryApprovalError(
         `Permanent Memory approval "${approvalId}" is bound to a different record, transition, or content.`,
       );
@@ -487,7 +527,7 @@ export class LearningService {
   /** Moves a record to 'historical_archive', the terminal stage of the axis (§2.7). */
   async archiveKnowledge(id: string): Promise<void> {
     const record = this.require(id);
-    this.knowledge.update({ ...record, stage: 'historical_archive' });
+    this.knowledge.update({ ...record, stage: "historical_archive" });
   }
 
   getKnowledge(id: string): KnowledgeRecord | undefined {

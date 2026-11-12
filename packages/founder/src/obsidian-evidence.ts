@@ -1,12 +1,9 @@
-import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
-import type { FounderAuthorizationPort } from './index.js';
-import {
-  SensitivePathError,
-  assertNotSensitivePath,
-} from './security/sensitive-path.js';
-import { createLoopbackFetcher } from './security/ssrf.js';
-import type { TaintLabel } from './security/taint.js';
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
+import type { FounderAuthorizationPort } from "./index.js";
+import { SensitivePathError, assertNotSensitivePath } from "./security/sensitive-path.js";
+import { createLoopbackFetcher } from "./security/ssrf.js";
+import type { TaintLabel } from "./security/taint.js";
 
 export interface VaultEvidenceWarning {
   path: string;
@@ -71,28 +68,28 @@ export interface ObsidianVaultEvidenceAdapterOptions {
 export class VaultEvidenceError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'VaultEvidenceError';
+    this.name = "VaultEvidenceError";
   }
 }
 
 export class VaultEvidenceHttpError extends VaultEvidenceError {
   constructor(status: number) {
     super(`Local vault API returned HTTP ${status}.`);
-    this.name = 'VaultEvidenceHttpError';
+    this.name = "VaultEvidenceHttpError";
   }
 }
 
 export class VaultEvidenceChangedError extends VaultEvidenceError {
   constructor(path: string) {
     super(`Vault note changed while it was being read: ${path}`);
-    this.name = 'VaultEvidenceChangedError';
+    this.name = "VaultEvidenceChangedError";
   }
 }
 
 export class VaultEvidenceAuthorizationError extends VaultEvidenceError {
   constructor(resourceId: string) {
     super(`Read access denied for vault evidence collection ${resourceId}.`);
-    this.name = 'VaultEvidenceAuthorizationError';
+    this.name = "VaultEvidenceAuthorizationError";
   }
 }
 
@@ -105,11 +102,11 @@ function isActorReference(value: string): boolean {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
   }
@@ -117,20 +114,28 @@ function deepFreeze<T>(value: T): T {
 }
 
 function safeVaultPath(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 1024
-    || value.startsWith('/') || value.includes('\\') || value.includes('\0')) {
-    throw new VaultEvidenceError('Vault API returned an unsafe relative path.');
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 1024 ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    value.includes("\0")
+  ) {
+    throw new VaultEvidenceError("Vault API returned an unsafe relative path.");
   }
-  const segments = value.split('/');
-  if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
-    || !value.toLowerCase().endsWith('.md')) {
-    throw new VaultEvidenceError('Vault API returned an unsafe Markdown path.');
+  const segments = value.split("/");
+  if (
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
+    !value.toLowerCase().endsWith(".md")
+  ) {
+    throw new VaultEvidenceError("Vault API returned an unsafe Markdown path.");
   }
   try {
-    assertNotSensitivePath(value, 'Vault evidence path');
+    assertNotSensitivePath(value, "Vault evidence path");
   } catch (error) {
     if (error instanceof SensitivePathError) {
-      throw new VaultEvidenceError('Vault API returned a protected credential path.');
+      throw new VaultEvidenceError("Vault API returned a protected credential path.");
     }
     throw error;
   }
@@ -138,18 +143,18 @@ function safeVaultPath(value: unknown): string {
 }
 
 function uuidToBytes(value: string): Buffer {
-  if (!isUuid(value)) throw new VaultEvidenceError('Vault resource ID must be a UUID.');
-  return Buffer.from(value.replaceAll('-', ''), 'hex');
+  if (!isUuid(value)) throw new VaultEvidenceError("Vault resource ID must be a UUID.");
+  return Buffer.from(value.replaceAll("-", ""), "hex");
 }
 
 /** RFC 4122 UUIDv5, stable for a vault namespace and relative note path. */
 export function vaultEvidenceSourceId(vaultResourceId: string, relativePath: string): string {
   const namespace = uuidToBytes(vaultResourceId);
-  const digest = createHash('sha1').update(namespace).update(relativePath, 'utf8').digest();
+  const digest = createHash("sha1").update(namespace).update(relativePath, "utf8").digest();
   const bytes = Buffer.from(digest.subarray(0, 16));
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
+  const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
@@ -158,35 +163,60 @@ function validateBaseUrl(value: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new VaultEvidenceError('Obsidian base URL must be a valid URL.');
+    throw new VaultEvidenceError("Obsidian base URL must be a valid URL.");
   }
-  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1'
-    || !url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-    throw new VaultEvidenceError('Obsidian API must use an explicit-port HTTP loopback URL with no credentials or extra path.');
+  if (
+    url.protocol !== "http:" ||
+    url.hostname !== "127.0.0.1" ||
+    !url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/"
+  ) {
+    throw new VaultEvidenceError(
+      "Obsidian API must use an explicit-port HTTP loopback URL with no credentials or extra path.",
+    );
   }
   return url;
 }
 
 function parseWarning(value: unknown): VaultEvidenceWarning {
-  if (!isRecord(value) || typeof value.path !== 'string'
-    || typeof value.code !== 'string' || typeof value.message !== 'string') {
-    throw new VaultEvidenceError('Vault API returned a malformed evidence warning.');
+  if (
+    !isRecord(value) ||
+    typeof value.path !== "string" ||
+    typeof value.code !== "string" ||
+    typeof value.message !== "string"
+  ) {
+    throw new VaultEvidenceError("Vault API returned a malformed evidence warning.");
   }
   return { path: value.path, code: value.code, message: value.message };
 }
 
-function parseMetadata(value: unknown, vaultResourceId: string, maxFileBytes: number): VaultEvidenceMetadata {
-  if (!isRecord(value)) throw new VaultEvidenceError('Vault API returned a malformed evidence record.');
+function parseMetadata(
+  value: unknown,
+  vaultResourceId: string,
+  maxFileBytes: number,
+): VaultEvidenceMetadata {
+  if (!isRecord(value))
+    throw new VaultEvidenceError("Vault API returned a malformed evidence record.");
   const path = safeVaultPath(value.path);
-  if (typeof value.name !== 'string' || !value.name
-    || !(value.folder === null || typeof value.folder === 'string')
-    || !isRecord(value.frontmatter)
-    || typeof value.frontmatterValid !== 'boolean'
-    || !(value.frontmatterError === null || typeof value.frontmatterError === 'string')
-    || typeof value.lastModified !== 'string' || !Number.isFinite(Date.parse(value.lastModified))
-    || typeof value.contentHash !== 'string' || !/^[a-f0-9]{64}$/i.test(value.contentHash)
-    || !Number.isSafeInteger(value.contentBytes) || (value.contentBytes as number) < 0
-    || (value.contentBytes as number) > maxFileBytes) {
+  if (
+    typeof value.name !== "string" ||
+    !value.name ||
+    !(value.folder === null || typeof value.folder === "string") ||
+    !isRecord(value.frontmatter) ||
+    typeof value.frontmatterValid !== "boolean" ||
+    !(value.frontmatterError === null || typeof value.frontmatterError === "string") ||
+    typeof value.lastModified !== "string" ||
+    !Number.isFinite(Date.parse(value.lastModified)) ||
+    typeof value.contentHash !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(value.contentHash) ||
+    !Number.isSafeInteger(value.contentBytes) ||
+    (value.contentBytes as number) < 0 ||
+    (value.contentBytes as number) > maxFileBytes
+  ) {
     throw new VaultEvidenceError(`Vault API returned invalid metadata for ${path}.`);
   }
   return {
@@ -216,48 +246,73 @@ class ObsidianVaultEvidenceAdapter {
   private readonly timeoutMs: number;
 
   constructor(options: ObsidianVaultEvidenceAdapterOptions) {
-    this.baseUrl = validateBaseUrl(options.baseUrl ?? 'http://127.0.0.1:4444');
-    if (typeof options.password !== 'string' || Buffer.byteLength(options.password) < 32) {
-      throw new VaultEvidenceError('Obsidian local password must contain at least 32 bytes.');
+    this.baseUrl = validateBaseUrl(options.baseUrl ?? "http://127.0.0.1:4444");
+    if (typeof options.password !== "string" || Buffer.byteLength(options.password) < 32) {
+      throw new VaultEvidenceError("Obsidian local password must contain at least 32 bytes.");
     }
-    if (!isUuid(options.vaultResourceId)) throw new VaultEvidenceError('Vault resource ID must be a UUID.');
+    if (!isUuid(options.vaultResourceId))
+      throw new VaultEvidenceError("Vault resource ID must be a UUID.");
     this.vaultResourceId = options.vaultResourceId;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxFiles = options.maxFiles ?? 500;
     this.maxFileBytes = options.maxFileBytes ?? 1_048_576;
     this.maxTotalBytes = options.maxTotalBytes ?? 20 * 1_048_576;
     this.concurrency = options.concurrency ?? 4;
-    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 100 || this.timeoutMs > 120_000
-      || !Number.isSafeInteger(this.maxFiles) || this.maxFiles < 1 || this.maxFiles > 5000
-      || !Number.isSafeInteger(this.maxFileBytes) || this.maxFileBytes < 1
-      || !Number.isSafeInteger(this.maxTotalBytes) || this.maxTotalBytes < 1
-      || !Number.isSafeInteger(this.concurrency) || this.concurrency < 1 || this.concurrency > 16) {
-      throw new VaultEvidenceError('Vault evidence limits are outside the supported range.');
+    if (
+      !Number.isSafeInteger(this.timeoutMs) ||
+      this.timeoutMs < 100 ||
+      this.timeoutMs > 120_000 ||
+      !Number.isSafeInteger(this.maxFiles) ||
+      this.maxFiles < 1 ||
+      this.maxFiles > 5000 ||
+      !Number.isSafeInteger(this.maxFileBytes) ||
+      this.maxFileBytes < 1 ||
+      !Number.isSafeInteger(this.maxTotalBytes) ||
+      this.maxTotalBytes < 1 ||
+      !Number.isSafeInteger(this.concurrency) ||
+      this.concurrency < 1 ||
+      this.concurrency > 16
+    ) {
+      throw new VaultEvidenceError("Vault evidence limits are outside the supported range.");
     }
     this.fetcher = options.fetch ?? createLoopbackFetcher(this.baseUrl, this.timeoutMs);
-    if (typeof this.fetcher !== 'function') throw new VaultEvidenceError('Fetch implementation is unavailable.');
-    this.authorization = `Basic ${Buffer.from(`local:${options.password}`).toString('base64')}`;
+    if (typeof this.fetcher !== "function")
+      throw new VaultEvidenceError("Fetch implementation is unavailable.");
+    this.authorization = `Basic ${Buffer.from(`local:${options.password}`).toString("base64")}`;
   }
 
   async listEvidence(): Promise<VaultEvidenceInventory> {
-    const payload = await this.getJson(new URL('/api/vault/evidence', this.baseUrl));
-    if (!isRecord(payload) || !Array.isArray(payload.files) || !Array.isArray(payload.warnings)
-      || !Number.isSafeInteger(payload.totalFiles) || typeof payload.lastUpdated !== 'string'
-      || !Number.isFinite(Date.parse(payload.lastUpdated))) {
-      throw new VaultEvidenceError('Vault API returned an invalid evidence inventory.');
+    const payload = await this.getJson(new URL("/api/vault/evidence", this.baseUrl));
+    if (
+      !isRecord(payload) ||
+      !Array.isArray(payload.files) ||
+      !Array.isArray(payload.warnings) ||
+      !Number.isSafeInteger(payload.totalFiles) ||
+      typeof payload.lastUpdated !== "string" ||
+      !Number.isFinite(Date.parse(payload.lastUpdated))
+    ) {
+      throw new VaultEvidenceError("Vault API returned an invalid evidence inventory.");
     }
     if (payload.files.length > this.maxFiles || payload.totalFiles !== payload.files.length) {
-      throw new VaultEvidenceError('Vault evidence inventory exceeds configured limits or has inconsistent counts.');
+      throw new VaultEvidenceError(
+        "Vault evidence inventory exceeds configured limits or has inconsistent counts.",
+      );
     }
-    const files = payload.files.map((item) => parseMetadata(item, this.vaultResourceId, this.maxFileBytes));
+    const files = payload.files.map((item) =>
+      parseMetadata(item, this.vaultResourceId, this.maxFileBytes),
+    );
     const paths = new Set<string>();
     for (const file of files) {
-      if (paths.has(file.path)) throw new VaultEvidenceError(`Vault API returned a duplicate path: ${file.path}`);
+      if (paths.has(file.path))
+        throw new VaultEvidenceError(`Vault API returned a duplicate path: ${file.path}`);
       paths.add(file.path);
     }
     const warnings = payload.warnings.map(parseWarning);
     const totalBytes = files.reduce((sum, file) => sum + file.content_bytes, 0);
-    if (totalBytes > this.maxTotalBytes) throw new VaultEvidenceError('Vault evidence inventory exceeds the configured total byte limit.');
+    if (totalBytes > this.maxTotalBytes)
+      throw new VaultEvidenceError(
+        "Vault evidence inventory exceeds the configured total byte limit.",
+      );
     return deepFreeze({
       files,
       warnings,
@@ -269,47 +324,49 @@ class ObsidianVaultEvidenceAdapter {
   async readEvidence(metadata: VaultEvidenceMetadata): Promise<VaultEvidenceRecord> {
     const safePath = safeVaultPath(metadata.path);
     const expectedSourceId = vaultEvidenceSourceId(this.vaultResourceId, safePath);
-    if (metadata.source_id !== expectedSourceId) throw new VaultEvidenceError('Vault evidence source ID does not match its path.');
-    const url = new URL('/api/vault/file', this.baseUrl);
-    url.searchParams.set('path', safePath);
+    if (metadata.source_id !== expectedSourceId)
+      throw new VaultEvidenceError("Vault evidence source ID does not match its path.");
+    const url = new URL("/api/vault/file", this.baseUrl);
+    url.searchParams.set("path", safePath);
     const payload = await this.getJson(url);
-    if (!isRecord(payload) || payload.path !== safePath || typeof payload.content !== 'string') {
+    if (!isRecord(payload) || payload.path !== safePath || typeof payload.content !== "string") {
       throw new VaultEvidenceError(`Vault API returned malformed note content for ${safePath}.`);
     }
-    const contentBytes = Buffer.byteLength(payload.content, 'utf8');
+    const contentBytes = Buffer.byteLength(payload.content, "utf8");
     if (contentBytes > this.maxFileBytes || contentBytes !== metadata.content_bytes) {
       throw new VaultEvidenceChangedError(safePath);
     }
-    const contentHash = createHash('sha256').update(payload.content, 'utf8').digest('hex');
+    const contentHash = createHash("sha256").update(payload.content, "utf8").digest("hex");
     if (contentHash !== metadata.content_hash) throw new VaultEvidenceChangedError(safePath);
     return deepFreeze({
       ...metadata,
       content: payload.content,
-      taint: ['external_untrusted', 'prompt_injection_risk'] as const,
+      taint: ["external_untrusted", "prompt_injection_risk"] as const,
     });
   }
 
   private async getJson(url: URL): Promise<unknown> {
-    if (url.origin !== this.baseUrl.origin) throw new VaultEvidenceError('Vault API request escaped the configured loopback origin.');
+    if (url.origin !== this.baseUrl.origin)
+      throw new VaultEvidenceError("Vault API request escaped the configured loopback origin.");
     let response: Response;
     try {
       response = await this.fetcher(url, {
-        method: 'GET',
+        method: "GET",
         headers: {
           authorization: this.authorization,
-          accept: 'application/json',
+          accept: "application/json",
         },
-        redirect: 'error',
+        redirect: "error",
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch {
-      throw new VaultEvidenceError('Local Obsidian API request failed or timed out.');
+      throw new VaultEvidenceError("Local Obsidian API request failed or timed out.");
     }
     if (!response.ok) throw new VaultEvidenceHttpError(response.status);
     try {
-      return await response.json() as unknown;
+      return (await response.json()) as unknown;
     } catch {
-      throw new VaultEvidenceError('Local Obsidian API returned invalid JSON.');
+      throw new VaultEvidenceError("Local Obsidian API returned invalid JSON.");
     }
   }
 }
@@ -329,12 +386,15 @@ export class AuthorizedVaultEvidenceReader implements FounderEvidenceReadPort {
   }
 
   async list(actorId: string): Promise<AuthorizedVaultEvidenceInventory> {
-    if (!isActorReference(actorId)) throw new VaultEvidenceError('Vault evidence reads require a valid authenticated actor identifier.');
+    if (!isActorReference(actorId))
+      throw new VaultEvidenceError(
+        "Vault evidence reads require a valid authenticated actor identifier.",
+      );
     let allowed = false;
     try {
       allowed = await this.authorization.authorize({
         actor_id: actorId,
-        action: 'read_evidence',
+        action: "read_evidence",
         resource_id: this.adapter.vaultResourceId,
       });
     } catch {
@@ -343,10 +403,8 @@ export class AuthorizedVaultEvidenceReader implements FounderEvidenceReadPort {
     if (!allowed) throw new VaultEvidenceAuthorizationError(this.adapter.vaultResourceId);
 
     const inventory = await this.adapter.listEvidence();
-    const files = await mapWithConcurrency(
-      inventory.files,
-      this.adapter.concurrency,
-      (metadata) => this.adapter.readEvidence(metadata),
+    const files = await mapWithConcurrency(inventory.files, this.adapter.concurrency, (metadata) =>
+      this.adapter.readEvidence(metadata),
     );
     return deepFreeze({
       vault_resource_id: this.adapter.vaultResourceId,
@@ -366,15 +424,17 @@ async function mapWithConcurrency<T, R>(
   const results = new Array<R>(items.length);
   let cursor = 0;
   const workerCount = Math.min(concurrency, items.length);
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (true) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= items.length) return;
-      const item = items[index];
-      if (item === undefined) continue;
-      results[index] = await worker(item, index);
-    }
-  }));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= items.length) return;
+        const item = items[index];
+        if (item === undefined) continue;
+        results[index] = await worker(item, index);
+      }
+    }),
+  );
   return results;
 }

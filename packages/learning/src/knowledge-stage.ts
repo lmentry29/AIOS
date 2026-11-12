@@ -13,12 +13,12 @@
  * reintroduce exactly the multi-lifecycle drift ADR-0003 was written to end.
  */
 export const KNOWLEDGE_STAGES = [
-  'observation',
-  'candidate',
-  'validated',
-  'published',
-  'institutional_standard',
-  'historical_archive',
+  "observation",
+  "candidate",
+  "validated",
+  "published",
+  "institutional_standard",
+  "historical_archive",
 ] as const;
 
 export type KnowledgeStage = (typeof KNOWLEDGE_STAGES)[number];
@@ -26,6 +26,6 @@ export type KnowledgeStage = (typeof KNOWLEDGE_STAGES)[number];
 /** The stages promote() may target. 'observation' is the entry stage, set by
  *  recordObservation; 'historical_archive' is terminal and reached via
  *  archiveKnowledge — neither is a promotion target. Mirrors §2.7's signature. */
-export type PromotableStage = Exclude<KnowledgeStage, 'observation' | 'historical_archive'>;
+export type PromotableStage = Exclude<KnowledgeStage, "observation" | "historical_archive">;
 
 export const stageRank = (stage: KnowledgeStage): number => KNOWLEDGE_STAGES.indexOf(stage);

@@ -1,14 +1,14 @@
-import { lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { lstatSync, readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import {
   FilePolicyRegistry,
   MAX_POLICY_REVOCATION_TARGETS,
   PolicyAdministrationService,
   type AccessPolicy,
-} from '@aios/founder';
-import { loadHostConfig } from './config.js';
-import { HostConfigError, HostHttpError } from './errors.js';
-import { PolicyProvenanceAuthority } from './policy-provenance.js';
+} from "@aios/founder";
+import { loadHostConfig } from "./config.js";
+import { HostConfigError, HostHttpError } from "./errors.js";
+import { PolicyProvenanceAuthority } from "./policy-provenance.js";
 
 const MAX_POLICY_FILE_BYTES = 256 * 1024;
 const MAX_ATTACH_TARGETS = 64;
@@ -40,7 +40,7 @@ export interface PolicyRevocationResult {
 type ParseFailure = (message: string) => Error;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseAttachTo(value: unknown, fail: ParseFailure): string[] {
@@ -51,7 +51,7 @@ function parseAttachTo(value: unknown, fail: ParseFailure): string[] {
     throw fail(`Field "attach_to" must list at most ${MAX_ATTACH_TARGETS} resources.`);
   }
   const attached = value.map((entry) => {
-    if (typeof entry !== 'string' || !UUID.test(entry)) {
+    if (typeof entry !== "string" || !UUID.test(entry)) {
       throw fail('Every "attach_to" entry must be a resource UUID.');
     }
     return entry;
@@ -62,10 +62,13 @@ function parseAttachTo(value: unknown, fail: ParseFailure): string[] {
   return attached;
 }
 
-function parseProvisioningDocument(parsed: unknown, fail: ParseFailure): PolicyProvisioningDocument {
-  if (!isRecord(parsed)) throw fail('Policy provisioning document must be an object.');
+function parseProvisioningDocument(
+  parsed: unknown,
+  fail: ParseFailure,
+): PolicyProvisioningDocument {
+  if (!isRecord(parsed)) throw fail("Policy provisioning document must be an object.");
   for (const key of Object.keys(parsed)) {
-    if (key !== 'policy' && key !== 'attach_to') {
+    if (key !== "policy" && key !== "attach_to") {
       throw fail(`Policy provisioning document contains an unsupported field "${key}".`);
     }
   }
@@ -84,7 +87,7 @@ function parseRevocationTargets(value: unknown, fail: ParseFailure): string[] {
     throw fail(`Field "targets" must list at most ${MAX_POLICY_REVOCATION_TARGETS} resources.`);
   }
   const targets = value.map((entry) => {
-    if (typeof entry !== 'string' || !UUID.test(entry)) {
+    if (typeof entry !== "string" || !UUID.test(entry)) {
       throw fail('Every "targets" entry must be a resource UUID.');
     }
     return entry;
@@ -96,13 +99,13 @@ function parseRevocationTargets(value: unknown, fail: ParseFailure): string[] {
 }
 
 function parseRevocationDocument(parsed: unknown, fail: ParseFailure): PolicyRevocationDocument {
-  if (!isRecord(parsed)) throw fail('Policy revocation document must be an object.');
+  if (!isRecord(parsed)) throw fail("Policy revocation document must be an object.");
   for (const key of Object.keys(parsed)) {
-    if (key !== 'policy_id' && key !== 'targets') {
+    if (key !== "policy_id" && key !== "targets") {
       throw fail(`Policy revocation document contains an unsupported field "${key}".`);
     }
   }
-  if (typeof parsed.policy_id !== 'string' || !UUID.test(parsed.policy_id)) {
+  if (typeof parsed.policy_id !== "string" || !UUID.test(parsed.policy_id)) {
     throw fail('Field "policy_id" must be a policy UUID.');
   }
   return {
@@ -112,7 +115,7 @@ function parseRevocationDocument(parsed: unknown, fail: ParseFailure): PolicyRev
 }
 
 function readOwnerOnlyJson(filePath: string, label: string): unknown {
-  if (typeof filePath !== 'string' || !isAbsolute(filePath)) {
+  if (typeof filePath !== "string" || !isAbsolute(filePath)) {
     throw new HostConfigError(`${label} path must be absolute.`);
   }
   const resolved = resolve(filePath);
@@ -134,7 +137,7 @@ function readOwnerOnlyJson(filePath: string, label: string): unknown {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(resolved, 'utf8'));
+    parsed = JSON.parse(readFileSync(resolved, "utf8"));
   } catch {
     throw new HostConfigError(`${label} is not valid JSON.`);
   }
@@ -149,13 +152,13 @@ function readOwnerOnlyJson(filePath: string, label: string): unknown {
  * authenticated human and an exact `administer_policy` grant on every target resource.
  */
 export function readPolicyProvisioningDocument(filePath: string): PolicyProvisioningDocument {
-  const parsed = readOwnerOnlyJson(filePath, 'Policy provisioning file');
+  const parsed = readOwnerOnlyJson(filePath, "Policy provisioning file");
   return parseProvisioningDocument(parsed, (message) => new HostConfigError(message));
 }
 
 /** Reads the offline bootstrap retirement document. */
 export function readPolicyRevocationDocument(filePath: string): PolicyRevocationDocument {
-  const parsed = readOwnerOnlyJson(filePath, 'Policy revocation file');
+  const parsed = readOwnerOnlyJson(filePath, "Policy revocation file");
   return parseRevocationDocument(parsed, (message) => new HostConfigError(message));
 }
 
@@ -164,21 +167,33 @@ export function readPolicyRevocationDocument(filePath: string): PolicyRevocation
  * target list; the immutable policy itself is validated by the durable registry before any
  * write, so an invalid artifact is rejected without touching policy state.
  */
-export function parseRuntimePolicyPublication(body: Record<string, unknown>): PolicyProvisioningDocument {
-  return parseProvisioningDocument(body, (message) => new HostHttpError(400, 'invalid_policy', message));
+export function parseRuntimePolicyPublication(
+  body: Record<string, unknown>,
+): PolicyProvisioningDocument {
+  return parseProvisioningDocument(
+    body,
+    (message) => new HostHttpError(400, "invalid_policy", message),
+  );
 }
 
 /** Parses the authenticated runtime retirement envelope; the policy id is in the path. */
 export function parseRuntimePolicyRevocation(body: Record<string, unknown>): string[] {
   if (!isRecord(body)) {
-    throw new HostHttpError(400, 'invalid_targets', 'The revocation body must be a JSON object.');
+    throw new HostHttpError(400, "invalid_targets", "The revocation body must be a JSON object.");
   }
   for (const key of Object.keys(body)) {
-    if (key !== 'targets') {
-      throw new HostHttpError(400, 'invalid_targets', `Revocation body contains an unsupported field "${key}".`);
+    if (key !== "targets") {
+      throw new HostHttpError(
+        400,
+        "invalid_targets",
+        `Revocation body contains an unsupported field "${key}".`,
+      );
     }
   }
-  return parseRevocationTargets(body.targets, (message) => new HostHttpError(400, 'invalid_targets', message));
+  return parseRevocationTargets(
+    body.targets,
+    (message) => new HostHttpError(400, "invalid_targets", message),
+  );
 }
 
 /**

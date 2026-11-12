@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   fsyncSync,
@@ -7,74 +7,78 @@ import {
   readFileSync,
   renameSync,
   writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { isPolicyProvenance, type AuthorizationAuditStore, type AuthorizationDecisionAudit } from '@aios/founder';
+} from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  isPolicyProvenance,
+  type AuthorizationAuditStore,
+  type AuthorizationDecisionAudit,
+} from "@aios/founder";
 import {
   AUDIT_HEAD_SCHEMA_VERSION,
   type AuditHeadBody,
   type AuditHeadProvenance,
   type AuditHeadSigner,
-} from '../policy-provenance.js';
-import { fsyncDirectory } from './fsync-directory.js';
-import { AppendOnlyJournal, JournalError, type JournalRecord } from './journal.js';
+} from "../policy-provenance.js";
+import { fsyncDirectory } from "./fsync-directory.js";
+import { AppendOnlyJournal, JournalError, type JournalRecord } from "./journal.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
-const ZERO_HASH = '0'.repeat(64);
-const AUDIT_HEAD_FILE = 'authorization-audit.head.json';
+const ZERO_HASH = "0".repeat(64);
+const AUDIT_HEAD_FILE = "authorization-audit.head.json";
 const AUDIT_HEAD_VERSION = 1;
 const AUDIT_HEAD_FIELDS = new Set([
-  'version',
-  'schema_version',
-  'sequence',
-  'record_count',
-  'head_hash',
-  'provenance',
+  "version",
+  "schema_version",
+  "sequence",
+  "record_count",
+  "head_hash",
+  "provenance",
 ]);
 const AUDIT_FIELDS = new Set([
-  'request_id',
-  'actor_id',
-  'action',
-  'resource_id',
-  'policy_id',
-  'policy_version',
-  'decision',
-  'reason',
-  'matched_rule_index',
-  'matched_rule_effect',
-  'timestamp',
-  'provenance',
+  "request_id",
+  "actor_id",
+  "action",
+  "resource_id",
+  "policy_id",
+  "policy_version",
+  "decision",
+  "reason",
+  "matched_rule_index",
+  "matched_rule_effect",
+  "timestamp",
+  "provenance",
 ]);
 const ACTIONS = new Set([
-  'intake',
-  'dispatch',
-  'execute',
-  'coordinate',
-  'cancel',
-  'resume',
-  'retry',
-  'read_status',
-  'read_evidence',
-  'administer_policy',
-  'revoke_policy',
-  'administer_sessions',
+  "intake",
+  "dispatch",
+  "execute",
+  "coordinate",
+  "cancel",
+  "resume",
+  "retry",
+  "read_status",
+  "read_evidence",
+  "administer_policy",
+  "revoke_policy",
+  "administer_sessions",
 ]);
 const REASONS = new Set([
-  'matching_allow',
-  'explicit_deny',
-  'no_matching_allow',
-  'resource_policy_missing_or_invalid',
-  'policy_missing_or_invalid',
-  'invalid_request',
-  'policy_resolution_or_evaluation_error',
+  "matching_allow",
+  "explicit_deny",
+  "no_matching_allow",
+  "resource_policy_missing_or_invalid",
+  "policy_missing_or_invalid",
+  "invalid_request",
+  "policy_resolution_or_evaluation_error",
 ]);
 const DEFAULT_DENY_REASONS = new Set([
-  'no_matching_allow',
-  'resource_policy_missing_or_invalid',
-  'policy_missing_or_invalid',
-  'invalid_request',
-  'policy_resolution_or_evaluation_error',
+  "no_matching_allow",
+  "resource_policy_missing_or_invalid",
+  "policy_missing_or_invalid",
+  "invalid_request",
+  "policy_resolution_or_evaluation_error",
 ]);
 
 interface StoredAuditHead extends AuditHeadBody {
@@ -83,23 +87,30 @@ interface StoredAuditHead extends AuditHeadBody {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isUuid(value: unknown): value is string {
-  return typeof value === 'string' && UUID_PATTERN.test(value);
+  return typeof value === "string" && UUID_PATTERN.test(value);
 }
 
 function isHumanPrincipal(value: unknown): value is string {
-  return typeof value === 'string' && /^human:[^\s:*]+$/.test(value);
+  return typeof value === "string" && /^human:[^\s:*]+$/.test(value);
 }
 
-function isHeadBody(value: Record<string, unknown>): value is AuditHeadBody & Record<string, unknown> {
-  return value.schema_version === AUDIT_HEAD_SCHEMA_VERSION
-    && Number.isSafeInteger(value.sequence) && (value.sequence as number) >= 0
-    && Number.isSafeInteger(value.record_count) && (value.record_count as number) >= 0
-    && value.sequence === value.record_count
-    && typeof value.head_hash === 'string' && SHA256_HEX.test(value.head_hash);
+function isHeadBody(
+  value: Record<string, unknown>,
+): value is AuditHeadBody & Record<string, unknown> {
+  return (
+    value.schema_version === AUDIT_HEAD_SCHEMA_VERSION &&
+    Number.isSafeInteger(value.sequence) &&
+    (value.sequence as number) >= 0 &&
+    Number.isSafeInteger(value.record_count) &&
+    (value.record_count as number) >= 0 &&
+    value.sequence === value.record_count &&
+    typeof value.head_hash === "string" &&
+    SHA256_HEX.test(value.head_hash)
+  );
 }
 
 /**
@@ -112,70 +123,84 @@ function isHeadBody(value: Record<string, unknown>): value is AuditHeadBody & Re
  */
 function parseAuditRecord(value: unknown): AuthorizationDecisionAudit {
   if (!isRecord(value) || Object.keys(value).some((key) => !AUDIT_FIELDS.has(key))) {
-    throw new JournalError('Authorization audit record contains an unsupported field.');
+    throw new JournalError("Authorization audit record contains an unsupported field.");
   }
   const matchedRuleIndex = value.matched_rule_index;
   const matchedRuleEffect = value.matched_rule_effect;
-  const isProvenanceReason = typeof value.reason === 'string'
-    && value.reason.startsWith('policy_provenance_');
-  if (!isUuid(value.request_id)
-    || !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id))
-    || !(value.action === null || (typeof value.action === 'string' && ACTIONS.has(value.action)))
-    || !(value.resource_id === null || isUuid(value.resource_id))
-    || !(value.policy_id === null || isUuid(value.policy_id))
-    || !(value.policy_version === null
-      || (Number.isSafeInteger(value.policy_version) && (value.policy_version as number) >= 1))
-    || (value.decision !== 'allow' && value.decision !== 'deny')
-    || typeof value.reason !== 'string' || !(REASONS.has(value.reason) || isProvenanceReason)
-    || typeof value.timestamp !== 'string' || !Number.isFinite(Date.parse(value.timestamp))
-    || !(matchedRuleIndex === undefined || matchedRuleIndex === null
-      || (Number.isSafeInteger(matchedRuleIndex) && (matchedRuleIndex as number) >= 0))
-    || !(matchedRuleEffect === undefined || matchedRuleEffect === null
-      || matchedRuleEffect === 'allow' || matchedRuleEffect === 'deny')
-    || (value.provenance !== undefined
-      && (!isPolicyProvenance(value.provenance)
-        || value.provenance.subject !== 'authorization_decision'
-        || value.provenance.subject_id !== value.request_id))) {
-    throw new JournalError('Authorization audit record is invalid.');
+  const isProvenanceReason =
+    typeof value.reason === "string" && value.reason.startsWith("policy_provenance_");
+  if (
+    !isUuid(value.request_id) ||
+    !(value.actor_id === null || isHumanPrincipal(value.actor_id) || isUuid(value.actor_id)) ||
+    !(value.action === null || (typeof value.action === "string" && ACTIONS.has(value.action))) ||
+    !(value.resource_id === null || isUuid(value.resource_id)) ||
+    !(value.policy_id === null || isUuid(value.policy_id)) ||
+    !(
+      value.policy_version === null ||
+      (Number.isSafeInteger(value.policy_version) && (value.policy_version as number) >= 1)
+    ) ||
+    (value.decision !== "allow" && value.decision !== "deny") ||
+    typeof value.reason !== "string" ||
+    !(REASONS.has(value.reason) || isProvenanceReason) ||
+    typeof value.timestamp !== "string" ||
+    !Number.isFinite(Date.parse(value.timestamp)) ||
+    !(
+      matchedRuleIndex === undefined ||
+      matchedRuleIndex === null ||
+      (Number.isSafeInteger(matchedRuleIndex) && (matchedRuleIndex as number) >= 0)
+    ) ||
+    !(
+      matchedRuleEffect === undefined ||
+      matchedRuleEffect === null ||
+      matchedRuleEffect === "allow" ||
+      matchedRuleEffect === "deny"
+    ) ||
+    (value.provenance !== undefined &&
+      (!isPolicyProvenance(value.provenance) ||
+        value.provenance.subject !== "authorization_decision" ||
+        value.provenance.subject_id !== value.request_id))
+  ) {
+    throw new JournalError("Authorization audit record is invalid.");
   }
 
-  const hasRuleIndex = typeof matchedRuleIndex === 'number';
-  const hasRuleEffect = matchedRuleEffect === 'allow' || matchedRuleEffect === 'deny';
+  const hasRuleIndex = typeof matchedRuleIndex === "number";
+  const hasRuleEffect = matchedRuleEffect === "allow" || matchedRuleEffect === "deny";
   if (hasRuleIndex !== hasRuleEffect) {
-    throw new JournalError('Authorization audit record has an incomplete grant reference.');
+    throw new JournalError("Authorization audit record has an incomplete grant reference.");
   }
   if (hasRuleEffect && (value.policy_id === null || value.policy_version === null)) {
-    throw new JournalError('Authorization audit record references a grant without its policy.');
+    throw new JournalError("Authorization audit record references a grant without its policy.");
   }
-  if (value.decision === 'allow') {
-    if (value.reason !== 'matching_allow' || matchedRuleEffect !== 'allow') {
-      throw new JournalError('Authorization audit allow must record its matching grant.');
+  if (value.decision === "allow") {
+    if (value.reason !== "matching_allow" || matchedRuleEffect !== "allow") {
+      throw new JournalError("Authorization audit allow must record its matching grant.");
     }
-  } else if (value.reason === 'explicit_deny') {
-    if (matchedRuleEffect !== 'deny') {
-      throw new JournalError('Authorization audit explicit deny must record its matching deny rule.');
+  } else if (value.reason === "explicit_deny") {
+    if (matchedRuleEffect !== "deny") {
+      throw new JournalError(
+        "Authorization audit explicit deny must record its matching deny rule.",
+      );
     }
   } else if (DEFAULT_DENY_REASONS.has(value.reason) || isProvenanceReason) {
     if (hasRuleEffect) {
-      throw new JournalError('Authorization audit default deny cannot reference a matching grant.');
+      throw new JournalError("Authorization audit default deny cannot reference a matching grant.");
     }
   } else {
-    throw new JournalError('Authorization audit reason is inconsistent with the decision.');
+    throw new JournalError("Authorization audit reason is inconsistent with the decision.");
   }
 
   return {
     request_id: value.request_id,
     actor_id: value.actor_id,
-    action: value.action as AuthorizationDecisionAudit['action'],
+    action: value.action as AuthorizationDecisionAudit["action"],
     resource_id: value.resource_id,
     policy_id: value.policy_id,
     policy_version: value.policy_version as number | null,
     decision: value.decision,
     reason: value.reason,
-    matched_rule_index: typeof matchedRuleIndex === 'number' ? matchedRuleIndex : null,
-    matched_rule_effect: matchedRuleEffect === 'allow' || matchedRuleEffect === 'deny'
-      ? matchedRuleEffect
-      : null,
+    matched_rule_index: typeof matchedRuleIndex === "number" ? matchedRuleIndex : null,
+    matched_rule_effect:
+      matchedRuleEffect === "allow" || matchedRuleEffect === "deny" ? matchedRuleEffect : null,
     timestamp: value.timestamp,
     ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
   };
@@ -218,20 +243,23 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
   private readonly records: AuthorizationDecisionAudit[] = [];
 
   constructor(options: DurableAuthorizationAuditStoreOptions) {
-    if (!isRecord(options as unknown)
-      || typeof options.directory !== 'string' || options.directory.length === 0) {
-      throw new Error('Durable authorization audit storage requires a directory.');
+    if (
+      !isRecord(options as unknown) ||
+      typeof options.directory !== "string" ||
+      options.directory.length === 0
+    ) {
+      throw new Error("Durable authorization audit storage requires a directory.");
     }
     this.journal = new AppendOnlyJournal({
-      filePath: join(options.directory.replace(/\/+$/, ''), 'authorization-audit.jsonl'),
+      filePath: join(options.directory.replace(/\/+$/, ""), "authorization-audit.jsonl"),
       ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
     });
-    this.headPath = join(options.directory.replace(/\/+$/, ''), AUDIT_HEAD_FILE);
+    this.headPath = join(options.directory.replace(/\/+$/, ""), AUDIT_HEAD_FILE);
     this.headSigner = options.headSigner;
     try {
       for (const entry of this.journal.read()) {
-        if (entry.kind !== 'authorization_decision') {
-          throw new JournalError('Authorization audit journal contains an unknown record kind.');
+        if (entry.kind !== "authorization_decision") {
+          throw new JournalError("Authorization audit journal contains an unknown record kind.");
         }
         this.records.push(parseAuditRecord(entry.payload));
       }
@@ -250,7 +278,7 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
   async append(record: AuthorizationDecisionAudit): Promise<void> {
     const parsed = parseAuditRecord(record);
     this.assertCurrentHead();
-    const entry = this.journal.append('authorization_decision', parsed);
+    const entry = this.journal.append("authorization_decision", parsed);
     this.writeHead({
       schema_version: AUDIT_HEAD_SCHEMA_VERSION,
       sequence: entry.sequence,
@@ -274,7 +302,7 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
     if (head === undefined) {
       if (this.records.length > 0) {
         throw new JournalError(
-          'Authorization audit head is missing; refusing to trust an unanchored audit journal.',
+          "Authorization audit head is missing; refusing to trust an unanchored audit journal.",
         );
       }
       this.writeHead({
@@ -291,25 +319,24 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
   private assertCurrentHead(): void {
     const head = this.readHead();
     if (head === undefined) {
-      throw new JournalError('Authorization audit head is missing; refusing to trust the audit journal.');
+      throw new JournalError(
+        "Authorization audit head is missing; refusing to trust the audit journal.",
+      );
     }
     const onDisk = this.journal.verifyOnDisk();
     this.assertHeadMatches(onDisk, head);
   }
 
-  private assertHeadMatches(
-    records: readonly JournalRecord[],
-    head: StoredAuditHead,
-  ): void {
+  private assertHeadMatches(records: readonly JournalRecord[], head: StoredAuditHead): void {
     const expectedHash = records[records.length - 1]?.hash ?? ZERO_HASH;
     if (head.record_count !== records.length || head.sequence !== records.length) {
       throw new JournalError(
-        'Authorization audit head record count does not match the durable audit journal.',
+        "Authorization audit head record count does not match the durable audit journal.",
       );
     }
     if (head.head_hash !== expectedHash) {
       throw new JournalError(
-        'Authorization audit head hash does not match the durable audit journal.',
+        "Authorization audit head hash does not match the durable audit journal.",
       );
     }
   }
@@ -319,23 +346,25 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
     try {
       stats = lstatSync(this.headPath);
     } catch (error) {
-      if (isRecord(error) && error.code === 'ENOENT') return undefined;
-      throw new JournalError('Authorization audit head could not be read.');
+      if (isRecord(error) && error.code === "ENOENT") return undefined;
+      throw new JournalError("Authorization audit head could not be read.");
     }
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
-      throw new JournalError('Authorization audit head must be a regular, unlinked file.');
+      throw new JournalError("Authorization audit head must be a regular, unlinked file.");
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(this.headPath, 'utf8'));
+      parsed = JSON.parse(readFileSync(this.headPath, "utf8"));
     } catch {
-      throw new JournalError('Authorization audit head is unreadable.');
+      throw new JournalError("Authorization audit head is unreadable.");
     }
-    if (!isRecord(parsed)
-      || parsed.version !== AUDIT_HEAD_VERSION
-      || Object.keys(parsed).some((key) => !AUDIT_HEAD_FIELDS.has(key))
-      || !isHeadBody(parsed)) {
-      throw new JournalError('Authorization audit head is malformed.');
+    if (
+      !isRecord(parsed) ||
+      parsed.version !== AUDIT_HEAD_VERSION ||
+      Object.keys(parsed).some((key) => !AUDIT_HEAD_FIELDS.has(key)) ||
+      !isHeadBody(parsed)
+    ) {
+      throw new JournalError("Authorization audit head is malformed.");
     }
     const body: AuditHeadBody = {
       schema_version: AUDIT_HEAD_SCHEMA_VERSION,
@@ -346,29 +375,37 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
     const provenance = parsed.provenance;
     if (this.headSigner === undefined) {
       if (provenance !== undefined) {
-        throw new JournalError('Authorization audit head has provenance but no verifier is configured.');
+        throw new JournalError(
+          "Authorization audit head has provenance but no verifier is configured.",
+        );
       }
     } else {
       if (provenance === undefined) {
-        throw new JournalError('Authorization audit head signature is missing.');
+        throw new JournalError("Authorization audit head signature is missing.");
       }
       const verified = this.headSigner.verifyAuditHead(provenance);
       if (!verified.valid) {
         throw new JournalError(
-          `Authorization audit head provenance is invalid: ${verified.reason ?? 'invalid'}.`,
+          `Authorization audit head provenance is invalid: ${verified.reason ?? "invalid"}.`,
         );
       }
-      if (!isRecord(provenance)
-        || provenance.sequence !== body.sequence
-        || provenance.record_count !== body.record_count
-        || provenance.head_hash !== body.head_hash) {
-        throw new JournalError('Authorization audit head provenance does not match the stored head.');
+      if (
+        !isRecord(provenance) ||
+        provenance.sequence !== body.sequence ||
+        provenance.record_count !== body.record_count ||
+        provenance.head_hash !== body.head_hash
+      ) {
+        throw new JournalError(
+          "Authorization audit head provenance does not match the stored head.",
+        );
       }
     }
     return {
       version: AUDIT_HEAD_VERSION,
       ...body,
-      ...(provenance === undefined ? {} : { provenance: provenance as unknown as AuditHeadProvenance }),
+      ...(provenance === undefined
+        ? {}
+        : { provenance: provenance as unknown as AuditHeadProvenance }),
     };
   }
 
@@ -385,18 +422,18 @@ export class DurableAuthorizationAuditStore implements AuthorizationAuditStore {
     try {
       const existing = lstatSync(this.headPath);
       if (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1) {
-        throw new JournalError('Authorization audit head must be a regular, unlinked file.');
+        throw new JournalError("Authorization audit head must be a regular, unlinked file.");
       }
     } catch (error) {
-      if (!(isRecord(error) && error.code === 'ENOENT') && !(error instanceof JournalError)) {
-        throw new JournalError('Authorization audit head metadata could not be verified.');
+      if (!(isRecord(error) && error.code === "ENOENT") && !(error instanceof JournalError)) {
+        throw new JournalError("Authorization audit head metadata could not be verified.");
       }
       if (error instanceof JournalError) throw error;
     }
     const temporary = `${this.headPath}.tmp-${process.pid}-${randomUUID()}`;
-    const descriptor = openSync(temporary, 'wx', 0o600);
+    const descriptor = openSync(temporary, "wx", 0o600);
     try {
-      writeFileSync(descriptor, `${serialized}\n`, 'utf8');
+      writeFileSync(descriptor, `${serialized}\n`, "utf8");
       fsyncSync(descriptor);
     } finally {
       closeSync(descriptor);

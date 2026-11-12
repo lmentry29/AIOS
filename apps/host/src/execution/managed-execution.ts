@@ -1,47 +1,54 @@
-import type { TaskEntity } from '@aios/core';
+import type { TaskEntity } from "@aios/core";
 import {
   ExecutionCapacityError,
   TaskCancelledError,
   type AgentExecutionPort,
   type ExecutionAttemptRequest,
   type TaskExecutionResult,
-} from '@aios/orchestration';
-import { HostExecutionError } from '../errors.js';
+} from "@aios/orchestration";
+import { HostExecutionError } from "../errors.js";
 import {
   SandboxFilterUnavailableError,
   SandboxIsolationUnavailableError,
   SandboxResourceLimitUnavailableError,
   SandboxSyscallDeniedError,
   WorkspaceQuotaExceededError,
-} from '../errors.js';
-import { type ExecutionLedger, type ExecutionRecord, evidenceDigest } from '../persistence/execution-ledger.js';
+} from "../errors.js";
+import {
+  type ExecutionLedger,
+  type ExecutionRecord,
+  evidenceDigest,
+} from "../persistence/execution-ledger.js";
 import {
   EXECUTION_BINDING_VERSION,
   executionResultBinding,
   isExecutionNonce,
   resultExecutionNonce,
   snapshotExecutionResult,
-} from './evidence.js';
+} from "./evidence.js";
 
 export interface CancellableExecutionPort {
   cancelTask(taskId: string): boolean;
 }
 
-function isCancellable(value: AgentExecutionPort): value is AgentExecutionPort & CancellableExecutionPort {
-  return typeof (value as Partial<CancellableExecutionPort>).cancelTask === 'function';
+function isCancellable(
+  value: AgentExecutionPort,
+): value is AgentExecutionPort & CancellableExecutionPort {
+  return typeof (value as Partial<CancellableExecutionPort>).cancelTask === "function";
 }
 
 function failureCode(error: unknown): string {
-  if (error instanceof WorkspaceQuotaExceededError) return 'disk_quota_exceeded';
-  if (error instanceof SandboxFilterUnavailableError) return 'sandbox_filter_unavailable';
-  if (error instanceof SandboxIsolationUnavailableError) return 'sandbox_isolation_unavailable';
-  if (error instanceof SandboxResourceLimitUnavailableError) return 'sandbox_resource_limit_unavailable';
-  if (error instanceof SandboxSyscallDeniedError) return 'sandbox_syscall_denied';
-  if (error instanceof TaskCancelledError) return 'task_cancelled';
+  if (error instanceof WorkspaceQuotaExceededError) return "disk_quota_exceeded";
+  if (error instanceof SandboxFilterUnavailableError) return "sandbox_filter_unavailable";
+  if (error instanceof SandboxIsolationUnavailableError) return "sandbox_isolation_unavailable";
+  if (error instanceof SandboxResourceLimitUnavailableError)
+    return "sandbox_resource_limit_unavailable";
+  if (error instanceof SandboxSyscallDeniedError) return "sandbox_syscall_denied";
+  if (error instanceof TaskCancelledError) return "task_cancelled";
   if (error instanceof Error && error.name.length > 0) {
-    return error.name.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 120);
+    return error.name.replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 120);
   }
-  return 'execution_failed';
+  return "execution_failed";
 }
 
 /**
@@ -67,7 +74,7 @@ export class ManagedExecutionPort implements AgentExecutionPort {
     private readonly maxConcurrentTasks: number,
   ) {
     if (!Number.isSafeInteger(maxConcurrentTasks) || maxConcurrentTasks < 1) {
-      throw new Error('Execution concurrency limit must be a positive integer.');
+      throw new Error("Execution concurrency limit must be a positive integer.");
     }
   }
 
@@ -100,11 +107,15 @@ export class ManagedExecutionPort implements AgentExecutionPort {
         ...(task.assigned_workflow === undefined ? {} : { workflow_id: task.assigned_workflow }),
         agent_id: agentId,
       };
-      execution = attempt?.kind === 'resume'
-        ? this.ledger.resume({ ...request, previous_execution_id: attempt.previous_execution_id })
-        : attempt?.kind === 'retry'
-          ? this.ledger.retry({ ...request, previous_execution_id: attempt.previous_execution_id })
-          : this.ledger.start(request);
+      execution =
+        attempt?.kind === "resume"
+          ? this.ledger.resume({ ...request, previous_execution_id: attempt.previous_execution_id })
+          : attempt?.kind === "retry"
+            ? this.ledger.retry({
+                ...request,
+                previous_execution_id: attempt.previous_execution_id,
+              })
+            : this.ledger.start(request);
     } catch (error) {
       this.active -= 1;
       throw error;
@@ -113,7 +124,7 @@ export class ManagedExecutionPort implements AgentExecutionPort {
     try {
       const result = await this.delegate.executeTask(agentId, task);
       const current = this.ledger.getForTask(task.entity_id);
-      if (current?.execution_id !== execution.execution_id || current.state !== 'running') {
+      if (current?.execution_id !== execution.execution_id || current.state !== "running") {
         throw new TaskCancelledError(task.entity_id);
       }
       // Snapshot the attacker-controlled result under a fixed schema, then bind it to this
@@ -122,20 +133,23 @@ export class ManagedExecutionPort implements AgentExecutionPort {
       const nonce = resultExecutionNonce(snapshot);
       if (!isExecutionNonce(nonce)) {
         throw new HostExecutionError(
-          'The executor result has no valid per-invocation execution nonce; replay cannot be distinguished.',
+          "The executor result has no valid per-invocation execution nonce; replay cannot be distinguished.",
         );
       }
       let binding: string;
       try {
-        binding = executionResultBinding({
-          execution_id: execution.execution_id,
-          task_id: execution.task_id,
-          agent_id: execution.agent_id,
-          attempt: execution.attempt,
-        }, snapshot);
+        binding = executionResultBinding(
+          {
+            execution_id: execution.execution_id,
+            task_id: execution.task_id,
+            agent_id: execution.agent_id,
+            attempt: execution.attempt,
+          },
+          snapshot,
+        );
       } catch (error) {
         throw new HostExecutionError(
-          `The executor result could not be bound to its attempt: ${error instanceof Error ? error.message : 'invalid evidence'}.`,
+          `The executor result could not be bound to its attempt: ${error instanceof Error ? error.message : "invalid evidence"}.`,
         );
       }
       this.ledger.complete(execution.execution_id, [
@@ -148,13 +162,15 @@ export class ManagedExecutionPort implements AgentExecutionPort {
       return result;
     } catch (error) {
       const current = this.ledger.getForTask(task.entity_id);
-      if (current?.execution_id === execution.execution_id && current.state === 'running') {
+      if (current?.execution_id === execution.execution_id && current.state === "running") {
         if (error instanceof TaskCancelledError) {
           this.ledger.cancel({
             task_id: task.entity_id,
-            ...(task.assigned_workflow === undefined ? {} : { workflow_id: task.assigned_workflow }),
+            ...(task.assigned_workflow === undefined
+              ? {}
+              : { workflow_id: task.assigned_workflow }),
             actor_id: agentId,
-            reason_code: 'execution_cancelled',
+            reason_code: "execution_cancelled",
           });
         } else {
           const code = failureCode(error);

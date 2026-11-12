@@ -1,7 +1,7 @@
-import { lstatSync, readFileSync, type Stats } from 'node:fs';
-import { loadHostConfig } from './config.js';
+import { lstatSync, readFileSync, type Stats } from "node:fs";
+import { loadHostConfig } from "./config.js";
 
-export type OperatorSessionCommand = 'list-sessions' | 'rotate-session' | 'revoke-session';
+export type OperatorSessionCommand = "list-sessions" | "rotate-session" | "revoke-session";
 
 /** Stable process exit codes for operators and scripts. */
 export const OPERATOR_SESSION_EXIT = Object.freeze({
@@ -28,30 +28,30 @@ export interface OperatorSessionOptions {
 class OperatorUsageError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'OperatorUsageError';
+    this.name = "OperatorUsageError";
   }
 }
 
 function readTokenFile(path: string | undefined): string {
-  if (typeof path !== 'string' || path.length === 0) {
-    throw new OperatorUsageError('The operator command requires --token-file.');
+  if (typeof path !== "string" || path.length === 0) {
+    throw new OperatorUsageError("The operator command requires --token-file.");
   }
   let stat: Stats;
   try {
     stat = lstatSync(path);
   } catch {
-    throw new OperatorUsageError('The token file could not be read.');
+    throw new OperatorUsageError("The token file could not be read.");
   }
-  if (!stat.isFile()) throw new OperatorUsageError('The token path must be a regular file.');
+  if (!stat.isFile()) throw new OperatorUsageError("The token path must be a regular file.");
   if ((stat.mode & 0o077) !== 0) {
-    throw new OperatorUsageError('The token file must be owner-only (mode 0600 or stricter).');
+    throw new OperatorUsageError("The token file must be owner-only (mode 0600 or stricter).");
   }
   if (stat.size > MAX_TOKEN_FILE_BYTES) {
-    throw new OperatorUsageError('The token file is too large.');
+    throw new OperatorUsageError("The token file is too large.");
   }
-  const token = readFileSync(path, 'utf8').replace(/\r?\n$/, '');
+  const token = readFileSync(path, "utf8").replace(/\r?\n$/, "");
   if (!TOKEN.test(token) || /\s/.test(token)) {
-    throw new OperatorUsageError('The token file does not contain one valid bearer token.');
+    throw new OperatorUsageError("The token file does not contain one valid bearer token.");
   }
   return token;
 }
@@ -59,14 +59,14 @@ function readTokenFile(path: string | undefined): string {
 function baseUrl(config: ReturnType<typeof loadHostConfig>): string {
   const { host, port } = config.bind;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new OperatorUsageError('The configured host port must be a live TCP port, not 0.');
+    throw new OperatorUsageError("The configured host port must be a live TCP port, not 0.");
   }
-  return `http://${host === '::1' ? '[::1]' : host}:${port}`;
+  return `http://${host === "::1" ? "[::1]" : host}:${port}`;
 }
 
 function sessionIdOption(value: string | undefined): string {
-  if (typeof value !== 'string' || !UUID.test(value)) {
-    throw new OperatorUsageError('The command requires --session-id with a valid UUID.');
+  if (typeof value !== "string" || !UUID.test(value)) {
+    throw new OperatorUsageError("The command requires --session-id with a valid UUID.");
   }
   return value;
 }
@@ -79,13 +79,13 @@ function responseExitCode(status: number): number {
 }
 
 function safeErrorBody(body: unknown): Record<string, unknown> {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) return {};
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return {};
   const record = body as Record<string, unknown>;
   return {
-    ...(typeof record.error === 'string' ? { error: record.error } : {}),
-    ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
-    ...(typeof record.message === 'string' ? { message: record.message } : {}),
-    ...(typeof record.request_id === 'string' ? { request_id: record.request_id } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+    ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+    ...(typeof record.message === "string" ? { message: record.message } : {}),
+    ...(typeof record.request_id === "string" ? { request_id: record.request_id } : {}),
   };
 }
 
@@ -103,28 +103,29 @@ export async function runOperatorSessionCommand(
   const stdout = options.stdout ?? ((line: string) => process.stdout.write(`${line}\n`));
   const stderr = options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
   try {
-    if (typeof options.configPath !== 'string' || options.configPath.length === 0) {
-      throw new OperatorUsageError('The operator command requires --config.');
+    if (typeof options.configPath !== "string" || options.configPath.length === 0) {
+      throw new OperatorUsageError("The operator command requires --config.");
     }
     const config = loadHostConfig(options.configPath);
     const token = readTokenFile(options.tokenFile);
-    const target = command === 'list-sessions' ? undefined : sessionIdOption(options.sessionId);
-    const path = command === 'list-sessions'
-      ? '/v1/admin/sessions'
-      : `/v1/admin/sessions/${target}/${command === 'rotate-session' ? 'rotate' : 'revoke'}`;
+    const target = command === "list-sessions" ? undefined : sessionIdOption(options.sessionId);
+    const path =
+      command === "list-sessions"
+        ? "/v1/admin/sessions"
+        : `/v1/admin/sessions/${target}/${command === "rotate-session" ? "rotate" : "revoke"}`;
 
     let response: Response;
     try {
       response = await fetch(`${baseUrl(config)}${path}`, {
-        method: command === 'list-sessions' ? 'GET' : 'POST',
+        method: command === "list-sessions" ? "GET" : "POST",
         headers: {
           authorization: `Bearer ${token}`,
-          accept: 'application/json',
+          accept: "application/json",
         },
         signal: AbortSignal.timeout(10_000),
       });
     } catch {
-      stderr(JSON.stringify({ event: 'session_admin_failed', command, error: 'transport_error' }));
+      stderr(JSON.stringify({ event: "session_admin_failed", command, error: "transport_error" }));
       return OPERATOR_SESSION_EXIT.transport;
     }
 
@@ -133,35 +134,56 @@ export async function runOperatorSessionCommand(
     try {
       body = text.length === 0 ? undefined : JSON.parse(text);
     } catch {
-      stderr(JSON.stringify({ event: 'session_admin_failed', command, status: response.status, error: 'invalid_response' }));
+      stderr(
+        JSON.stringify({
+          event: "session_admin_failed",
+          command,
+          status: response.status,
+          error: "invalid_response",
+        }),
+      );
       return OPERATOR_SESSION_EXIT.transport;
     }
 
     if (!response.ok) {
-      stderr(JSON.stringify({
-        event: 'session_admin_failed',
-        command,
-        status: response.status,
-        ...safeErrorBody(body),
-      }));
+      stderr(
+        JSON.stringify({
+          event: "session_admin_failed",
+          command,
+          status: response.status,
+          ...safeErrorBody(body),
+        }),
+      );
       return responseExitCode(response.status);
     }
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      stderr(JSON.stringify({ event: 'session_admin_failed', command, status: response.status, error: 'invalid_response' }));
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      stderr(
+        JSON.stringify({
+          event: "session_admin_failed",
+          command,
+          status: response.status,
+          error: "invalid_response",
+        }),
+      );
       return OPERATOR_SESSION_EXIT.transport;
     }
 
-    const event = command === 'list-sessions'
-      ? 'session_listed'
-      : command === 'rotate-session' ? 'session_rotated' : 'session_revoked';
+    const event =
+      command === "list-sessions"
+        ? "session_listed"
+        : command === "rotate-session"
+          ? "session_rotated"
+          : "session_revoked";
     stdout(JSON.stringify({ event, ...(body as Record<string, unknown>) }));
     return OPERATOR_SESSION_EXIT.success;
   } catch (error) {
-    stderr(JSON.stringify({
-      event: 'session_admin_failed',
-      command,
-      error: error instanceof Error ? error.message : 'operator_command_failed',
-    }));
+    stderr(
+      JSON.stringify({
+        event: "session_admin_failed",
+        command,
+        error: error instanceof Error ? error.message : "operator_command_failed",
+      }),
+    );
     return error instanceof OperatorUsageError
       ? OPERATOR_SESSION_EXIT.usage
       : OPERATOR_SESSION_EXIT.transport;

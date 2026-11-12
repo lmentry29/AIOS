@@ -1,7 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
-import type { TaskEntity } from '@aios/core';
-import { TaskCancelledError, type AgentExecutionPort, type TaskExecutionResult } from '@aios/orchestration';
-import type { HostExecutionConfig } from '../config.js';
+import { createHash, randomUUID } from "node:crypto";
+import type { TaskEntity } from "@aios/core";
+import {
+  TaskCancelledError,
+  type AgentExecutionPort,
+  type TaskExecutionResult,
+} from "@aios/orchestration";
+import type { HostExecutionConfig } from "../config.js";
 import {
   HostExecutionError,
   HostUnavailableError,
@@ -10,29 +14,35 @@ import {
   SandboxResourceLimitUnavailableError,
   SandboxSyscallDeniedError,
   WorkspaceQuotaExceededError,
-} from '../errors.js';
-import { SECCOMP_DENIED_EXIT_CODE } from './seccomp.js';
-import type { SandboxProvider, SandboxResult } from './sandbox.js';
-import { WorkspaceQuotaGuard, type RunWorkspaceManager } from './workspace.js';
+} from "../errors.js";
+import { SECCOMP_DENIED_EXIT_CODE } from "./seccomp.js";
+import type { SandboxProvider, SandboxResult } from "./sandbox.js";
+import { WorkspaceQuotaGuard, type RunWorkspaceManager } from "./workspace.js";
 
 const ALLOWED_ENV = /^(LANG|LC_[A-Z0-9_]+|TZ|AIOS_[A-Z0-9_]+)$/;
 // Provider configuration, verifier identity and signing material are host-only. A Task can
 // never inject them through its declared environment.
-const RESERVED_ENV = /^AIOS_(VERIFIER_ID|TRUST_ROOT|SIGNING[A-Z0-9_]*|GVISOR[A-Z0-9_]*|ARTIFACT[A-Z0-9_]*)$/;
+const RESERVED_ENV =
+  /^AIOS_(VERIFIER_ID|TRUST_ROOT|SIGNING[A-Z0-9_]*|GVISOR[A-Z0-9_]*|ARTIFACT[A-Z0-9_]*)$/;
 const MAX_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_BYTES = 1_048_576;
-const FILTER_PROVIDERS = new Set(['bubblewrap', 'docker']);
-const BOUNDARY_PROVIDERS = new Set([...FILTER_PROVIDERS, 'gvisor']);
+const FILTER_PROVIDERS = new Set(["bubblewrap", "docker"]);
+const BOUNDARY_PROVIDERS = new Set([...FILTER_PROVIDERS, "gvisor"]);
 
 function digest(value: string | Buffer): string {
-  return createHash('sha256').update(value).digest('hex');
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function filterEnvironment(raw: Record<string, string> | undefined): Record<string, string> {
   if (!raw) return {};
   const allowed: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (ALLOWED_ENV.test(key) && !RESERVED_ENV.test(key) && typeof value === 'string' && value.length <= 256) {
+    if (
+      ALLOWED_ENV.test(key) &&
+      !RESERVED_ENV.test(key) &&
+      typeof value === "string" &&
+      value.length <= 256
+    ) {
       allowed[key] = value;
     }
   }
@@ -48,7 +58,16 @@ function filterEnvironment(raw: Record<string, string> | undefined): Record<stri
  * so a command cannot inject credentials or untrusted text into the durable journal.
  */
 export class LocalCommandExecutor implements AgentExecutionPort {
-  private availability: { checkedAt: number; available: boolean; reason: string; filterFailure?: boolean; isolationFailure?: boolean; resourceLimitFailure?: boolean } | undefined;
+  private availability:
+    | {
+        checkedAt: number;
+        available: boolean;
+        reason: string;
+        filterFailure?: boolean;
+        isolationFailure?: boolean;
+        resourceLimitFailure?: boolean;
+      }
+    | undefined;
   private readonly active = new Map<string, AbortController>();
 
   constructor(
@@ -65,42 +84,47 @@ export class LocalCommandExecutor implements AgentExecutionPort {
 
   async executeTask(agentId: string, task: TaskEntity): Promise<TaskExecutionResult> {
     if (agentId !== this.config.agent_id) {
-      throw new HostExecutionError('The task was dispatched to an Agent this executor does not own.');
+      throw new HostExecutionError(
+        "The task was dispatched to an Agent this executor does not own.",
+      );
     }
     await this.ensureAvailable();
     const intent = task.execution;
-    if (!intent || intent.kind !== 'local_command') {
-      throw new HostExecutionError('Task has no local_command execution intent; refusing to invent work.');
+    if (!intent || intent.kind !== "local_command") {
+      throw new HostExecutionError(
+        "Task has no local_command execution intent; refusing to invent work.",
+      );
     }
     // One command is evidence for one declared Action at most. Mapping a single
     // exit status onto several Action records would manufacture completion that the
     // command never independently demonstrated.
     if (task.actions.length > 1) {
       throw new HostExecutionError(
-        'The local_command adapter can complete at most one declared Action; split the Task or use a verifiable multi-action adapter.',
+        "The local_command adapter can complete at most one declared Action; split the Task or use a verifiable multi-action adapter.",
       );
     }
 
     const workspace = this.workspaces.getOrCreate(task.entity_id);
     const cwd = this.workspaces.resolveCwd(workspace, intent.cwd);
-    const timeoutMs = Math.min(intent.timeout_ms ?? this.config.default_timeout_ms, this.config.default_timeout_ms);
+    const timeoutMs = Math.min(
+      intent.timeout_ms ?? this.config.default_timeout_ms,
+      this.config.default_timeout_ms,
+    );
     const maxOutputBytes = Math.min(
       intent.max_output_bytes ?? this.config.max_output_bytes,
       this.config.max_output_bytes,
     );
     if (timeoutMs < 100 || maxOutputBytes < 1024 || maxOutputBytes > MAX_OUTPUT_BYTES) {
-      throw new HostExecutionError('Task execution limits are outside the host policy.');
+      throw new HostExecutionError("Task execution limits are outside the host policy.");
     }
 
     if (this.active.has(task.entity_id)) {
-      throw new HostExecutionError('This Task already has an active sandbox invocation.');
+      throw new HostExecutionError("This Task already has an active sandbox invocation.");
     }
     const controller = new AbortController();
     this.active.set(task.entity_id, controller);
-    const quota = new WorkspaceQuotaGuard(
-      workspace,
-      this.config.workspace_max_bytes,
-      () => controller.abort(),
+    const quota = new WorkspaceQuotaGuard(workspace, this.config.workspace_max_bytes, () =>
+      controller.abort(),
     );
     let result: SandboxResult;
     try {
@@ -140,10 +164,10 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     }
     // gVisor's boundary is its user-space Sentry, not a host seccomp filter. Require its
     // distinct boundary proof; do not let a gVisor run borrow a filter claim it never made.
-    if (this.provider.id === 'gvisor' && result.boundary?.applied !== true) {
+    if (this.provider.id === "gvisor" && result.boundary?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxIsolationUnavailableError(
-        `The gVisor Sentry boundary was not active for this run: ${result.boundary?.reason ?? 'no boundary evidence'}.`,
+        `The gVisor Sentry boundary was not active for this run: ${result.boundary?.reason ?? "no boundary evidence"}.`,
       );
     }
     // Every filter-based boundary must provide proof that its system-call filter was active
@@ -151,7 +175,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (FILTER_PROVIDERS.has(this.provider.id) && result.filter?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxFilterUnavailableError(
-        `The system-call filter was not active for this run: ${result.filter?.reason ?? 'no filter evidence'}.`,
+        `The system-call filter was not active for this run: ${result.filter?.reason ?? "no filter evidence"}.`,
       );
     }
     // Resource limits are part of the same pre-exec proof: a run whose limits were not
@@ -159,24 +183,26 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     if (BOUNDARY_PROVIDERS.has(this.provider.id) && result.limits?.applied !== true) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxResourceLimitUnavailableError(
-        `The per-run resource limits were not active: ${result.limits?.reason ?? 'no resource-limit evidence'}.`,
+        `The per-run resource limits were not active: ${result.limits?.reason ?? "no resource-limit evidence"}.`,
       );
     }
-    if (result.signal === 'SIGSYS' || result.exitCode === SECCOMP_DENIED_EXIT_CODE) {
+    if (result.signal === "SIGSYS" || result.exitCode === SECCOMP_DENIED_EXIT_CODE) {
       this.workspaces.discard(task.entity_id);
       throw new SandboxSyscallDeniedError(
-        'The sandboxed command was killed by the system-call filter for using a denied syscall.',
+        "The sandboxed command was killed by the system-call filter for using a denied syscall.",
         result.filter?.sha256,
       );
     }
     if (result.spawnError) {
-      throw new HostExecutionError('The sandbox could not start the requested command.');
+      throw new HostExecutionError("The sandbox could not start the requested command.");
     }
     if (result.timedOut) {
-      throw new HostExecutionError('The sandboxed command exceeded its time limit.');
+      throw new HostExecutionError("The sandboxed command exceeded its time limit.");
     }
     if (result.exitCode !== 0) {
-      throw new HostExecutionError(`The sandboxed command exited with code ${result.exitCode ?? 'unknown'}.`);
+      throw new HostExecutionError(
+        `The sandboxed command exited with code ${result.exitCode ?? "unknown"}.`,
+      );
     }
 
     const evidence = [
@@ -202,7 +228,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       ...(result.limits === undefined
         ? []
         : [
-            `resource_limit_mechanism:${result.limits.mechanism ?? 'unknown'}`,
+            `resource_limit_mechanism:${result.limits.mechanism ?? "unknown"}`,
             `resource_limit_memory_bytes:${result.limits.memory_bytes}`,
             `resource_limit_cpu_seconds:${result.limits.cpu_seconds}`,
             `resource_limit_processes:${result.limits.processes}`,
@@ -221,7 +247,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
         : [
             `sandbox_engine:${result.engine.name}`,
             `sandbox_engine_version:${result.engine.version}`,
-            `sandbox_engine_rootless:${result.engine.rootless === null ? 'unknown' : result.engine.rootless}`,
+            `sandbox_engine_rootless:${result.engine.rootless === null ? "unknown" : result.engine.rootless}`,
           ]),
       ...(result.provenance === undefined
         ? []
@@ -242,7 +268,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
         ? {
             completed_actions: task.actions.map((action) => ({
               ...action,
-              status: 'completed' as const,
+              status: "completed" as const,
               executed_by: agentId,
             })),
           }
@@ -252,7 +278,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
 
   async coordinate(): Promise<TaskExecutionResult> {
     throw new HostExecutionError(
-      'The local command adapter does not coordinate multiple Agents; use a coordination adapter whose evidence can be verified independently.',
+      "The local command adapter does not coordinate multiple Agents; use a coordination adapter whose evidence can be verified independently.",
     );
   }
 
@@ -267,7 +293,10 @@ export class LocalCommandExecutor implements AgentExecutionPort {
   private async ensureAvailable(): Promise<void> {
     if (this.availability && Date.now() - this.availability.checkedAt < 30_000) {
       if (!this.availability.available) {
-        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.isolationFailure === true) {
+        if (
+          BOUNDARY_PROVIDERS.has(this.provider.id) &&
+          this.availability.isolationFailure === true
+        ) {
           throw new SandboxIsolationUnavailableError(
             `Local execution is unavailable because the sandbox boundary failed: ${this.availability.reason}`,
           );
@@ -277,20 +306,31 @@ export class LocalCommandExecutor implements AgentExecutionPort {
             `Local execution is unavailable because the system-call filter failed: ${this.availability.reason}`,
           );
         }
-        if (BOUNDARY_PROVIDERS.has(this.provider.id) && this.availability.resourceLimitFailure === true) {
+        if (
+          BOUNDARY_PROVIDERS.has(this.provider.id) &&
+          this.availability.resourceLimitFailure === true
+        ) {
           throw new SandboxResourceLimitUnavailableError(
             `Local execution is unavailable because the per-run resource limits failed: ${this.availability.reason}`,
           );
         }
-        throw new HostUnavailableError(`Local execution is unavailable: ${this.availability.reason}`);
+        throw new HostUnavailableError(
+          `Local execution is unavailable: ${this.availability.reason}`,
+        );
       }
       return;
     }
-    let check: { available: boolean; reason: string; filterFailure?: boolean; isolationFailure?: boolean; resourceLimitFailure?: boolean };
+    let check: {
+      available: boolean;
+      reason: string;
+      filterFailure?: boolean;
+      isolationFailure?: boolean;
+      resourceLimitFailure?: boolean;
+    };
     try {
       check = await this.provider.check();
     } catch {
-      check = { available: false, reason: 'The sandbox availability probe failed.' };
+      check = { available: false, reason: "The sandbox availability probe failed." };
     }
     this.availability = { checkedAt: Date.now(), ...check };
     if (!check.available) {

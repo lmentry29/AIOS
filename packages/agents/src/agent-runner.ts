@@ -1,6 +1,6 @@
-import type { AgentEntity as AgentEntityType, AgentSubstate, LifecycleState } from '@aios/core';
-import { AgentEntity } from '@aios/core';
-import type { TaskStore } from '@aios/work-hierarchy';
+import type { AgentEntity as AgentEntityType, AgentSubstate, LifecycleState } from "@aios/core";
+import { AgentEntity } from "@aios/core";
+import type { TaskStore } from "@aios/work-hierarchy";
 
 /**
  * Demonstration-only Agent lifecycle harness for the ADR-0002 sequence: planning → reasoning
@@ -22,7 +22,7 @@ import type { TaskStore } from '@aios/work-hierarchy';
 function cloneAgent(agent: AgentEntityType): AgentEntityType {
   const cloneValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(cloneValue);
-    if (value !== null && typeof value === 'object') {
+    if (value !== null && typeof value === "object") {
       return Object.fromEntries(
         Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
       );
@@ -55,7 +55,7 @@ export class AgentRunner {
     agentId: string,
     newState: LifecycleState,
     substate: AgentSubstate | undefined,
-    actor: string
+    actor: string,
   ): AgentEntityType {
     const current = this.agents.get(agentId);
     if (!current) {
@@ -88,14 +88,14 @@ export class AgentRunner {
    */
   runFullLifecycle(
     agentId: string,
-    taskId: string
-  ): { agent: AgentEntityType; task: ReturnType<TaskStore['getTask']> } {
+    taskId: string,
+  ): { agent: AgentEntityType; task: ReturnType<TaskStore["getTask"]> } {
     const actor = agentId;
     const existingAgent = this.agents.get(agentId);
     if (!existingAgent) {
       throw new Error(`No agent found with entity_id "${agentId}".`);
     }
-    if (existingAgent.lifecycle_state !== 'created') {
+    if (existingAgent.lifecycle_state !== "created") {
       throw new Error(
         `Agent "${agentId}" must be in created state to start its execution loop; found "${existingAgent.lifecycle_state}".`,
       );
@@ -105,7 +105,7 @@ export class AgentRunner {
     if (!existingTask) {
       throw new Error(`No task found with entity_id "${taskId}".`);
     }
-    if (existingTask.lifecycle_state !== 'created') {
+    if (existingTask.lifecycle_state !== "created") {
       throw new Error(
         `Task "${taskId}" must be in created state to start agent execution; found "${existingTask.lifecycle_state}".`,
       );
@@ -131,16 +131,16 @@ export class AgentRunner {
     this.taskStore.updateTask(taskId, { assigned_agent: agentId });
     this.agents.set(agentId, assignedAgent);
 
-    this.transitionAgent(agentId, 'validated', undefined, actor);
-    this.transitionAgent(agentId, 'active', 'planning', actor);
-    this.transitionAgent(agentId, 'active', 'reasoning', actor);
-    this.transitionAgent(agentId, 'active', 'executing', actor);
-    this.taskStore.transitionTaskLifecycle(taskId, 'validated', actor);
-    this.taskStore.transitionTaskLifecycle(taskId, 'active', actor);
+    this.transitionAgent(agentId, "validated", undefined, actor);
+    this.transitionAgent(agentId, "active", "planning", actor);
+    this.transitionAgent(agentId, "active", "reasoning", actor);
+    this.transitionAgent(agentId, "active", "executing", actor);
+    this.taskStore.transitionTaskLifecycle(taskId, "validated", actor);
+    this.taskStore.transitionTaskLifecycle(taskId, "active", actor);
 
-    this.transitionAgent(agentId, 'active', 'monitoring', actor);
-    const finalTask = this.taskStore.transitionTaskLifecycle(taskId, 'completed', actor);
-    const finalAgent = this.transitionAgent(agentId, 'completed', undefined, actor);
+    this.transitionAgent(agentId, "active", "monitoring", actor);
+    const finalTask = this.taskStore.transitionTaskLifecycle(taskId, "completed", actor);
+    const finalAgent = this.transitionAgent(agentId, "completed", undefined, actor);
 
     return { agent: finalAgent, task: finalTask };
   }

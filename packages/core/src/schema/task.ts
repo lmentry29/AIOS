@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { CanonicalEntity, MAX_COLLECTION_ITEMS, WorkHierarchyParent } from './base.js';
+import { z } from "zod";
+import { CanonicalEntity, MAX_COLLECTION_ITEMS, WorkHierarchyParent } from "./base.js";
 
 // §4.2.1 Action — sub-object, NOT a top-level Canonical Entity.
 // No global entity_id requirement (§3.1) applies here by design.
-export const ActionStatus = z.enum(['pending', 'executing', 'completed', 'failed']);
+export const ActionStatus = z.enum(["pending", "executing", "completed", "failed"]);
 export type ActionStatus = z.infer<typeof ActionStatus>;
 
 export const Action = z.object({
@@ -19,16 +19,16 @@ export type Action = z.infer<typeof Action>;
 // explicit JSON Schema contract consumed by generate-schemas.mjs; keep the two in
 // sync or generation fails closed on an unrepresentable custom type.
 export const MAX_TASK_ENV_ENTRIES = 64;
-const TASK_ENV_DESCRIPTION = 'AIOS task environment: at most 64 string entries';
+const TASK_ENV_DESCRIPTION = "AIOS task environment: at most 64 string entries";
 
 function isBoundedTaskEnvironment(value: unknown): value is Record<string, string> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   let count = 0;
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue;
     if (++count > MAX_TASK_ENV_ENTRIES) return false;
     const entry = (value as Record<string, unknown>)[key];
-    if (key.length > 64 || typeof entry !== 'string' || entry.length > 256) return false;
+    if (key.length > 64 || typeof entry !== "string" || entry.length > 256) return false;
   }
   return true;
 }
@@ -52,7 +52,7 @@ export const TaskEnvironment = z
  * never a channel for provider credentials.
  */
 export const TaskExecutionSpec = z.object({
-  kind: z.literal('local_command'),
+  kind: z.literal("local_command"),
   argv: z.array(z.string().min(1).max(4096)).min(1).max(64),
   cwd: z.string().max(1024).optional(),
   timeout_ms: z.number().int().min(100).max(300_000).optional(),
@@ -66,7 +66,7 @@ export type TaskExecutionSpec = z.infer<typeof TaskExecutionSpec>;
  * sandbox; it does not trust the executor's summary or exit code.
  */
 export const TaskVerificationSpec = z.object({
-  kind: z.literal('local_command'),
+  kind: z.literal("local_command"),
   argv: z.array(z.string().min(1).max(4096)).min(1).max(64),
   cwd: z.string().max(1024).optional(),
   timeout_ms: z.number().int().min(100).max(300_000).optional(),
@@ -78,9 +78,9 @@ export type TaskVerificationSpec = z.infer<typeof TaskVerificationSpec>;
 // 'objective' (a Task's parent is always an Objective, per ADR-0004's
 // canonical chain Mission → Objective → Task → Action).
 const TaskEntityShape = CanonicalEntity.extend({
-  entity_type: z.literal('task'),
+  entity_type: z.literal("task"),
   work_hierarchy_parent: WorkHierarchyParent.extend({
-    level: z.literal('objective'),
+    level: z.literal("objective"),
   }),
   actions: z.array(Action).max(MAX_COLLECTION_ITEMS).default([]),
   assigned_agent: z.string().uuid().optional(),
@@ -93,16 +93,16 @@ export const TaskEntity = TaskEntityShape.refine(
   (task: z.infer<typeof TaskEntityShape>) => task.lifecycle_substate === undefined,
   {
     message:
-      'Task has no ratified lifecycle_substate vocabulary; substates are not accepted for Task entities (COM §4.2)',
-    path: ['lifecycle_substate'],
+      "Task has no ratified lifecycle_substate vocabulary; substates are not accepted for Task entities (COM §4.2)",
+    path: ["lifecycle_substate"],
   },
 ).refine(
   (task: z.infer<typeof TaskEntityShape>) =>
     task.lifecycle_history.every((entry) => entry.substate === undefined),
   {
     message:
-      'Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (COM §4.2)',
-    path: ['lifecycle_history'],
+      "Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (COM §4.2)",
+    path: ["lifecycle_history"],
   },
 );
 export type TaskEntity = z.infer<typeof TaskEntity>;

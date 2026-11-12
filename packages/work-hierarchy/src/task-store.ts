@@ -1,6 +1,6 @@
-import type { TaskEntity as TaskEntityType, LifecycleState } from '@aios/core';
-import { TaskEntity } from '@aios/core';
-import { ObjectStore, type EntityPatch } from '@aios/objects';
+import type { TaskEntity as TaskEntityType, LifecycleState } from "@aios/core";
+import { TaskEntity } from "@aios/core";
+import { ObjectStore, type EntityPatch } from "@aios/objects";
 
 /**
  * TaskStore is the Task-specific ObjectStore adapter. It deliberately exposes
@@ -23,18 +23,14 @@ export class TaskStore {
   }
 
   listTasks(): TaskEntityType[] {
-    return this.store.list({ entityType: 'task' });
+    return this.store.list({ entityType: "task" });
   }
 
   updateTask(taskId: string, patch: EntityPatch<TaskEntityType>): TaskEntityType {
     return this.store.update(taskId, patch);
   }
 
-  transitionTaskLifecycle(
-    taskId: string,
-    newState: LifecycleState,
-    actor: string,
-  ): TaskEntityType {
+  transitionTaskLifecycle(taskId: string, newState: LifecycleState, actor: string): TaskEntityType {
     return this.store.transitionLifecycle(taskId, newState, actor);
   }
 }

@@ -8,20 +8,21 @@
  * affected package, and the compensating control that makes it non-actionable now. Adding
  * an entry is a reviewed security decision, not a way to silence the scanner.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from "node:child_process";
 
 const ALLOWED = new Map();
 
 function runAudit() {
   try {
-    return execFileSync('pnpm', ['audit', '--prod', '--json'], {
-      encoding: 'utf8',
+    return execFileSync("pnpm", ["audit", "--prod", "--json"], {
+      encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (error) {
-    const stdout = typeof error?.stdout === 'string' ? error.stdout : error?.stdout?.toString?.('utf8');
-    if (stdout && stdout.trim().startsWith('{')) return stdout;
+    const stdout =
+      typeof error?.stdout === "string" ? error.stdout : error?.stdout?.toString?.("utf8");
+    if (stdout && stdout.trim().startsWith("{")) return stdout;
     throw error;
   }
 }
@@ -31,7 +32,7 @@ let report;
 try {
   report = JSON.parse(raw);
 } catch {
-  console.error('audit-policy: could not parse pnpm audit JSON output.');
+  console.error("audit-policy: could not parse pnpm audit JSON output.");
   process.exit(1);
 }
 
@@ -39,12 +40,12 @@ try {
 function advisories(input) {
   const found = [];
   const vulnerabilities = input?.vulnerabilities;
-  if (vulnerabilities && typeof vulnerabilities === 'object') {
+  if (vulnerabilities && typeof vulnerabilities === "object") {
     for (const [name, entry] of Object.entries(vulnerabilities)) {
-      const severity = String(entry?.severity ?? 'unknown');
+      const severity = String(entry?.severity ?? "unknown");
       const via = Array.isArray(entry?.via) ? entry.via : [];
       const ghsa = via
-        .map((item) => (typeof item === 'object' && typeof item?.url === 'string' ? item.url : ''))
+        .map((item) => (typeof item === "object" && typeof item?.url === "string" ? item.url : ""))
         .map((url) => /GHSA-[0-9a-z-]+/i.exec(url)?.[0])
         .find((id) => id !== undefined);
       found.push({ id: ghsa ?? `npm:${name}`, package: name, severity });
@@ -52,12 +53,12 @@ function advisories(input) {
     return found;
   }
   const legacy = input?.advisories;
-  if (legacy && typeof legacy === 'object') {
+  if (legacy && typeof legacy === "object") {
     for (const entry of Object.values(legacy)) {
       found.push({
-        id: String(entry?.github_advisory_id ?? entry?.id ?? 'unknown'),
-        package: String(entry?.module_name ?? 'unknown'),
-        severity: String(entry?.severity ?? 'unknown'),
+        id: String(entry?.github_advisory_id ?? entry?.id ?? "unknown"),
+        package: String(entry?.module_name ?? "unknown"),
+        severity: String(entry?.severity ?? "unknown"),
       });
     }
   }
@@ -67,7 +68,7 @@ function advisories(input) {
 const blocking = [];
 const triaged = [];
 for (const finding of advisories(report)) {
-  if (finding.severity !== 'high' && finding.severity !== 'critical') continue;
+  if (finding.severity !== "high" && finding.severity !== "critical") continue;
   const allowed = ALLOWED.get(finding.id);
   if (allowed && allowed.package === finding.package) triaged.push(finding);
   else blocking.push(finding);

@@ -1,14 +1,14 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { HostExecutionConfig } from '../src/config.js';
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { HostExecutionConfig } from "../src/config.js";
 import type {
   SandboxCheck,
   SandboxProvider,
   SandboxResult,
   SandboxRunSpec,
-} from '../src/execution/sandbox.js';
-import { AGENT_ID, VERIFIER_ID } from './fixtures.js';
+} from "../src/execution/sandbox.js";
+import { AGENT_ID, VERIFIER_ID } from "./fixtures.js";
 
 interface HeldRun {
   started: Promise<void>;
@@ -29,10 +29,10 @@ interface HeldRunState {
  * makes it return the provider's `cancelled` result; it is not a real process boundary.
  */
 export class StubSandbox implements SandboxProvider {
-  readonly id = 'stub-container';
-  readonly assurance = 'container' as const;
+  readonly id = "stub-container";
+  readonly assurance = "container" as const;
   calls: SandboxRunSpec[] = [];
-  checkResult: SandboxCheck = { available: true, reason: 'stub is available' };
+  checkResult: SandboxCheck = { available: true, reason: "stub is available" };
   result: Partial<SandboxResult> = {};
   aborted = false;
   private held: HeldRunState | undefined;
@@ -45,8 +45,12 @@ export class StubSandbox implements SandboxProvider {
   holdNextRun(): HeldRun {
     let release!: () => void;
     let markStarted!: () => void;
-    const released = new Promise<void>((resolve) => { release = resolve; });
-    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const held: HeldRunState = { started, markStarted, released, release };
     this.held = held;
     return {
@@ -70,11 +74,11 @@ export class StubSandbox implements SandboxProvider {
           resolve();
         };
         if (spec.signal?.aborted) onAbort();
-        else spec.signal?.addEventListener('abort', onAbort, { once: true });
+        else spec.signal?.addEventListener("abort", onAbort, { once: true });
       });
       held.markStarted();
       await Promise.race([held.released, aborted]);
-      if (onAbort) spec.signal?.removeEventListener('abort', onAbort);
+      if (onAbort) spec.signal?.removeEventListener("abort", onAbort);
       if (spec.signal?.aborted) return this.cancelledResult();
     }
     if (spec.signal?.aborted) {
@@ -84,7 +88,7 @@ export class StubSandbox implements SandboxProvider {
     return {
       exitCode: 0,
       signal: null,
-      stdout: Buffer.from('ok\n'),
+      stdout: Buffer.from("ok\n"),
       stderr: Buffer.alloc(0),
       timedOut: false,
       cancelled: false,
@@ -99,7 +103,7 @@ export class StubSandbox implements SandboxProvider {
   private cancelledResult(): SandboxResult {
     return {
       exitCode: null,
-      signal: 'SIGKILL',
+      signal: "SIGKILL",
       stdout: Buffer.alloc(0),
       stderr: Buffer.alloc(0),
       timedOut: false,
@@ -118,11 +122,11 @@ export function makeExecutionConfig(
   overrides: Partial<HostExecutionConfig> = {},
 ): HostExecutionConfig {
   return {
-    workspace_directory: directory ?? mkdtempSync(join(tmpdir(), 'aios-execution-')),
+    workspace_directory: directory ?? mkdtempSync(join(tmpdir(), "aios-execution-")),
     agent_id: AGENT_ID,
     verifier_id: VERIFIER_ID,
-    provider: 'docker',
-    image: 'node:22-alpine',
+    provider: "docker",
+    image: "node:22-alpine",
     default_timeout_ms: 5_000,
     max_output_bytes: 16 * 1024,
     workspace_max_bytes: 16 * 1024 * 1024,

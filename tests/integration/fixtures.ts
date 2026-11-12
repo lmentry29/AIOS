@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 import type {
   AgentEntity,
   CanonicalEntity,
@@ -7,7 +7,7 @@ import type {
   ObjectiveEntity,
   ProjectEntity,
   TaskEntity,
-} from '@aios/core';
+} from "@aios/core";
 
 /**
  * Entity fixtures for the integration suite.
@@ -19,14 +19,14 @@ import type {
  * catch.
  */
 
-export const FOUNDER = 'human:founder';
+export const FOUNDER = "human:founder";
 
 function base(overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   return {
     entity_id: randomUUID(),
-    name: 'integration fixture',
-    lifecycle_state: 'created' as const,
+    name: "integration fixture",
+    lifecycle_state: "created" as const,
     lifecycle_history: [],
     created_at: now,
     created_by: FOUNDER,
@@ -34,7 +34,7 @@ function base(overrides: Record<string, unknown> = {}) {
     version: 1,
     organizational_containers: [],
     owner_id: FOUNDER,
-    owner_type: 'human' as const,
+    owner_type: "human" as const,
     relationships: [],
     ...overrides,
   };
@@ -43,9 +43,9 @@ function base(overrides: Record<string, unknown> = {}) {
 /** A Task, parented to an Objective per ADR-0004's Mission → Objective → Task chain. */
 export function makeTask(overrides: Record<string, unknown> = {}): TaskEntity {
   return base({
-    entity_type: 'task',
-    name: 'ship the integration suite',
-    work_hierarchy_parent: { entity_id: randomUUID(), level: 'objective' },
+    entity_type: "task",
+    name: "ship the integration suite",
+    work_hierarchy_parent: { entity_id: randomUUID(), level: "objective" },
     actions: [],
     ...overrides,
   }) as unknown as TaskEntity;
@@ -54,10 +54,10 @@ export function makeTask(overrides: Record<string, unknown> = {}): TaskEntity {
 /** An Agent. Never has a work_hierarchy_parent — it acts on Tasks (COM §4.1). */
 export function makeAgent(overrides: Record<string, unknown> = {}): AgentEntity {
   return base({
-    entity_type: 'agent',
-    name: 'integration agent',
-    current_role: 'agent',
-    governing_layer: 'organizational_departments',
+    entity_type: "agent",
+    name: "integration agent",
+    current_role: "agent",
+    governing_layer: "organizational_departments",
     assigned_tasks: [],
     capabilities: [],
     ...overrides,
@@ -66,12 +66,12 @@ export function makeAgent(overrides: Record<string, unknown> = {}): AgentEntity 
 
 export function makeMemoryObject(overrides: Record<string, unknown> = {}): MemoryObjectEntity {
   return base({
-    entity_type: 'canonical_object',
-    entity_subtype: 'memory_object',
-    name: 'integration memory',
-    memory_type: 'decision',
+    entity_type: "canonical_object",
+    entity_subtype: "memory_object",
+    name: "integration memory",
+    memory_type: "decision",
     confidence: 0.8,
-    importance: 'high',
+    importance: "high",
     evidence: [],
     source_references: [],
     ...overrides,
@@ -84,10 +84,10 @@ export function makeMemoryObject(overrides: Record<string, unknown> = {}): Memor
  */
 export function makeMission(overrides: Record<string, unknown> = {}): MissionEntity {
   return base({
-    entity_type: 'canonical_object',
-    entity_subtype: 'mission',
-    name: 'Founder intelligence',
-    purpose: 'Make durable, inspectable decisions about the work that matters.',
+    entity_type: "canonical_object",
+    entity_subtype: "mission",
+    name: "Founder intelligence",
+    purpose: "Make durable, inspectable decisions about the work that matters.",
     ...overrides,
   }) as unknown as MissionEntity;
 }
@@ -98,17 +98,17 @@ export function makeMission(overrides: Record<string, unknown> = {}): MissionEnt
  */
 export function makeObjective(overrides: Record<string, unknown> = {}): ObjectiveEntity {
   return base({
-    entity_type: 'canonical_object',
-    entity_subtype: 'objective',
-    name: 'reduce p95 build time',
-    purpose: 'CI feedback is too slow to be useful',
-    desired_outcome: 'p95 build under 3 minutes',
-    constraints: ['no new CI vendors'],
-    success_criteria: ['p95 < 180s over a 7-day window'],
-    priority: 'high',
-    risk_profile: 'medium',
-    known_unknowns: ['whether the cache is the bottleneck'],
-    acceptance_criteria: ['founder signs off on the measured result'],
+    entity_type: "canonical_object",
+    entity_subtype: "objective",
+    name: "reduce p95 build time",
+    purpose: "CI feedback is too slow to be useful",
+    desired_outcome: "p95 build under 3 minutes",
+    constraints: ["no new CI vendors"],
+    success_criteria: ["p95 < 180s over a 7-day window"],
+    priority: "high",
+    risk_profile: "medium",
+    known_unknowns: ["whether the cache is the bottleneck"],
+    acceptance_criteria: ["founder signs off on the measured result"],
     ...overrides,
   }) as unknown as ObjectiveEntity;
 }
@@ -120,34 +120,34 @@ export function makeObjective(overrides: Record<string, unknown> = {}): Objectiv
  */
 export function makeProject(overrides: Record<string, unknown> = {}): ProjectEntity {
   return base({
-    entity_type: 'canonical_object',
-    entity_subtype: 'project',
-    name: 'AIOS',
-    purpose: 'make the architecture executable',
+    entity_type: "canonical_object",
+    entity_subtype: "project",
+    name: "AIOS",
+    purpose: "make the architecture executable",
     // Prose, not references (ADR-0011 §5).
-    mission: 'an AI-native engineering organization',
-    vision: 'software that plans and builds itself',
+    mission: "an AI-native engineering organization",
+    vision: "software that plans and builds itself",
     project_dna: {
-      mission: 'an AI-native engineering organization',
-      core_principles: ['no unilateral resolution'],
-      target_users: ['the founder'],
-      architectural_philosophy: 'doc-first',
-      quality_expectations: ['green before commit'],
-      long_term_objectives: ['autonomy'],
-      non_goals: ['a general agent framework'],
-      governance_constraints: ['ADR-gated'],
+      mission: "an AI-native engineering organization",
+      core_principles: ["no unilateral resolution"],
+      target_users: ["the founder"],
+      architectural_philosophy: "doc-first",
+      quality_expectations: ["green before commit"],
+      long_term_objectives: ["autonomy"],
+      non_goals: ["a general agent framework"],
+      governance_constraints: ["ADR-gated"],
     },
-    project_status: 'active_development',
-    project_phase: 'implementation',
+    project_status: "active_development",
+    project_phase: "implementation",
     project_status_history: [],
-    lifecycle_state: 'active',
+    lifecycle_state: "active",
     ...overrides,
   }) as unknown as ProjectEntity;
 }
 
 export function makeCanonicalObject(overrides: Record<string, unknown> = {}): CanonicalEntity {
   return base({
-    entity_type: 'canonical_object',
+    entity_type: "canonical_object",
     ...overrides,
   }) as unknown as CanonicalEntity;
 }

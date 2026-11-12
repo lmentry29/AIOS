@@ -10,18 +10,18 @@
  * production schemas reject the container before examining its entries, so each child
  * stays alive and reports one bounded issue.
  */
-import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 
-const coreEntry = new URL('../../packages/core/dist/index.js', import.meta.url).href;
+const coreEntry = new URL("../../packages/core/dist/index.js", import.meta.url).href;
 const actionCount = 1_000_000;
 const environmentCount = 100_000;
 
 function runChild(label, source) {
   const child = spawnSync(
     process.execPath,
-    ['--max-old-space-size=64', '--input-type=module', '--eval', source],
-    { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 },
+    ["--max-old-space-size=64", "--input-type=module", "--eval", source],
+    { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 },
   );
   assert.equal(
     child.signal,
@@ -33,7 +33,7 @@ function runChild(label, source) {
     0,
     `${label} validation exited ${child.status}; stderr: ${child.stderr}`,
   );
-  const lines = child.stdout.trim().split('\n');
+  const lines = child.stdout.trim().split("\n");
   const observed = JSON.parse(lines.at(-1));
   assert.equal(observed.success, false, `${label} was accepted`);
   assert.ok(
@@ -47,7 +47,9 @@ function runChild(label, source) {
   return observed;
 }
 
-const actions = runChild('oversized action collection', `
+const actions = runChild(
+  "oversized action collection",
+  `
   import { TaskEntity } from ${JSON.stringify(coreEntry)};
   const now = new Date().toISOString();
   const started = performance.now();
@@ -71,9 +73,12 @@ const actions = runChild('oversized action collection', `
     issue_count: result.success ? 0 : result.error.issues.length,
     elapsed_ms: Math.round(performance.now() - started),
   }));
-`);
+`,
+);
 
-const environment = runChild('oversized environment record', `
+const environment = runChild(
+  "oversized environment record",
+  `
   import { TaskEnvironment } from ${JSON.stringify(coreEntry)};
   const started = performance.now();
   const env = Object.fromEntries(
@@ -85,13 +90,16 @@ const environment = runChild('oversized environment record', `
     issue_count: result.success ? 0 : result.error.issues.length,
     elapsed_ms: Math.round(performance.now() - started),
   }));
-`);
+`,
+);
 
-process.stdout.write(`${JSON.stringify({
-  drill: 'zod-collection-bound',
-  advisory: 'CVE-2023-54404',
-  heap_limit_mb: 64,
-  actions: { submitted: actionCount, ...actions },
-  environment: { submitted: environmentCount, ...environment },
-  result: 'oversized containers rejected before entry parsing',
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    drill: "zod-collection-bound",
+    advisory: "CVE-2023-54404",
+    heap_limit_mb: 64,
+    actions: { submitted: actionCount, ...actions },
+    environment: { submitted: environmentCount, ...environment },
+    result: "oversized containers rejected before entry parsing",
+  })}\n`,
+);

@@ -1,14 +1,14 @@
-import { z } from 'zod';
-import { CanonicalEntity, type LifecycleHistoryEntry, type LifecycleState } from './base.js';
+import { z } from "zod";
+import { CanonicalEntity, type LifecycleHistoryEntry, type LifecycleState } from "./base.js";
 
 // §4.5 Canonical Object — a reusable Zod object shape. Keep this as a ZodObject
 // because Memory Object, Artifact, Objective, and Project extend it.
 export const CanonicalObjectEntityShape = CanonicalEntity.extend({
-  entity_type: z.literal('canonical_object'),
+  entity_type: z.literal("canonical_object"),
   // entity_subtype: 'memory_object' | 'artifact' | future subtypes (open, §12)
 });
 
-export const CanonicalObjectSubstate = z.enum(['mutating', 'persisting', 'synchronizing']);
+export const CanonicalObjectSubstate = z.enum(["mutating", "persisting", "synchronizing"]);
 export type CanonicalObjectSubstate = z.infer<typeof CanonicalObjectSubstate>;
 
 type CanonicalObjectLifecycle = {
@@ -28,14 +28,16 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
   const withCurrentState = schema.refine(
     (object) => {
       const value = object as z.output<T> & CanonicalObjectLifecycle;
-      return value.lifecycle_substate === undefined ||
-        (value.lifecycle_state === 'active' &&
-          CanonicalObjectSubstate.safeParse(value.lifecycle_substate).success);
+      return (
+        value.lifecycle_substate === undefined ||
+        (value.lifecycle_state === "active" &&
+          CanonicalObjectSubstate.safeParse(value.lifecycle_substate).success)
+      );
     },
     {
       message:
-        'Canonical Object substates must be mutating, persisting, or synchronizing while lifecycle_state is active (COM §4.5)',
-      path: ['lifecycle_substate'],
+        "Canonical Object substates must be mutating, persisting, or synchronizing while lifecycle_state is active (COM §4.5)",
+      path: ["lifecycle_substate"],
     },
   );
 
@@ -45,19 +47,18 @@ export function withCanonicalObjectLifecycle<T extends z.ZodTypeAny>(
       return value.lifecycle_history.every((entry: LifecycleHistoryEntry) =>
         entry.substate === undefined
           ? true
-          : entry.state === 'active' && CanonicalObjectSubstate.safeParse(entry.substate).success,
+          : entry.state === "active" && CanonicalObjectSubstate.safeParse(entry.substate).success,
       );
     },
     {
       message:
-        'Canonical Object lifecycle history substates must be mutating, persisting, or synchronizing under active state (COM §4.5)',
-      path: ['lifecycle_history'],
+        "Canonical Object lifecycle history substates must be mutating, persisting, or synchronizing under active state (COM §4.5)",
+      path: ["lifecycle_history"],
     },
   );
 
   return withHistory as unknown as z.ZodType<z.output<T>, z.input<T>>;
 }
-
 
 // Public schema validates the generic Canonical Object lifecycle contract. Concrete
 // subtypes extend the shape above and apply the same guard after adding their fields.

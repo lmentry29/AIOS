@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import type { PluginEntity as PluginEntityType, PluginInstallStatus } from '@aios/core';
-import { PluginEntity } from '@aios/core';
-import { PluginIdConflictError, PluginNotFoundError } from './errors.js';
+import { randomUUID } from "node:crypto";
+import type { PluginEntity as PluginEntityType, PluginInstallStatus } from "@aios/core";
+import { PluginEntity } from "@aios/core";
+import { PluginIdConflictError, PluginNotFoundError } from "./errors.js";
 
 /**
  * The spec a caller supplies to install(). Per runtime-interfaces.md §2.6:
@@ -17,14 +17,16 @@ import { PluginIdConflictError, PluginNotFoundError } from './errors.js';
  */
 export type PluginInstallSpec = Omit<
   PluginEntityType,
-  'entity_id' | 'lifecycle_history' | 'install_status'
+  "entity_id" | "lifecycle_history" | "install_status"
 >;
 
 function clonePlugin(plugin: PluginEntityType): PluginEntityType {
   const cloneValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(cloneValue);
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]));
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
+      );
     }
     return value;
   };
@@ -73,7 +75,7 @@ export class ToolAbstractionService {
       ...spec,
       entity_id: randomUUID(),
       lifecycle_history: [],
-      install_status: 'installed' satisfies PluginInstallStatus,
+      install_status: "installed" satisfies PluginInstallStatus,
     };
 
     // Validate through core's schema rather than trusting the caller's shape —
@@ -89,11 +91,11 @@ export class ToolAbstractionService {
   }
 
   async enable(pluginId: string): Promise<void> {
-    this.setInstallStatus(pluginId, 'enabled');
+    this.setInstallStatus(pluginId, "enabled");
   }
 
   async disable(pluginId: string): Promise<void> {
-    this.setInstallStatus(pluginId, 'disabled');
+    this.setInstallStatus(pluginId, "disabled");
   }
 
   get(pluginId: string): PluginEntityType | undefined {

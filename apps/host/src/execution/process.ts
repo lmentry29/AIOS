@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
 
 export interface CapturedProcessOptions {
   cwd?: string;
@@ -55,29 +55,33 @@ export function runCapturedProcess(
       cwd: options.cwd,
       env: options.env,
       shell: false,
-      stdio: ['ignore', 'pipe', 'pipe', ...(options.extraFds ?? [])],
+      stdio: ["ignore", "pipe", "pipe", ...(options.extraFds ?? [])],
       windowsHide: true,
-      detached: process.platform !== 'win32',
+      detached: process.platform !== "win32",
     });
 
     const killProcessTree = () => {
       if (child.pid === undefined) return;
-      if (process.platform !== 'win32') {
+      if (process.platform !== "win32") {
         try {
-          process.kill(-child.pid, 'SIGKILL');
+          process.kill(-child.pid, "SIGKILL");
           return;
         } catch {
           // The group may already be gone; fall through to the direct child.
         }
       }
-      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already exited */
+      }
     };
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
+      options.signal?.removeEventListener("abort", abort);
       resolve({
         exitCode,
         signal,
@@ -110,17 +114,17 @@ export function runCapturedProcess(
       return Buffer.concat([current, chunk]);
     };
 
-    child.stdout?.on('data', (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       stdout = append(stdout, chunk);
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderr = append(stderr, chunk);
     });
-    child.on('error', (error) => {
+    child.on("error", (error) => {
       spawnError = error.message;
       finish(null, null);
     });
-    child.on('close', (code, signal) => {
+    child.on("close", (code, signal) => {
       finish(code, signal);
     });
 
@@ -131,6 +135,6 @@ export function runCapturedProcess(
     timer.unref();
 
     if (options.signal?.aborted) abort();
-    else options.signal?.addEventListener('abort', abort, { once: true });
+    else options.signal?.addEventListener("abort", abort, { once: true });
   });
 }

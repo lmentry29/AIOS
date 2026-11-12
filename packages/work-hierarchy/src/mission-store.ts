@@ -1,6 +1,6 @@
-import type { LifecycleState, MissionEntity as MissionEntityType } from '@aios/core';
-import { MissionEntity } from '@aios/core';
-import { ObjectStore, type EntityPatch } from '@aios/objects';
+import type { LifecycleState, MissionEntity as MissionEntityType } from "@aios/core";
+import { MissionEntity } from "@aios/core";
+import { ObjectStore, type EntityPatch } from "@aios/objects";
 
 /**
  * MissionStore — the Work Hierarchy's top level, per ADR-0017.
@@ -26,14 +26,11 @@ export class MissionStore {
 
   listMissions(): MissionEntityType[] {
     return this.store
-      .list({ entityType: 'canonical_object' })
-      .filter((mission) => mission.entity_subtype === 'mission');
+      .list({ entityType: "canonical_object" })
+      .filter((mission) => mission.entity_subtype === "mission");
   }
 
-  updateMission(
-    missionId: string,
-    patch: EntityPatch<MissionEntityType>,
-  ): MissionEntityType {
+  updateMission(missionId: string, patch: EntityPatch<MissionEntityType>): MissionEntityType {
     return this.store.update(missionId, patch);
   }
 

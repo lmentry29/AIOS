@@ -1,4 +1,4 @@
-import type { KnowledgeStage } from './knowledge-stage.js';
+import type { KnowledgeStage } from "./knowledge-stage.js";
 
 /**
  * Thrown when a permanent Memory promotion is attempted without a recorded approval from
@@ -11,7 +11,7 @@ import type { KnowledgeStage } from './knowledge-stage.js';
 export class MemoryApprovalError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'MemoryApprovalError';
+    this.name = "MemoryApprovalError";
   }
 }
 
@@ -19,7 +19,7 @@ export class MemoryApprovalError extends Error {
 export class KnowledgeNotFoundError extends Error {
   constructor(id: string) {
     super(`No knowledge record found with id "${id}".`);
-    this.name = 'KnowledgeNotFoundError';
+    this.name = "KnowledgeNotFoundError";
   }
 }
 
@@ -39,9 +39,9 @@ export class KnowledgeNotFoundError extends Error {
 export class InvalidStagePromotionError extends Error {
   constructor(id: string, from: KnowledgeStage, to: KnowledgeStage) {
     super(
-      `Cannot promote knowledge "${id}" from "${from}" to "${to}" — promotion only moves forward along the Knowledge Evolution axis (Memory Engine Ch.23).`
+      `Cannot promote knowledge "${id}" from "${from}" to "${to}" — promotion only moves forward along the Knowledge Evolution axis (Memory Engine Ch.23).`,
     );
-    this.name = 'InvalidStagePromotionError';
+    this.name = "InvalidStagePromotionError";
   }
 }
 
@@ -54,8 +54,8 @@ export class InvalidStagePromotionError extends Error {
 export class ArchivedKnowledgeError extends Error {
   constructor(id: string) {
     super(
-      `Knowledge "${id}" is in 'historical_archive', which is terminal — it cannot be promoted.`
+      `Knowledge "${id}" is in 'historical_archive', which is terminal — it cannot be promoted.`,
     );
-    this.name = 'ArchivedKnowledgeError';
+    this.name = "ArchivedKnowledgeError";
   }
 }

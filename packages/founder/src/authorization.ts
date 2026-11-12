@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from "node:crypto";
 import {
   isAccessAction,
   isHumanOnlyAction,
   type AccessAction,
-} from './security/capability-inventory.js';
+} from "./security/capability-inventory.js";
 
 export {
   ACCESS_ACTIONS,
@@ -12,15 +12,15 @@ export {
   capabilityFor,
   isAccessAction,
   isHumanOnlyAction,
-} from './security/capability-inventory.js';
+} from "./security/capability-inventory.js";
 export type {
   AccessAction,
   CapabilityDefinition,
   HumanOnlyAccessAction,
-} from './security/capability-inventory.js';
+} from "./security/capability-inventory.js";
 
 export interface AccessRule {
-  effect: 'allow' | 'deny';
+  effect: "allow" | "deny";
   subject_ids: readonly string[];
   actions: readonly AccessAction[];
   resource_ids: readonly string[];
@@ -38,7 +38,7 @@ export interface AccessPolicy {
   provenance?: PolicyProvenance;
 }
 
-export type PolicyProvenanceSubject = 'policy_bundle' | 'authorization_decision';
+export type PolicyProvenanceSubject = "policy_bundle" | "authorization_decision";
 
 /**
  * Detached provenance shared by policy bundles and authorization decisions.
@@ -65,19 +65,26 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const ED25519_SIGNATURE = /^[A-Za-z0-9+/]{86}==$/;
 
 export function isPolicyProvenance(value: unknown): value is PolicyProvenance {
-  return isRecord(value)
-    && value.schema_version === 1
-    && (value.subject === 'policy_bundle' || value.subject === 'authorization_decision')
-    && typeof value.subject_id === 'string' && UUID_PATTERN.test(value.subject_id)
-    && typeof value.key_id === 'string' && SHA256_HEX.test(value.key_id)
-    && typeof value.signed_at === 'string' && ISO_TIMESTAMP.test(value.signed_at)
-    && Number.isFinite(Date.parse(value.signed_at))
-    && typeof value.payload_sha256 === 'string' && SHA256_HEX.test(value.payload_sha256)
-    && typeof value.signature === 'string' && ED25519_SIGNATURE.test(value.signature);
+  return (
+    isRecord(value) &&
+    value.schema_version === 1 &&
+    (value.subject === "policy_bundle" || value.subject === "authorization_decision") &&
+    typeof value.subject_id === "string" &&
+    UUID_PATTERN.test(value.subject_id) &&
+    typeof value.key_id === "string" &&
+    SHA256_HEX.test(value.key_id) &&
+    typeof value.signed_at === "string" &&
+    ISO_TIMESTAMP.test(value.signed_at) &&
+    Number.isFinite(Date.parse(value.signed_at)) &&
+    typeof value.payload_sha256 === "string" &&
+    SHA256_HEX.test(value.payload_sha256) &&
+    typeof value.signature === "string" &&
+    ED25519_SIGNATURE.test(value.signature)
+  );
 }
 
 /** Policy content with provenance removed; this is what a signature covers. */
-export function policyContent(policy: AccessPolicy): Omit<AccessPolicy, 'provenance'> {
+export function policyContent(policy: AccessPolicy): Omit<AccessPolicy, "provenance"> {
   const { provenance: _provenance, ...content } = policy;
   return content;
 }
@@ -90,16 +97,21 @@ export function policyContent(policy: AccessPolicy): Omit<AccessPolicy, 'provena
  */
 export function policyArtifactSha256(policy: AccessPolicy): string {
   const canonicalJson = (value: unknown): string => {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-    if (value !== null && typeof value === 'object') {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+    if (value !== null && typeof value === "object") {
       return `{${Object.keys(value)
         .sort()
-        .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
-        .join(',')}}`;
+        .map(
+          (key) =>
+            `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+        )
+        .join(",")}}`;
     }
-    return JSON.stringify(value) ?? 'null';
+    return JSON.stringify(value) ?? "null";
   };
-  return createHash('sha256').update(canonicalJson(policyContent(policy))).digest('hex');
+  return createHash("sha256")
+    .update(canonicalJson(policyContent(policy)))
+    .digest("hex");
 }
 
 export interface AccessRequest {
@@ -117,13 +129,13 @@ export interface AuthorizationDecisionAudit {
   resource_id: string | null;
   policy_id: string | null;
   policy_version: number | null;
-  decision: 'allow' | 'deny';
+  decision: "allow" | "deny";
   /** Fixed reason code, e.g. matching_allow, explicit_deny, no_matching_allow. */
   reason: string;
   /** Zero-based index of the decisive rule in the resolved policy; null for default deny. */
   matched_rule_index?: number | null;
   /** Effect of the decisive rule; null when no rule decided the outcome. */
-  matched_rule_effect?: 'allow' | 'deny' | null;
+  matched_rule_effect?: "allow" | "deny" | null;
   timestamp: string;
   /** Required by the host; optional here so signed and legacy audit stores can be read. */
   provenance?: PolicyProvenance;
@@ -172,32 +184,35 @@ export interface PolicyAdministrationPort {
 export const MAX_POLICY_REVOCATION_TARGETS = 256;
 
 export type PolicyRevocationErrorCode =
-  | 'invalid_policy_id'
-  | 'invalid_targets'
-  | 'policy_not_found'
-  | 'policy_not_attached'
-  | 'policy_already_revoked'
-  | 'target_scope_mismatch';
+  | "invalid_policy_id"
+  | "invalid_targets"
+  | "policy_not_found"
+  | "policy_not_attached"
+  | "policy_already_revoked"
+  | "target_scope_mismatch";
 
 /** A rejected runtime retirement with a stable, wire-safe reason code. */
 export class PolicyRevocationError extends Error {
-  constructor(readonly code: PolicyRevocationErrorCode, message: string) {
+  constructor(
+    readonly code: PolicyRevocationErrorCode,
+    message: string,
+  ) {
     super(message);
-    this.name = 'PolicyRevocationError';
+    this.name = "PolicyRevocationError";
   }
 }
 
 export class PolicyProvenanceDeniedError extends Error {
   constructor(readonly reasonCode: string) {
     super(`Authorization rejected because policy provenance failed: ${reasonCode}.`);
-    this.name = 'PolicyProvenanceDeniedError';
+    this.name = "PolicyProvenanceDeniedError";
   }
 }
 
 export class PolicyAdministrationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'PolicyAdministrationError';
+    this.name = "PolicyAdministrationError";
   }
 }
 
@@ -213,7 +228,7 @@ export class PolicyAdministrationService {
     private readonly administration: PolicyAdministrationPort,
   ) {
     if (!isHumanPrincipal(bootstrapPrincipalId)) {
-      throw new PolicyAdministrationError('Bootstrap principal must be a valid actor identifier.');
+      throw new PolicyAdministrationError("Bootstrap principal must be a valid actor identifier.");
     }
   }
 
@@ -223,9 +238,12 @@ export class PolicyAdministrationService {
     // policy object across the asynchronous administration boundary.
     const validated = new StaticAccessPolicyStore([policy]);
     const snapshot = await validated.get(policy.policy_id);
-    if (!snapshot) throw new PolicyAdministrationError('Validated policy snapshot could not be created.');
+    if (!snapshot)
+      throw new PolicyAdministrationError("Validated policy snapshot could not be created.");
     if (await this.policies.get(snapshot.policy_id)) {
-      throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID for every change.');
+      throw new PolicyAdministrationError(
+        "Published policies are immutable; publish a new policy ID for every change.",
+      );
     }
     await this.administration.publish(snapshot, actorId);
   }
@@ -233,19 +251,29 @@ export class PolicyAdministrationService {
   async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
     this.assertBootstrapPrincipal(actorId);
     if (!isUuid(resourceId) || !isUuid(policyId)) {
-      throw new PolicyAdministrationError('Policy attachment requires valid resource and policy UUIDs.');
+      throw new PolicyAdministrationError(
+        "Policy attachment requires valid resource and policy UUIDs.",
+      );
     }
     const policy = await this.policies.get(policyId);
-    if (!policy || policy.policy_id !== policyId || !isUuid(policy.policy_id)
-      || !Number.isSafeInteger(policy.version) || policy.version < 1) {
-      throw new PolicyAdministrationError('Cannot attach a missing, mismatched, or invalid published policy.');
+    if (
+      !policy ||
+      policy.policy_id !== policyId ||
+      !isUuid(policy.policy_id) ||
+      !Number.isSafeInteger(policy.version) ||
+      policy.version < 1
+    ) {
+      throw new PolicyAdministrationError(
+        "Cannot attach a missing, mismatched, or invalid published policy.",
+      );
     }
     await this.administration.attach(resourceId, policyId, actorId);
   }
 
   async revoke(resourceId: string, actorId: string): Promise<void> {
     this.assertBootstrapPrincipal(actorId);
-    if (!isUuid(resourceId)) throw new PolicyAdministrationError('Policy revocation requires a valid resource UUID.');
+    if (!isUuid(resourceId))
+      throw new PolicyAdministrationError("Policy revocation requires a valid resource UUID.");
     await this.administration.revoke(resourceId, actorId);
   }
 
@@ -253,14 +281,21 @@ export class PolicyAdministrationService {
    * Offline/bootstrap retirement of one immutable version. The runtime route performs the
    * same operation only after the exact `revoke_policy` grant is checked on every target.
    */
-  async retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void> {
+  async retirePolicy(
+    policyId: string,
+    resourceIds: readonly string[],
+    actorId: string,
+  ): Promise<void> {
     this.assertBootstrapPrincipal(actorId);
     if (!isUuid(policyId)) {
-      throw new PolicyRevocationError('invalid_policy_id', 'Policy retirement requires a valid policy UUID.');
+      throw new PolicyRevocationError(
+        "invalid_policy_id",
+        "Policy retirement requires a valid policy UUID.",
+      );
     }
     if (!isPolicyTargetList(resourceIds)) {
       throw new PolicyRevocationError(
-        'invalid_targets',
+        "invalid_targets",
         `Policy retirement requires 0-${MAX_POLICY_REVOCATION_TARGETS} distinct resource UUIDs.`,
       );
     }
@@ -269,11 +304,12 @@ export class PolicyAdministrationService {
 
   private assertBootstrapPrincipal(actorId: string): void {
     if (!isHumanPrincipal(actorId) || actorId !== this.bootstrapPrincipalId) {
-      throw new PolicyAdministrationError('Policy lifecycle changes are restricted to the configured bootstrap principal.');
+      throw new PolicyAdministrationError(
+        "Policy lifecycle changes are restricted to the configured bootstrap principal.",
+      );
     }
   }
 }
-
 
 /** In-memory test/development sink. Not a durable production audit store. */
 export class InMemoryAuthorizationAuditStore implements AuthorizationAuditStore {
@@ -295,59 +331,93 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
   constructor(policies: readonly AccessPolicy[]) {
     for (const policy of policies) {
       if (!isRecord(policy) || !hasOnlyFields(policy, POLICY_FIELDS)) {
-        throw new Error('Access policy contains an unsupported field.');
+        throw new Error("Access policy contains an unsupported field.");
       }
-      if (!isUuid(policy.policy_id)) throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
-      if (policy.provenance !== undefined
-        && (!isPolicyProvenance(policy.provenance)
-          || policy.provenance.subject !== 'policy_bundle'
-          || policy.provenance.subject_id !== policy.policy_id)) {
-        throw new Error(`Access policy "${policy.policy_id}" has invalid or mismatched provenance.`);
+      if (!isUuid(policy.policy_id))
+        throw new Error(`Invalid access policy ID "${policy.policy_id}".`);
+      if (
+        policy.provenance !== undefined &&
+        (!isPolicyProvenance(policy.provenance) ||
+          policy.provenance.subject !== "policy_bundle" ||
+          policy.provenance.subject_id !== policy.policy_id)
+      ) {
+        throw new Error(
+          `Access policy "${policy.policy_id}" has invalid or mismatched provenance.`,
+        );
       }
       if (!Number.isSafeInteger(policy.version) || policy.version < 1) {
         throw new Error(`Access policy "${policy.policy_id}" requires a positive integer version.`);
       }
-      if (this.policies.has(policy.policy_id)) throw new Error(`Duplicate access policy "${policy.policy_id}".`);
+      if (this.policies.has(policy.policy_id))
+        throw new Error(`Duplicate access policy "${policy.policy_id}".`);
       if (!Array.isArray(policy.rules) || policy.rules.length === 0) {
         throw new Error(`Access policy "${policy.policy_id}" must contain at least one rule.`);
       }
       for (const rule of policy.rules as readonly AccessRule[]) {
         if (!isRecord(rule) || !hasOnlyFields(rule, RULE_FIELDS)) {
-          throw new Error(`Access policy "${policy.policy_id}" contains an unsupported rule field.`);
+          throw new Error(
+            `Access policy "${policy.policy_id}" contains an unsupported rule field.`,
+          );
         }
-        if (!Array.isArray(rule.subject_ids) || !rule.subject_ids.every((id: unknown) => typeof id === 'string')
-          || !Array.isArray(rule.actions) || !rule.actions.every((action: unknown) => typeof action === 'string')
-          || !Array.isArray(rule.resource_ids) || !rule.resource_ids.every((id: unknown) => typeof id === 'string')) {
-          throw new Error(`Every rule in access policy "${policy.policy_id}" must define string subjects, actions, and resources.`);
+        if (
+          !Array.isArray(rule.subject_ids) ||
+          !rule.subject_ids.every((id: unknown) => typeof id === "string") ||
+          !Array.isArray(rule.actions) ||
+          !rule.actions.every((action: unknown) => typeof action === "string") ||
+          !Array.isArray(rule.resource_ids) ||
+          !rule.resource_ids.every((id: unknown) => typeof id === "string")
+        ) {
+          throw new Error(
+            `Every rule in access policy "${policy.policy_id}" must define string subjects, actions, and resources.`,
+          );
         }
-        if (rule.effect !== 'allow' && rule.effect !== 'deny') throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
+        if (rule.effect !== "allow" && rule.effect !== "deny")
+          throw new Error(`Invalid effect in access policy "${policy.policy_id}".`);
         if (!rule.subject_ids.length || !rule.actions.length || !rule.resource_ids.length) {
-          throw new Error(`Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`);
+          throw new Error(
+            `Every rule in access policy "${policy.policy_id}" must define subjects, actions, and resources.`,
+          );
         }
-        if (rule.subject_ids.some((id: string) => !isActorRef(id)) || rule.resource_ids.some((id: string) => !isUuid(id))) {
-          throw new Error(`Access policy "${policy.policy_id}" contains invalid subject or resource IDs.`);
+        if (
+          rule.subject_ids.some((id: string) => !isActorRef(id)) ||
+          rule.resource_ids.some((id: string) => !isUuid(id))
+        ) {
+          throw new Error(
+            `Access policy "${policy.policy_id}" contains invalid subject or resource IDs.`,
+          );
         }
         if (rule.actions.some((action: string) => !isAccessAction(action))) {
           throw new Error(`Access policy "${policy.policy_id}" contains an unsupported action.`);
         }
-        if (rule.actions.some((action: string) => isHumanOnlyAction(action))
-          && rule.subject_ids.some((id: string) => !isHumanPrincipal(id))) {
-          throw new Error(`Access policy "${policy.policy_id}" may grant administrative actions only to human principals.`);
+        if (
+          rule.actions.some((action: string) => isHumanOnlyAction(action)) &&
+          rule.subject_ids.some((id: string) => !isHumanPrincipal(id))
+        ) {
+          throw new Error(
+            `Access policy "${policy.policy_id}" may grant administrative actions only to human principals.`,
+          );
         }
       }
-      this.policies.set(policy.policy_id, Object.freeze({
-        policy_id: policy.policy_id,
-        version: policy.version,
-        rules: Object.freeze(policy.rules.map((rule) => Object.freeze({
-          ...rule,
-          subject_ids: Object.freeze([...rule.subject_ids]),
-          actions: Object.freeze([...rule.actions]),
-          resource_ids: Object.freeze([...rule.resource_ids]),
-        }))),
-        ...(policy.provenance === undefined
-          ? {}
-          : { provenance: Object.freeze({ ...policy.provenance }) }),
-      }));
+      this.policies.set(
+        policy.policy_id,
+        Object.freeze({
+          policy_id: policy.policy_id,
+          version: policy.version,
+          rules: Object.freeze(
+            policy.rules.map((rule) =>
+              Object.freeze({
+                ...rule,
+                subject_ids: Object.freeze([...rule.subject_ids]),
+                actions: Object.freeze([...rule.actions]),
+                resource_ids: Object.freeze([...rule.resource_ids]),
+              }),
+            ),
+          ),
+          ...(policy.provenance === undefined
+            ? {}
+            : { provenance: Object.freeze({ ...policy.provenance }) }),
+        }),
+      );
     }
   }
 
@@ -364,7 +434,7 @@ export class StaticAccessPolicyStore implements AccessPolicyStore {
 
 export interface PolicyLifecycleAuditEvent {
   event_id: string;
-  operation: 'publish' | 'attach' | 'revoke';
+  operation: "publish" | "attach" | "revoke";
   actor_id: string;
   policy_id: string;
   policy_version: number;
@@ -392,27 +462,39 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async publish(policy: AccessPolicy, actorId: string): Promise<void> {
-    if (!isHumanPrincipal(actorId)) throw new PolicyAdministrationError('Policy publication requires an authenticated human administrator.');
+    if (!isHumanPrincipal(actorId))
+      throw new PolicyAdministrationError(
+        "Policy publication requires an authenticated human administrator.",
+      );
     new StaticAccessPolicyStore([policy]);
     if (this.policies.has(policy.policy_id)) {
-      throw new PolicyAdministrationError('Published policies are immutable; publish a new policy ID.');
+      throw new PolicyAdministrationError(
+        "Published policies are immutable; publish a new policy ID.",
+      );
     }
-    this.policies.set(policy.policy_id, Object.freeze({
-      policy_id: policy.policy_id,
-      version: policy.version,
-      rules: Object.freeze(policy.rules.map((rule) => Object.freeze({
-        ...rule,
-        subject_ids: Object.freeze([...rule.subject_ids]),
-        actions: Object.freeze([...rule.actions]),
-        resource_ids: Object.freeze([...rule.resource_ids]),
-      }))),
-      ...(policy.provenance === undefined
-        ? {}
-        : { provenance: Object.freeze({ ...policy.provenance }) }),
-    }));
+    this.policies.set(
+      policy.policy_id,
+      Object.freeze({
+        policy_id: policy.policy_id,
+        version: policy.version,
+        rules: Object.freeze(
+          policy.rules.map((rule) =>
+            Object.freeze({
+              ...rule,
+              subject_ids: Object.freeze([...rule.subject_ids]),
+              actions: Object.freeze([...rule.actions]),
+              resource_ids: Object.freeze([...rule.resource_ids]),
+            }),
+          ),
+        ),
+        ...(policy.provenance === undefined
+          ? {}
+          : { provenance: Object.freeze({ ...policy.provenance }) }),
+      }),
+    );
     this.events.push({
       event_id: randomUUID(),
-      operation: 'publish',
+      operation: "publish",
       actor_id: actorId,
       policy_id: policy.policy_id,
       policy_version: policy.version,
@@ -422,17 +504,25 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async attach(resourceId: string, policyId: string, actorId: string): Promise<void> {
-    if (!isHumanPrincipal(actorId)) throw new PolicyAdministrationError('Policy attachment requires an authenticated human administrator.');
+    if (!isHumanPrincipal(actorId))
+      throw new PolicyAdministrationError(
+        "Policy attachment requires an authenticated human administrator.",
+      );
     const policy = this.policies.get(policyId);
-    if (!isUuid(resourceId) || !policy) throw new PolicyAdministrationError('Cannot attach an invalid or unpublished policy.');
-    if (this.retiredPolicies.has(policyId)) throw new PolicyAdministrationError('A retired policy cannot be attached.');
+    if (!isUuid(resourceId) || !policy)
+      throw new PolicyAdministrationError("Cannot attach an invalid or unpublished policy.");
+    if (this.retiredPolicies.has(policyId))
+      throw new PolicyAdministrationError("A retired policy cannot be attached.");
     const previousPolicyId = this.resourcePolicies.get(resourceId);
     const history = this.resourcePolicyHistory.get(resourceId) ?? [];
-    this.resourcePolicyHistory.set(resourceId, [...history.filter((id) => id !== policyId), policyId]);
+    this.resourcePolicyHistory.set(resourceId, [
+      ...history.filter((id) => id !== policyId),
+      policyId,
+    ]);
     this.resourcePolicies.set(resourceId, policyId);
     this.events.push({
       event_id: randomUUID(),
-      operation: 'attach',
+      operation: "attach",
       actor_id: actorId,
       policy_id: policyId,
       policy_version: policy.version,
@@ -444,16 +534,21 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
   }
 
   async revoke(resourceId: string, actorId: string): Promise<void> {
-    if (!isHumanPrincipal(actorId) || !isUuid(resourceId)) throw new PolicyAdministrationError('Policy revocation requires an authenticated human administrator and valid resource UUID.');
+    if (!isHumanPrincipal(actorId) || !isUuid(resourceId))
+      throw new PolicyAdministrationError(
+        "Policy revocation requires an authenticated human administrator and valid resource UUID.",
+      );
     const policyId = this.resourcePolicies.get(resourceId);
-    if (!policyId) throw new PolicyAdministrationError('Resource has no attached policy to revoke.');
+    if (!policyId)
+      throw new PolicyAdministrationError("Resource has no attached policy to revoke.");
     const policy = this.policies.get(policyId);
-    if (!policy) throw new PolicyAdministrationError('Attached policy is missing from the registry.');
+    if (!policy)
+      throw new PolicyAdministrationError("Attached policy is missing from the registry.");
     this.resourcePolicies.delete(resourceId);
     this.resourcePolicyHistory.delete(resourceId);
     this.events.push({
       event_id: randomUUID(),
-      operation: 'revoke',
+      operation: "revoke",
       actor_id: actorId,
       policy_id: policyId,
       policy_version: policy.version,
@@ -463,35 +558,51 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
     });
   }
 
-  async retirePolicy(policyId: string, resourceIds: readonly string[], actorId: string): Promise<void> {
+  async retirePolicy(
+    policyId: string,
+    resourceIds: readonly string[],
+    actorId: string,
+  ): Promise<void> {
     if (!isHumanPrincipal(actorId)) {
-      throw new PolicyAdministrationError('Policy retirement requires an authenticated human administrator.');
+      throw new PolicyAdministrationError(
+        "Policy retirement requires an authenticated human administrator.",
+      );
     }
     if (!isUuid(policyId)) {
-      throw new PolicyRevocationError('invalid_policy_id', 'Policy retirement requires a valid policy UUID.');
+      throw new PolicyRevocationError(
+        "invalid_policy_id",
+        "Policy retirement requires a valid policy UUID.",
+      );
     }
     if (!isPolicyTargetList(resourceIds)) {
       throw new PolicyRevocationError(
-        'invalid_targets',
+        "invalid_targets",
         `Policy retirement requires 0-${MAX_POLICY_REVOCATION_TARGETS} distinct resource UUIDs.`,
       );
     }
     const policy = this.policies.get(policyId);
-    if (!policy) throw new PolicyRevocationError('policy_not_found', 'Policy version was not found.');
+    if (!policy)
+      throw new PolicyRevocationError("policy_not_found", "Policy version was not found.");
     if (this.retiredPolicies.has(policyId)) {
-      throw new PolicyRevocationError('policy_already_revoked', 'Policy version has already been retired.');
+      throw new PolicyRevocationError(
+        "policy_already_revoked",
+        "Policy version has already been retired.",
+      );
     }
     const affected = [...this.resourcePolicyHistory.entries()]
       .filter(([, history]) => history.includes(policyId))
       .map(([resourceId]) => resourceId)
       .sort();
     if (affected.length === 0) {
-      throw new PolicyRevocationError('policy_not_attached', 'Policy version is not attached to any resource.');
+      throw new PolicyRevocationError(
+        "policy_not_attached",
+        "Policy version is not attached to any resource.",
+      );
     }
     if (!sameStringSet(resourceIds, affected)) {
       throw new PolicyRevocationError(
-        'target_scope_mismatch',
-        'The target set must exactly match every resource that references this policy version.',
+        "target_scope_mismatch",
+        "The target set must exactly match every resource that references this policy version.",
       );
     }
 
@@ -507,7 +618,7 @@ export class InMemoryPolicyRegistry implements AccessPolicyStore, PolicyAdminist
       }
       this.events.push({
         event_id: randomUUID(),
-        operation: 'revoke',
+        operation: "revoke",
         actor_id: actorId,
         policy_id: policyId,
         policy_version: policy.version,
@@ -548,77 +659,92 @@ export class AuthorizationService {
    * reasons remain internal audit codes.
    */
   async authorizeDecision(request: AccessRequest): Promise<AuthorizationEvaluation> {
-    const requestId = request && typeof request.request_id === 'string' && isUuid(request.request_id)
-      ? request.request_id
-      : randomUUID();
-    const actorId = request && typeof request.actor_id === 'string' ? request.actor_id : null;
-    const action = request && typeof request.action === 'string' ? request.action : null;
-    const resourceId = request && typeof request.resource_id === 'string' ? request.resource_id : null;
+    const requestId =
+      request && typeof request.request_id === "string" && isUuid(request.request_id)
+        ? request.request_id
+        : randomUUID();
+    const actorId = request && typeof request.actor_id === "string" ? request.actor_id : null;
+    const action = request && typeof request.action === "string" ? request.action : null;
+    const resourceId =
+      request && typeof request.resource_id === "string" ? request.resource_id : null;
     let policyId: string | null = null;
     let policyVersion: number | null = null;
     let matchedRuleIndex: number | null = null;
-    let matchedRuleEffect: 'allow' | 'deny' | null = null;
-    let decision: 'allow' | 'deny' = 'deny';
-    let reason = 'invalid_request';
+    let matchedRuleEffect: "allow" | "deny" | null = null;
+    let decision: "allow" | "deny" = "deny";
+    let reason = "invalid_request";
 
     try {
-      if (!request || typeof request !== 'object'
-        || !actorId || !isActorRef(actorId)
-        || !resourceId || !isUuid(resourceId)
-        || !action || !isAccessAction(action)) {
-        reason = 'invalid_request';
+      if (
+        !request ||
+        typeof request !== "object" ||
+        !actorId ||
+        !isActorRef(actorId) ||
+        !resourceId ||
+        !isUuid(resourceId) ||
+        !action ||
+        !isAccessAction(action)
+      ) {
+        reason = "invalid_request";
       } else {
         const resolved = await this.resolvePolicyId(resourceId);
         if (!resolved || !isUuid(resolved)) {
-          reason = 'resource_policy_missing_or_invalid';
+          reason = "resource_policy_missing_or_invalid";
         } else {
           policyId = resolved;
           const policy = await this.policies.get(resolved);
-          if (!policy || policy.policy_id !== resolved || !isUuid(policy.policy_id)
-            || !Array.isArray(policy.rules) || !Number.isSafeInteger(policy.version) || policy.version < 1) {
-            reason = 'policy_missing_or_invalid';
+          if (
+            !policy ||
+            policy.policy_id !== resolved ||
+            !isUuid(policy.policy_id) ||
+            !Array.isArray(policy.rules) ||
+            !Number.isSafeInteger(policy.version) ||
+            policy.version < 1
+          ) {
+            reason = "policy_missing_or_invalid";
           } else {
             const verification = this.provenance
               ? await this.provenance.verifyPolicy(policy).catch(() => ({
                   valid: false,
-                  reason: 'verification_error',
+                  reason: "verification_error",
                 }))
               : { valid: true };
             if (!verification.valid) {
               // No rule matching happens for content that is not attributable to the
               // pinned trust root. This is deliberately a deny, not an evaluation error.
-              reason = `policy_provenance_${verification.reason ?? 'invalid'}`;
+              reason = `policy_provenance_${verification.reason ?? "invalid"}`;
             } else {
               policyVersion = policy.version;
               const rules = policy.rules as readonly AccessRule[];
               const matching = rules
                 .map((rule, index) => ({ rule, index }))
-                .filter(({ rule }) =>
-                  rule.subject_ids.includes(actorId)
-                  && rule.actions.includes(action)
-                  && rule.resource_ids.includes(resourceId),
+                .filter(
+                  ({ rule }) =>
+                    rule.subject_ids.includes(actorId) &&
+                    rule.actions.includes(action) &&
+                    rule.resource_ids.includes(resourceId),
                 );
-              const denying = matching.find(({ rule }) => rule.effect === 'deny');
-              const allowing = matching.find(({ rule }) => rule.effect === 'allow');
+              const denying = matching.find(({ rule }) => rule.effect === "deny");
+              const allowing = matching.find(({ rule }) => rule.effect === "allow");
               if (denying) {
-                reason = 'explicit_deny';
+                reason = "explicit_deny";
                 matchedRuleIndex = denying.index;
-                matchedRuleEffect = 'deny';
+                matchedRuleEffect = "deny";
               } else if (allowing) {
-                decision = 'allow';
-                reason = 'matching_allow';
+                decision = "allow";
+                reason = "matching_allow";
                 matchedRuleIndex = allowing.index;
-                matchedRuleEffect = 'allow';
+                matchedRuleEffect = "allow";
               } else {
-                reason = 'no_matching_allow';
+                reason = "no_matching_allow";
               }
             }
           }
         }
       }
     } catch {
-      decision = 'deny';
-      reason = 'policy_resolution_or_evaluation_error';
+      decision = "deny";
+      reason = "policy_resolution_or_evaluation_error";
     }
 
     const auditRecord: AuthorizationDecisionAudit = {
@@ -635,14 +761,14 @@ export class AuthorizationService {
       timestamp: new Date().toISOString(),
     };
 
-    const provenanceDenied = reason.startsWith('policy_provenance_');
+    const provenanceDenied = reason.startsWith("policy_provenance_");
     let signedRecord = auditRecord;
     if (this.provenance) {
       try {
         signedRecord = await this.provenance.signDecision(auditRecord);
       } catch {
         // An unsigned decision must never be observed or persisted as authoritative.
-        return { allowed: false, reason: 'policy_provenance_decision_signing_failed' };
+        return { allowed: false, reason: "policy_provenance_decision_signing_failed" };
       }
     }
 
@@ -653,15 +779,15 @@ export class AuthorizationService {
       return { allowed: false, reason };
     }
     if (provenanceDenied) throw new PolicyProvenanceDeniedError(reason);
-    return { allowed: decision === 'allow', reason };
+    return { allowed: decision === "allow", reason };
   }
 }
 
-const POLICY_FIELDS = new Set(['policy_id', 'version', 'rules', 'provenance']);
-const RULE_FIELDS = new Set(['effect', 'subject_ids', 'actions', 'resource_ids']);
+const POLICY_FIELDS = new Set(["policy_id", "version", "rules", "provenance"]);
+const RULE_FIELDS = new Set(["effect", "subject_ids", "actions", "resource_ids"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasOnlyFields(value: object, allowed: ReadonlySet<string>): boolean {
@@ -676,13 +802,13 @@ function isHumanPrincipal(value: string): boolean {
   return /^human:[^\s:*]+$/.test(value);
 }
 
-
-
 function isPolicyTargetList(value: unknown): value is string[] {
-  return Array.isArray(value)
-    && value.length <= MAX_POLICY_REVOCATION_TARGETS
-    && value.every((id) => typeof id === 'string' && isUuid(id))
-    && new Set(value).size === value.length;
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_POLICY_REVOCATION_TARGETS &&
+    value.every((id) => typeof id === "string" && isUuid(id)) &&
+    new Set(value).size === value.length
+  );
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {

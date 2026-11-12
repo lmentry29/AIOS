@@ -8,13 +8,14 @@
  * and exits non-zero on any failure. This is a drill, not a unit test: every step touches
  * the filesystem and the observed output is recorded in docs/security/validation-ledger.md.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const journalModule = await import(
-  pathToFileURL(new URL('../../apps/host/dist/persistence/journal.js', import.meta.url).pathname).href
+  pathToFileURL(new URL("../../apps/host/dist/persistence/journal.js", import.meta.url).pathname)
+    .href
 );
 const { AppendOnlyJournal } = journalModule;
 
@@ -24,35 +25,43 @@ function step(name, details) {
   console.log(JSON.stringify({ step: name, ...details }));
 }
 function fail(name, error) {
-  console.error(JSON.stringify({ step: name, ok: false, error: error instanceof Error ? error.message : String(error) }));
+  console.error(
+    JSON.stringify({
+      step: name,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
   process.exit(1);
 }
 
-const directory = mkdtempSync(join(tmpdir(), 'aios-journal-drill-'));
-const filePath = join(directory, 'operational.jsonl');
-const archivePath = join(directory, 'archive.json');
-const tamperedPath = join(directory, 'archive-tampered.json');
+const directory = mkdtempSync(join(tmpdir(), "aios-journal-drill-"));
+const filePath = join(directory, "operational.jsonl");
+const archivePath = join(directory, "archive.json");
+const tamperedPath = join(directory, "archive-tampered.json");
 
 try {
   const journal = new AppendOnlyJournal({ filePath, maxBytes: 4096 });
   let appended = 0;
-  let limitError = '';
+  let limitError = "";
   for (let index = 0; index < 100; index += 1) {
     try {
-      journal.append('probe', { index, note: 'x'.repeat(128) });
+      journal.append("probe", { index, note: "x".repeat(128) });
       appended += 1;
     } catch (error) {
       limitError = error.message;
       break;
     }
   }
-  if (!/size limit/.test(limitError)) throw new Error(`expected a size-limit rejection, saw: ${limitError}`);
-  step('size_limit', { ok: true, appended, journal_bytes: journal.sizeBytes });
+  if (!/size limit/.test(limitError))
+    throw new Error(`expected a size-limit rejection, saw: ${limitError}`);
+  step("size_limit", { ok: true, appended, journal_bytes: journal.sizeBytes });
 
-  const compacted = journal.compactWithSnapshot('probe_snapshot', { resumed: true }, archivePath);
-  if (compacted.bytes_after >= compacted.bytes_before) throw new Error('compaction did not reduce bytes');
-  journal.append('probe', { index: 'post-compaction' });
-  step('compact', {
+  const compacted = journal.compactWithSnapshot("probe_snapshot", { resumed: true }, archivePath);
+  if (compacted.bytes_after >= compacted.bytes_before)
+    throw new Error("compaction did not reduce bytes");
+  journal.append("probe", { index: "post-compaction" });
+  step("compact", {
     ok: true,
     records_archived: compacted.record_count,
     bytes_before: compacted.bytes_before,
@@ -74,12 +83,13 @@ try {
   } catch {
     detected = true;
   }
-  if (!detected) throw new Error('corrupted journal was accepted');
-  step('corruption_detected', { ok: true, corrupted_offset: offset });
+  if (!detected) throw new Error("corrupted journal was accepted");
+  step("corruption_detected", { ok: true, corrupted_offset: offset });
 
   const restored = AppendOnlyJournal.restore({ filePath, archivePath, maxBytes: 65536 });
-  if (!restored.restored || restored.unchanged) throw new Error('restore did not replace the damaged journal');
-  step('restore', {
+  if (!restored.restored || restored.unchanged)
+    throw new Error("restore did not replace the damaged journal");
+  step("restore", {
     ok: true,
     records: restored.record_count,
     head_hash: restored.head_hash,
@@ -87,10 +97,10 @@ try {
   });
 
   const again = AppendOnlyJournal.restore({ filePath, archivePath, maxBytes: 65536 });
-  if (again.restored || !again.unchanged) throw new Error('second restore was not a no-op');
-  step('restore_idempotent', { ok: true, unchanged: again.unchanged });
+  if (again.restored || !again.unchanged) throw new Error("second restore was not a no-op");
+  step("restore_idempotent", { ok: true, unchanged: again.unchanged });
 
-  const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
+  const archive = JSON.parse(readFileSync(archivePath, "utf8"));
   archive.records[0].payload = { forged: true };
   writeFileSync(tamperedPath, JSON.stringify(archive), { mode: 0o600 });
   let tamperRejected = false;
@@ -99,14 +109,16 @@ try {
   } catch {
     tamperRejected = true;
   }
-  if (!tamperRejected) throw new Error('tampered archive was accepted');
-  step('tampered_archive_rejected', { ok: true });
+  if (!tamperRejected) throw new Error("tampered archive was accepted");
+  step("tampered_archive_rejected", { ok: true });
 
   const final = new AppendOnlyJournal({ filePath, maxBytes: 65536 });
   const kinds = final.read().map((record) => record.kind);
   final.close();
-  step('known_good_state', { ok: kinds.includes('probe'), kinds: [...new Set(kinds)] });
-  console.log(JSON.stringify({ drill: 'journal-recovery', ok: true, steps: results.length, directory }));
+  step("known_good_state", { ok: kinds.includes("probe"), kinds: [...new Set(kinds)] });
+  console.log(
+    JSON.stringify({ drill: "journal-recovery", ok: true, steps: results.length, directory }),
+  );
 } catch (error) {
-  fail('journal_drill', error);
+  fail("journal_drill", error);
 }

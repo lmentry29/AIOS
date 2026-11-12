@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -17,11 +17,11 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
-} from 'node:fs';
-import { delimiter, dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fsyncDirectory } from '../persistence/fsync-directory.js';
-import { FileIntegrityError, readBoundedRegularFile } from '../security/file-integrity.js';
+} from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fsyncDirectory } from "../persistence/fsync-directory.js";
+import { FileIntegrityError, readBoundedRegularFile } from "../security/file-integrity.js";
 
 /**
  * Provenance primitives for the gVisor runtime and its OCI rootfs.
@@ -34,15 +34,15 @@ import { FileIntegrityError, readBoundedRegularFile } from '../security/file-int
 export class ProvenanceError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ProvenanceError';
+    this.name = "ProvenanceError";
   }
 }
 
 export interface GvisorRuntimePin {
   schema_version: 1;
-  provider: 'gvisor';
+  provider: "gvisor";
   release: string;
-  architecture: 'x86_64' | 'arm64';
+  architecture: "x86_64" | "arm64";
   artifact: {
     url: string;
     sha512: string;
@@ -75,21 +75,21 @@ export interface RootfsDigest {
   content_sha256: string;
   metadata_sha256: string;
   timestamps_sha256: string;
-  xattrs: 'captured' | 'unavailable';
+  xattrs: "captured" | "unavailable";
 }
 
 /** A digest, or a legacy two-field digest that predates manifest v2. */
-export type RootfsDigestLike = Pick<RootfsDigest, 'sha256' | 'entries'> & Partial<Pick<
-  RootfsDigest,
-  'content_sha256' | 'metadata_sha256' | 'timestamps_sha256' | 'xattrs'
->>;
+export type RootfsDigestLike = Pick<RootfsDigest, "sha256" | "entries"> &
+  Partial<
+    Pick<RootfsDigest, "content_sha256" | "metadata_sha256" | "timestamps_sha256" | "xattrs">
+  >;
 
 export interface RootfsDigestOptions {
   /**
    * `auto` records whether extended attributes were readable; `required` fails closed when
    * no reader is installed; `skip` deliberately records the omission.
    */
-  xattrs?: 'auto' | 'required' | 'skip';
+  xattrs?: "auto" | "required" | "skip";
 }
 
 export interface MaterializedExecutable {
@@ -110,7 +110,7 @@ export interface OwnedDirectory {
 
 export interface GvisorRootfsBuildPin {
   schema_version: 1;
-  provider: 'gvisor';
+  provider: "gvisor";
   base_image: {
     reference: string;
     digest: string;
@@ -120,9 +120,9 @@ export interface GvisorRootfsBuildPin {
     base_url: string;
     timestamp: string;
     suites: {
-      bookworm: 'debian';
-      'bookworm-updates': 'debian';
-      'bookworm-security': 'debian-security';
+      bookworm: "debian";
+      "bookworm-updates": "debian";
+      "bookworm-security": "debian-security";
     };
   };
   packages: Record<string, string>;
@@ -145,27 +145,31 @@ const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]*$/;
 const PACKAGE_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+:~_-]*$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function requireString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new ProvenanceError(`The gVisor runtime pin field "${field}" must be a non-empty string.`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ProvenanceError(
+      `The gVisor runtime pin field "${field}" must be a non-empty string.`,
+    );
   }
   return value;
 }
 
 function requireRootfsString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new ProvenanceError(`The gVisor rootfs build pin field "${field}" must be a non-empty string.`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ProvenanceError(
+      `The gVisor rootfs build pin field "${field}" must be a non-empty string.`,
+    );
   }
   return value;
 }
 
 /** Stream a file through a hash without loading it all into memory. */
-export function hashFile(path: string, algorithm: 'sha256' | 'sha512'): string {
+export function hashFile(path: string, algorithm: "sha256" | "sha512"): string {
   const hash = createHash(algorithm);
-  const descriptor = openSync(path, 'r');
+  const descriptor = openSync(path, "r");
   try {
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let bytes = readSync(descriptor, buffer, 0, buffer.length, null);
@@ -176,7 +180,7 @@ export function hashFile(path: string, algorithm: 'sha256' | 'sha512'): string {
   } finally {
     closeSync(descriptor);
   }
-  return hash.digest('hex');
+  return hash.digest("hex");
 }
 
 function readProvenanceFile(path: string, label: string, maxBytes: number): Buffer {
@@ -190,72 +194,76 @@ function readProvenanceFile(path: string, label: string, maxBytes: number): Buff
 
 export function readGvisorRuntimePin(pinPath: string): LoadedGvisorRuntimePin {
   const path = resolve(pinPath);
-  const contents = readProvenanceFile(path, 'gVisor runtime pin file', 8 * 1024 * 1024);
+  const contents = readProvenanceFile(path, "gVisor runtime pin file", 8 * 1024 * 1024);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(contents.toString('utf8')) as unknown;
+    parsed = JSON.parse(contents.toString("utf8")) as unknown;
   } catch (error) {
     throw new ProvenanceError(
-      `The gVisor runtime pin is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
+      `The gVisor runtime pin is not valid JSON: ${error instanceof Error ? error.message : "unknown parse error"}.`,
     );
   }
   if (!isRecord(parsed)) {
-    throw new ProvenanceError('The gVisor runtime pin must be a JSON object.');
+    throw new ProvenanceError("The gVisor runtime pin must be a JSON object.");
   }
   if (parsed.schema_version !== 1) {
-    throw new ProvenanceError('The gVisor runtime pin must declare schema_version 1.');
+    throw new ProvenanceError("The gVisor runtime pin must declare schema_version 1.");
   }
-  if (parsed.provider !== 'gvisor') {
+  if (parsed.provider !== "gvisor") {
     throw new ProvenanceError('The gVisor runtime pin must declare provider "gvisor".');
   }
-  const release = requireString(parsed.release, 'release');
-  const architecture = requireString(parsed.architecture, 'architecture');
-  if (architecture !== 'x86_64' && architecture !== 'arm64') {
-    throw new ProvenanceError('The gVisor runtime pin architecture must be x86_64 or arm64.');
+  const release = requireString(parsed.release, "release");
+  const architecture = requireString(parsed.architecture, "architecture");
+  if (architecture !== "x86_64" && architecture !== "arm64") {
+    throw new ProvenanceError("The gVisor runtime pin architecture must be x86_64 or arm64.");
   }
   if (!isRecord(parsed.artifact)) {
-    throw new ProvenanceError('The gVisor runtime pin must contain an artifact object.');
+    throw new ProvenanceError("The gVisor runtime pin must contain an artifact object.");
   }
   if (!isRecord(parsed.runsc)) {
-    throw new ProvenanceError('The gVisor runtime pin must contain a runsc object.');
+    throw new ProvenanceError("The gVisor runtime pin must contain a runsc object.");
   }
-  const url = requireString(parsed.artifact.url, 'artifact.url');
+  const url = requireString(parsed.artifact.url, "artifact.url");
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(url);
   } catch {
-    throw new ProvenanceError('The gVisor runtime pin artifact.url must be an absolute URL.');
+    throw new ProvenanceError("The gVisor runtime pin artifact.url must be an absolute URL.");
   }
-  if (parsedUrl.protocol !== 'https:') {
-    throw new ProvenanceError('The gVisor runtime pin artifact.url must use HTTPS.');
+  if (parsedUrl.protocol !== "https:") {
+    throw new ProvenanceError("The gVisor runtime pin artifact.url must use HTTPS.");
   }
-  const artifactSha512 = requireString(parsed.artifact.sha512, 'artifact.sha512').toLowerCase();
+  const artifactSha512 = requireString(parsed.artifact.sha512, "artifact.sha512").toLowerCase();
   if (!SHA512_HEX.test(artifactSha512)) {
-    throw new ProvenanceError('The gVisor runtime pin artifact.sha512 must be 128 lowercase hexadecimal characters.');
+    throw new ProvenanceError(
+      "The gVisor runtime pin artifact.sha512 must be 128 lowercase hexadecimal characters.",
+    );
   }
-  const version = requireString(parsed.runsc.version, 'runsc.version');
-  const runscSha256 = requireString(parsed.runsc.sha256, 'runsc.sha256').toLowerCase();
+  const version = requireString(parsed.runsc.version, "runsc.version");
+  const runscSha256 = requireString(parsed.runsc.sha256, "runsc.sha256").toLowerCase();
   if (!SHA256_HEX.test(runscSha256)) {
-    throw new ProvenanceError('The gVisor runtime pin runsc.sha256 must be 64 lowercase hexadecimal characters.');
+    throw new ProvenanceError(
+      "The gVisor runtime pin runsc.sha256 must be 64 lowercase hexadecimal characters.",
+    );
   }
 
   return {
     pin: {
       schema_version: 1,
-      provider: 'gvisor',
+      provider: "gvisor",
       release,
       architecture,
       artifact: { url, sha512: artifactSha512 },
       runsc: { version, sha256: runscSha256 },
     },
-    pin_sha256: createHash('sha256').update(contents).digest('hex'),
+    pin_sha256: createHash("sha256").update(contents).digest("hex"),
     path,
   };
 }
 
 /** Verify a downloaded release archive against the repository pin. */
 export function verifyPinnedArtifact(archivePath: string, expectedSha512: string): string {
-  const actual = hashFile(archivePath, 'sha512');
+  const actual = hashFile(archivePath, "sha512");
   if (actual !== expectedSha512.toLowerCase()) {
     throw new ProvenanceError(
       `The gVisor runtime archive does not match the pinned SHA-512 (expected ${expectedSha512.toLowerCase()}, observed ${actual}).`,
@@ -267,66 +275,84 @@ export function verifyPinnedArtifact(archivePath: string, expectedSha512: string
 /** Read and validate the immutable inputs used to build the gVisor drill rootfs. */
 export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBuildPin {
   const path = resolve(pinPath);
-  const contents = readProvenanceFile(path, 'gVisor rootfs build pin file', 8 * 1024 * 1024);
+  const contents = readProvenanceFile(path, "gVisor rootfs build pin file", 8 * 1024 * 1024);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(contents.toString('utf8')) as unknown;
+    parsed = JSON.parse(contents.toString("utf8")) as unknown;
   } catch (error) {
     throw new ProvenanceError(
-      `The gVisor rootfs build pin is not valid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}.`,
+      `The gVisor rootfs build pin is not valid JSON: ${error instanceof Error ? error.message : "unknown parse error"}.`,
     );
   }
   if (!isRecord(parsed)) {
-    throw new ProvenanceError('The gVisor rootfs build pin must be a JSON object.');
+    throw new ProvenanceError("The gVisor rootfs build pin must be a JSON object.");
   }
   if (parsed.schema_version !== 1) {
-    throw new ProvenanceError('The gVisor rootfs build pin must declare schema_version 1.');
+    throw new ProvenanceError("The gVisor rootfs build pin must declare schema_version 1.");
   }
-  if (parsed.provider !== 'gvisor') {
+  if (parsed.provider !== "gvisor") {
     throw new ProvenanceError('The gVisor rootfs build pin must declare provider "gvisor".');
   }
 
   if (!isRecord(parsed.base_image)) {
-    throw new ProvenanceError('The gVisor rootfs build pin must contain a base_image object.');
+    throw new ProvenanceError("The gVisor rootfs build pin must contain a base_image object.");
   }
-  const reference = requireRootfsString(parsed.base_image.reference, 'base_image.reference');
+  const reference = requireRootfsString(parsed.base_image.reference, "base_image.reference");
   if (!/^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+)?$/.test(reference)) {
-    throw new ProvenanceError('The gVisor rootfs build pin base_image.reference must be a repository image reference.');
+    throw new ProvenanceError(
+      "The gVisor rootfs build pin base_image.reference must be a repository image reference.",
+    );
   }
-  const digest = requireRootfsString(parsed.base_image.digest, 'base_image.digest').toLowerCase();
+  const digest = requireRootfsString(parsed.base_image.digest, "base_image.digest").toLowerCase();
   if (!SHA256_DIGEST_HEX.test(digest)) {
-    throw new ProvenanceError('The gVisor rootfs build pin base_image.digest must be a sha256:<64 hex> digest.');
+    throw new ProvenanceError(
+      "The gVisor rootfs build pin base_image.digest must be a sha256:<64 hex> digest.",
+    );
   }
-  const platformDigest = requireRootfsString(parsed.base_image.platform_digest_amd64, 'base_image.platform_digest_amd64').toLowerCase();
+  const platformDigest = requireRootfsString(
+    parsed.base_image.platform_digest_amd64,
+    "base_image.platform_digest_amd64",
+  ).toLowerCase();
   if (!SHA256_DIGEST_HEX.test(platformDigest)) {
-    throw new ProvenanceError('The gVisor rootfs build pin base_image.platform_digest_amd64 must be a sha256:<64 hex> digest.');
+    throw new ProvenanceError(
+      "The gVisor rootfs build pin base_image.platform_digest_amd64 must be a sha256:<64 hex> digest.",
+    );
   }
 
   if (!isRecord(parsed.apt_snapshot)) {
-    throw new ProvenanceError('The gVisor rootfs build pin must contain an apt_snapshot object.');
+    throw new ProvenanceError("The gVisor rootfs build pin must contain an apt_snapshot object.");
   }
-  const baseUrl = requireRootfsString(parsed.apt_snapshot.base_url, 'apt_snapshot.base_url');
-  if (baseUrl !== 'http://snapshot.debian.org/archive' && baseUrl !== 'https://snapshot.debian.org/archive') {
-    throw new ProvenanceError('The gVisor rootfs build pin apt_snapshot.base_url must be the snapshot.debian.org archive.');
+  const baseUrl = requireRootfsString(parsed.apt_snapshot.base_url, "apt_snapshot.base_url");
+  if (
+    baseUrl !== "http://snapshot.debian.org/archive" &&
+    baseUrl !== "https://snapshot.debian.org/archive"
+  ) {
+    throw new ProvenanceError(
+      "The gVisor rootfs build pin apt_snapshot.base_url must be the snapshot.debian.org archive.",
+    );
   }
-  const timestamp = requireRootfsString(parsed.apt_snapshot.timestamp, 'apt_snapshot.timestamp');
+  const timestamp = requireRootfsString(parsed.apt_snapshot.timestamp, "apt_snapshot.timestamp");
   if (!SNAPSHOT_TIMESTAMP.test(timestamp)) {
-    throw new ProvenanceError('The gVisor rootfs build pin apt_snapshot.timestamp must use YYYYMMDDTHHMMSSZ.');
+    throw new ProvenanceError(
+      "The gVisor rootfs build pin apt_snapshot.timestamp must use YYYYMMDDTHHMMSSZ.",
+    );
   }
   if (!isRecord(parsed.apt_snapshot.suites)) {
-    throw new ProvenanceError('The gVisor rootfs build pin must contain apt_snapshot.suites.');
+    throw new ProvenanceError("The gVisor rootfs build pin must contain apt_snapshot.suites.");
   }
   const suites = parsed.apt_snapshot.suites;
-  if (suites.bookworm !== 'debian'
-    || suites['bookworm-updates'] !== 'debian'
-    || suites['bookworm-security'] !== 'debian-security') {
+  if (
+    suites.bookworm !== "debian" ||
+    suites["bookworm-updates"] !== "debian" ||
+    suites["bookworm-security"] !== "debian-security"
+  ) {
     throw new ProvenanceError(
-      'The gVisor rootfs build pin apt_snapshot.suites must map bookworm and bookworm-updates to debian and bookworm-security to debian-security.',
+      "The gVisor rootfs build pin apt_snapshot.suites must map bookworm and bookworm-updates to debian and bookworm-security to debian-security.",
     );
   }
 
   if (!isRecord(parsed.packages)) {
-    throw new ProvenanceError('The gVisor rootfs build pin must contain a packages object.');
+    throw new ProvenanceError("The gVisor rootfs build pin must contain a packages object.");
   }
   const packages: Record<string, string> = {};
   for (const [name, value] of Object.entries(parsed.packages)) {
@@ -335,35 +361,39 @@ export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBui
     }
     const version = requireRootfsString(value, `packages.${name}`);
     if (!PACKAGE_VERSION.test(version)) {
-      throw new ProvenanceError(`The gVisor rootfs build pin package version is invalid: ${name}=${version}.`);
+      throw new ProvenanceError(
+        `The gVisor rootfs build pin package version is invalid: ${name}=${version}.`,
+      );
     }
     packages[name] = version;
   }
-  for (const required of ['coreutils', 'perl', 'util-linux']) {
+  for (const required of ["coreutils", "perl", "util-linux"]) {
     if (packages[required] === undefined) {
       throw new ProvenanceError(`The gVisor rootfs build pin must pin ${required}.`);
     }
   }
 
-  const dockerfile = requireRootfsString(parsed.dockerfile, 'dockerfile');
-  if (Array.isArray(parsed.excluded_paths) === false
-    || parsed.excluded_paths.some((entry) => typeof entry !== 'string' || !entry.startsWith('/'))) {
-    throw new ProvenanceError('The gVisor rootfs build pin excluded_paths must be absolute paths.');
+  const dockerfile = requireRootfsString(parsed.dockerfile, "dockerfile");
+  if (
+    Array.isArray(parsed.excluded_paths) === false ||
+    parsed.excluded_paths.some((entry) => typeof entry !== "string" || !entry.startsWith("/"))
+  ) {
+    throw new ProvenanceError("The gVisor rootfs build pin excluded_paths must be absolute paths.");
   }
-  const construction = requireRootfsString(parsed.construction, 'construction');
+  const construction = requireRootfsString(parsed.construction, "construction");
 
   return {
     pin: {
       schema_version: 1,
-      provider: 'gvisor',
+      provider: "gvisor",
       base_image: { reference, digest, platform_digest_amd64: platformDigest },
       apt_snapshot: {
         base_url: baseUrl,
         timestamp,
         suites: {
-          bookworm: 'debian',
-          'bookworm-updates': 'debian',
-          'bookworm-security': 'debian-security',
+          bookworm: "debian",
+          "bookworm-updates": "debian",
+          "bookworm-security": "debian-security",
         },
       },
       packages,
@@ -371,15 +401,20 @@ export function readGvisorRootfsBuildPin(pinPath: string): LoadedGvisorRootfsBui
       excluded_paths: parsed.excluded_paths as string[],
       construction,
     },
-    pin_sha256: createHash('sha256').update(contents).digest('hex'),
+    pin_sha256: createHash("sha256").update(contents).digest("hex"),
     path,
   };
 }
 
 /** Require the Dockerfile to use exactly the pinned base, snapshot and package versions. */
-export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerfilePath: string): void {
+export function verifyGvisorRootfsBuildInputs(
+  pin: GvisorRootfsBuildPin,
+  dockerfilePath: string,
+): void {
   const path = resolve(dockerfilePath);
-  const contents = readProvenanceFile(path, 'gVisor rootfs Dockerfile', 8 * 1024 * 1024).toString('utf8');
+  const contents = readProvenanceFile(path, "gVisor rootfs Dockerfile", 8 * 1024 * 1024).toString(
+    "utf8",
+  );
 
   const froms = [...contents.matchAll(/^FROM\s+(\S+)\s*$/gm)].map((match) => match[1]);
   // The platform digest is the manifest the amd64 build actually resolves to. Pinning the
@@ -388,21 +423,28 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
   const expectedBase = `${pin.base_image.reference}@${pin.base_image.platform_digest_amd64}`;
   if (froms.length !== 1 || froms[0] !== expectedBase) {
     throw new ProvenanceError(
-      `The gVisor rootfs Dockerfile must use the pinned base image ${expectedBase}, observed ${froms.join(', ') || 'none'}.`,
+      `The gVisor rootfs Dockerfile must use the pinned base image ${expectedBase}, observed ${froms.join(", ") || "none"}.`,
     );
   }
 
-  const flattened = contents.replace(/\\\r?\n/g, ' ');
+  const flattened = contents.replace(/\\\r?\n/g, " ");
   const install = /apt-get\s+install\b([^;&]+)/.exec(flattened);
   const installArgs = install?.[1];
   if (installArgs === undefined) {
-    throw new ProvenanceError('The gVisor rootfs Dockerfile must contain an apt-get install command.');
+    throw new ProvenanceError(
+      "The gVisor rootfs Dockerfile must contain an apt-get install command.",
+    );
   }
   const observedPackages: Record<string, string> = {};
-  for (const token of installArgs.trim().split(/\s+/).filter((entry) => entry.length > 0 && !entry.startsWith('-'))) {
-    const separator = token.indexOf('=');
+  for (const token of installArgs
+    .trim()
+    .split(/\s+/)
+    .filter((entry) => entry.length > 0 && !entry.startsWith("-"))) {
+    const separator = token.indexOf("=");
     if (separator <= 0 || separator === token.length - 1) {
-      throw new ProvenanceError(`The gVisor rootfs Dockerfile must pin ${token} to an exact version.`);
+      throw new ProvenanceError(
+        `The gVisor rootfs Dockerfile must pin ${token} to an exact version.`,
+      );
     }
     observedPackages[token.slice(0, separator)] = token.slice(separator + 1);
   }
@@ -410,7 +452,7 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
   const observedNames = Object.keys(observedPackages).sort();
   if (JSON.stringify(expectedNames) !== JSON.stringify(observedNames)) {
     throw new ProvenanceError(
-      `The gVisor rootfs Dockerfile package set does not match the pin (expected ${expectedNames.join(', ')}, observed ${observedNames.join(', ')}).`,
+      `The gVisor rootfs Dockerfile package set does not match the pin (expected ${expectedNames.join(", ")}, observed ${observedNames.join(", ")}).`,
     );
   }
   for (const name of expectedNames) {
@@ -422,25 +464,33 @@ export function verifyGvisorRootfsBuildInputs(pin: GvisorRootfsBuildPin, dockerf
   }
 
   const expectedSources = Object.entries(pin.apt_snapshot.suites).map(
-    ([suite, archive]) => `${pin.apt_snapshot.base_url}/${archive}/${pin.apt_snapshot.timestamp} ${suite}`,
+    ([suite, archive]) =>
+      `${pin.apt_snapshot.base_url}/${archive}/${pin.apt_snapshot.timestamp} ${suite}`,
   );
   for (const source of expectedSources) {
     if (!contents.includes(source)) {
-      throw new ProvenanceError(`The gVisor rootfs Dockerfile does not use the pinned snapshot source: ${source}.`);
+      throw new ProvenanceError(
+        `The gVisor rootfs Dockerfile does not use the pinned snapshot source: ${source}.`,
+      );
     }
   }
-  const observedTimestamps = [...contents.matchAll(/snapshot\.debian\.org\/archive\/(?:debian|debian-security)\/([^/\s]+)/g)]
-    .map((match) => match[1]);
-  if (observedTimestamps.length !== expectedSources.length
-    || observedTimestamps.some((entry) => entry !== pin.apt_snapshot.timestamp)) {
+  const observedTimestamps = [
+    ...contents.matchAll(/snapshot\.debian\.org\/archive\/(?:debian|debian-security)\/([^/\s]+)/g),
+  ].map((match) => match[1]);
+  if (
+    observedTimestamps.length !== expectedSources.length ||
+    observedTimestamps.some((entry) => entry !== pin.apt_snapshot.timestamp)
+  ) {
     throw new ProvenanceError(
-      `The gVisor rootfs Dockerfile snapshot timestamps do not match the pin (expected ${pin.apt_snapshot.timestamp}, observed ${observedTimestamps.join(', ') || 'none'}).`,
+      `The gVisor rootfs Dockerfile snapshot timestamps do not match the pin (expected ${pin.apt_snapshot.timestamp}, observed ${observedTimestamps.join(", ") || "none"}).`,
     );
   }
 
   for (const excluded of pin.excluded_paths) {
     if (!contents.includes(excluded)) {
-      throw new ProvenanceError(`The gVisor rootfs Dockerfile does not remove excluded path ${excluded}.`);
+      throw new ProvenanceError(
+        `The gVisor rootfs Dockerfile does not remove excluded path ${excluded}.`,
+      );
     }
   }
 }
@@ -458,7 +508,9 @@ export function createOwnedStagingDirectory(parent: string, prefix: string): Own
     throw new ProvenanceError(`The staging parent does not exist: ${root}.`);
   }
   if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
-    throw new ProvenanceError(`The staging parent must be a real directory, not a symlink: ${root}.`);
+    throw new ProvenanceError(
+      `The staging parent must be a real directory, not a symlink: ${root}.`,
+    );
   }
   const path = mkdtempSync(join(root, prefix));
   const stats = lstatSync(path);
@@ -489,7 +541,7 @@ export function assertDestinationAbsent(destination: string): void {
     throw new ProvenanceError(`Refusing to overwrite an existing gVisor output: ${target}.`);
   } catch (error) {
     if (error instanceof ProvenanceError) throw error;
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
@@ -501,7 +553,7 @@ export function assertDestinationAbsent(destination: string): void {
 export function promoteOwnedDirectory(directory: OwnedDirectory, destination: string): void {
   const target = resolve(destination);
   if (target === directory.path) {
-    throw new ProvenanceError('The staging directory cannot be its own promotion destination.');
+    throw new ProvenanceError("The staging directory cannot be its own promotion destination.");
   }
   const parent = dirname(target);
   let parentStats: ReturnType<typeof lstatSync>;
@@ -511,46 +563,68 @@ export function promoteOwnedDirectory(directory: OwnedDirectory, destination: st
     throw new ProvenanceError(`The promotion parent does not exist: ${parent}.`);
   }
   if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
-    throw new ProvenanceError(`The promotion parent must be a real directory, not a symlink: ${parent}.`);
+    throw new ProvenanceError(
+      `The promotion parent must be a real directory, not a symlink: ${parent}.`,
+    );
   }
   try {
     const destinationStats = lstatSync(target);
-    if (destinationStats.isSymbolicLink() || destinationStats.isDirectory() || destinationStats.isFile()) {
+    if (
+      destinationStats.isSymbolicLink() ||
+      destinationStats.isDirectory() ||
+      destinationStats.isFile()
+    ) {
       throw new ProvenanceError(`Refusing to replace an existing gVisor output: ${target}.`);
     }
   } catch (error) {
     if (error instanceof ProvenanceError) throw error;
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const stats = lstatSync(directory.path);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new ProvenanceError(`The staged output is not a real directory: ${directory.path}.`);
   }
   if (stats.dev !== directory.device || stats.ino !== directory.inode) {
-    throw new ProvenanceError(`The staged output was replaced during preparation: ${directory.path}.`);
+    throw new ProvenanceError(
+      `The staged output was replaced during preparation: ${directory.path}.`,
+    );
   }
   renameSync(directory.path, target);
   fsyncDirectory(parent);
 }
 
-function digestMismatches(first: RootfsDigestLike, second: RootfsDigestLike, timestamps: boolean): string[] {
+function digestMismatches(
+  first: RootfsDigestLike,
+  second: RootfsDigestLike,
+  timestamps: boolean,
+): string[] {
   const mismatched: string[] = [];
   if (first.sha256 !== second.sha256) mismatched.push(`sha256 ${first.sha256}/${second.sha256}`);
-  if (first.entries !== second.entries) mismatched.push(`entries ${first.entries}/${second.entries}`);
-  if (first.content_sha256 !== undefined && second.content_sha256 !== undefined
-    && first.content_sha256 !== second.content_sha256) {
+  if (first.entries !== second.entries)
+    mismatched.push(`entries ${first.entries}/${second.entries}`);
+  if (
+    first.content_sha256 !== undefined &&
+    second.content_sha256 !== undefined &&
+    first.content_sha256 !== second.content_sha256
+  ) {
     mismatched.push(`content_sha256 ${first.content_sha256}/${second.content_sha256}`);
   }
-  if (first.metadata_sha256 !== undefined && second.metadata_sha256 !== undefined
-    && first.metadata_sha256 !== second.metadata_sha256) {
+  if (
+    first.metadata_sha256 !== undefined &&
+    second.metadata_sha256 !== undefined &&
+    first.metadata_sha256 !== second.metadata_sha256
+  ) {
     mismatched.push(`metadata_sha256 ${first.metadata_sha256}/${second.metadata_sha256}`);
   }
   if (first.xattrs !== undefined && second.xattrs !== undefined && first.xattrs !== second.xattrs) {
     mismatched.push(`xattrs ${first.xattrs}/${second.xattrs}`);
   }
-  if (timestamps
-    && first.timestamps_sha256 !== undefined && second.timestamps_sha256 !== undefined
-    && first.timestamps_sha256 !== second.timestamps_sha256) {
+  if (
+    timestamps &&
+    first.timestamps_sha256 !== undefined &&
+    second.timestamps_sha256 !== undefined &&
+    first.timestamps_sha256 !== second.timestamps_sha256
+  ) {
     mismatched.push(`timestamps_sha256 ${first.timestamps_sha256}/${second.timestamps_sha256}`);
   }
   return mismatched;
@@ -566,18 +640,20 @@ function digestMismatches(first: RootfsDigestLike, second: RootfsDigestLike, tim
 export function assertReproducibleRootfs(
   first: RootfsDigestLike,
   second: RootfsDigestLike,
-  detail = '',
+  detail = "",
   options: { timestamps?: boolean } = {},
 ): void {
   const mismatched = digestMismatches(first, second, options.timestamps === true);
   if (mismatched.length > 0) {
-    throw new ProvenanceError(`The gVisor rootfs export is not reproducible (${mismatched.join('; ')}).${detail}`);
+    throw new ProvenanceError(
+      `The gVisor rootfs export is not reproducible (${mismatched.join("; ")}).${detail}`,
+    );
   }
 }
 
 /** Resolve the executable the provider will actually launch, without trusting PATH for the hash. */
 export function resolveExecutable(name: string): string {
-  const searchPath = process.env.PATH ?? '';
+  const searchPath = process.env.PATH ?? "";
   for (const directory of searchPath.split(delimiter)) {
     if (directory.length === 0) continue;
     const candidate = resolve(directory, name);
@@ -596,13 +672,19 @@ export function resolveExecutable(name: string): string {
 function assertPrivateDirectory(directory: OwnedDirectory): void {
   const stats = lstatSync(directory.path);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new ProvenanceError(`The private runtime directory is not a real directory: ${directory.path}.`);
+    throw new ProvenanceError(
+      `The private runtime directory is not a real directory: ${directory.path}.`,
+    );
   }
   if (stats.dev !== directory.device || stats.ino !== directory.inode) {
-    throw new ProvenanceError(`The private runtime directory was replaced during preparation: ${directory.path}.`);
+    throw new ProvenanceError(
+      `The private runtime directory was replaced during preparation: ${directory.path}.`,
+    );
   }
   if ((stats.mode & 0o022) !== 0) {
-    throw new ProvenanceError('The private runtime directory must not be group- or world-writable.');
+    throw new ProvenanceError(
+      "The private runtime directory must not be group- or world-writable.",
+    );
   }
 }
 
@@ -619,7 +701,9 @@ function assertRuntimeTree(root: string): void {
       continue;
     }
     if (!stats.isFile()) {
-      throw new ProvenanceError(`The materialized gVisor runtime contains a special file: ${child}.`);
+      throw new ProvenanceError(
+        `The materialized gVisor runtime contains a special file: ${child}.`,
+      );
     }
   }
 }
@@ -644,29 +728,37 @@ export function materializeVerifiedRuntime(
   if (sourceStats.isSymbolicLink() || !sourceStats.isDirectory()) {
     throw new ProvenanceError(`The verified gVisor runtime must be a real directory: ${source}.`);
   }
-  const runsc = join(source, 'runsc');
+  const runsc = join(source, "runsc");
   const runscStats = lstatSync(runsc);
   if (runscStats.isSymbolicLink() || !runscStats.isFile()) {
-    throw new ProvenanceError(`The verified gVisor runtime runsc must be a regular file, not a symlink: ${runsc}.`);
+    throw new ProvenanceError(
+      `The verified gVisor runtime runsc must be a regular file, not a symlink: ${runsc}.`,
+    );
   }
-  const target = join(directory.path, 'runtime');
+  const target = join(directory.path, "runtime");
   try {
     lstatSync(target);
     throw new ProvenanceError(`The private runtime path already exists: ${target}.`);
   } catch (error) {
     if (error instanceof ProvenanceError) throw error;
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   mkdirSync(target, { mode: 0o700 });
   try {
-    copyFileSync(runsc, join(target, 'runsc'), fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE);
-    const sidecars = join(source, 'gvisor-bin');
+    copyFileSync(
+      runsc,
+      join(target, "runsc"),
+      fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE,
+    );
+    const sidecars = join(source, "gvisor-bin");
     if (existsSync(sidecars)) {
       const sidecarStats = lstatSync(sidecars);
       if (sidecarStats.isSymbolicLink() || !sidecarStats.isDirectory()) {
-        throw new ProvenanceError(`The gVisor runtime has an unexpected gvisor-bin entry: ${sidecars}.`);
+        throw new ProvenanceError(
+          `The gVisor runtime has an unexpected gvisor-bin entry: ${sidecars}.`,
+        );
       }
-      cpSync(sidecars, join(target, 'gvisor-bin'), {
+      cpSync(sidecars, join(target, "gvisor-bin"), {
         recursive: true,
         dereference: false,
         errorOnExist: true,
@@ -675,13 +767,15 @@ export function materializeVerifiedRuntime(
       });
     }
     assertRuntimeTree(target);
-    const executablePath = join(target, 'runsc');
+    const executablePath = join(target, "runsc");
     const stats = lstatSync(executablePath);
     if (stats.isSymbolicLink() || !stats.isFile()) {
-      throw new ProvenanceError(`The verified gVisor runtime did not contain a regular runsc file: ${executablePath}.`);
+      throw new ProvenanceError(
+        `The verified gVisor runtime did not contain a regular runsc file: ${executablePath}.`,
+      );
     }
     chmodSync(executablePath, 0o500);
-    const sha256 = hashFile(executablePath, 'sha256');
+    const sha256 = hashFile(executablePath, "sha256");
     if (sha256 !== expectedSha256.toLowerCase()) {
       throw new ProvenanceError(
         `The materialized gVisor runsc does not match the verified SHA-256 (expected ${expectedSha256.toLowerCase()}, observed ${sha256}).`,
@@ -692,7 +786,7 @@ export function materializeVerifiedRuntime(
       path: target,
       executable: {
         path: executablePath,
-        source: join(source, 'runsc'),
+        source: join(source, "runsc"),
         sha256,
         device: finalStats.dev,
         inode: finalStats.ino,
@@ -761,13 +855,13 @@ export function materializeVerifiedRootfs(
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new ProvenanceError(`The verified gVisor rootfs must be a real directory: ${root}.`);
   }
-  const target = join(directory.path, 'rootfs');
+  const target = join(directory.path, "rootfs");
   try {
     lstatSync(target);
     throw new ProvenanceError(`The private rootfs path already exists: ${target}.`);
   } catch (error) {
     if (error instanceof ProvenanceError) throw error;
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   copyRootfsTree(root, target);
   try {
@@ -775,7 +869,7 @@ export function materializeVerifiedRootfs(
     const mismatched = digestMismatches(expected, digest, false);
     if (mismatched.length > 0) {
       throw new ProvenanceError(
-        `The materialized gVisor rootfs does not match the verified rootfs (${mismatched.join('; ')}).`,
+        `The materialized gVisor rootfs does not match the verified rootfs (${mismatched.join("; ")}).`,
       );
     }
     return { path: target, digest };
@@ -794,35 +888,51 @@ export function materializeVerifiedRootfs(
 export function assertMaterializedExecutableUnchanged(executable: MaterializedExecutable): void {
   const stats = lstatSync(executable.path);
   if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new ProvenanceError(`The materialized gVisor runsc is not a regular file: ${executable.path}.`);
+    throw new ProvenanceError(
+      `The materialized gVisor runsc is not a regular file: ${executable.path}.`,
+    );
   }
-  if (stats.dev !== executable.device || stats.ino !== executable.inode || stats.size !== executable.size) {
-    throw new ProvenanceError(`The materialized gVisor runsc was replaced after verification: ${executable.path}.`);
+  if (
+    stats.dev !== executable.device ||
+    stats.ino !== executable.inode ||
+    stats.size !== executable.size
+  ) {
+    throw new ProvenanceError(
+      `The materialized gVisor runsc was replaced after verification: ${executable.path}.`,
+    );
   }
   if ((stats.mode & 0o022) !== 0) {
-    throw new ProvenanceError(`The materialized gVisor runsc became writable after verification: ${executable.path}.`);
+    throw new ProvenanceError(
+      `The materialized gVisor runsc became writable after verification: ${executable.path}.`,
+    );
   }
-  if (hashFile(executable.path, 'sha256') !== executable.sha256) {
-    throw new ProvenanceError(`The materialized gVisor runsc changed after verification: ${executable.path}.`);
+  if (hashFile(executable.path, "sha256") !== executable.sha256) {
+    throw new ProvenanceError(
+      `The materialized gVisor runsc changed after verification: ${executable.path}.`,
+    );
   }
 }
 
 /** Select the single linux/amd64 manifest digest from a pinned OCI image index. */
-export function selectPlatformManifestDigest(index: unknown, os: string, architecture: string): string {
+export function selectPlatformManifestDigest(
+  index: unknown,
+  os: string,
+  architecture: string,
+): string {
   if (!isRecord(index)) {
-    throw new ProvenanceError('The OCI image index must be a JSON object.');
+    throw new ProvenanceError("The OCI image index must be a JSON object.");
   }
   const manifests = index.manifests;
   if (!Array.isArray(manifests) || manifests.length === 0) {
-    throw new ProvenanceError('The OCI image index must contain a non-empty manifests array.');
+    throw new ProvenanceError("The OCI image index must contain a non-empty manifests array.");
   }
   const matches: string[] = [];
   for (const entry of manifests) {
     if (!isRecord(entry) || !isRecord(entry.platform)) continue;
     if (entry.platform.os !== os || entry.platform.architecture !== architecture) continue;
     const digest = entry.digest;
-    if (typeof digest !== 'string' || !SHA256_DIGEST_HEX.test(digest)) {
-      throw new ProvenanceError('The OCI image index platform entry has no valid sha256 digest.');
+    if (typeof digest !== "string" || !SHA256_DIGEST_HEX.test(digest)) {
+      throw new ProvenanceError("The OCI image index platform entry has no valid sha256 digest.");
     }
     matches.push(digest);
   }
@@ -835,7 +945,7 @@ export function selectPlatformManifestDigest(index: unknown, os: string, archite
   return only;
 }
 
-const XATTR_READER = 'getfattr';
+const XATTR_READER = "getfattr";
 const XATTR_NAME = /^[A-Za-z0-9_.:@-]+$/;
 
 interface XattrTable {
@@ -854,13 +964,13 @@ function readXattrTable(root: string): XattrTable {
   // `-h` is required: without it getfattr dereferences symlinks and would read host
   // attributes through absolute symlink targets inside the rootfs. `-m` is not used
   // because GNU getfattr treats it as a regular expression, not a glob.
-  const result = spawnSync(XATTR_READER, ['-R', '-h', '-d', '.'], {
+  const result = spawnSync(XATTR_READER, ["-R", "-h", "-d", "."], {
     cwd: root,
-    encoding: 'utf8',
+    encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error !== undefined) {
-    if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if ((result.error as NodeJS.ErrnoException).code === "ENOENT") {
       return { available: false, entries: new Map() };
     }
     throw new ProvenanceError(`The extended-attribute reader failed: ${result.error.message}`);
@@ -869,30 +979,34 @@ function readXattrTable(root: string): XattrTable {
     // GNU getfattr reports `Operation not supported` for entries that cannot carry the
     // requested attributes (symlinks on ext4/overlayfs). That is an empty attribute set,
     // not an incomplete measurement. Any other reader error fails closed.
-    const errors = (result.stderr || '')
-      .split('\n')
+    const errors = (result.stderr || "")
+      .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    const onlyUnsupported = errors.length > 0
-      && errors.every((line) => /: Operation not supported$/.test(line));
+    const onlyUnsupported =
+      errors.length > 0 && errors.every((line) => /: Operation not supported$/.test(line));
     if (!onlyUnsupported) {
-      const detail = errors[0] ?? 'no output';
-      throw new ProvenanceError(`The extended-attribute reader exited ${result.status ?? 'unknown'}: ${detail.slice(0, 200)}`);
+      const detail = errors[0] ?? "no output";
+      throw new ProvenanceError(
+        `The extended-attribute reader exited ${result.status ?? "unknown"}: ${detail.slice(0, 200)}`,
+      );
     }
   }
   const entries = new Map<string, string[]>();
   let current: string | undefined;
-  for (const raw of result.stdout.split('\n')) {
+  for (const raw of result.stdout.split("\n")) {
     const line = raw.trimEnd();
     if (line.length === 0) continue;
-    if (line.startsWith('# file: ')) {
-      const path = line.slice('# file: '.length).replace(/^\.\//, '');
-      current = path === '.' ? '' : path;
+    if (line.startsWith("# file: ")) {
+      const path = line.slice("# file: ".length).replace(/^\.\//, "");
+      current = path === "." ? "" : path;
       continue;
     }
-    const separator = line.indexOf('=');
+    const separator = line.indexOf("=");
     if (current === undefined || separator <= 0 || !XATTR_NAME.test(line.slice(0, separator))) {
-      throw new ProvenanceError(`The extended-attribute listing could not be parsed: ${line.slice(0, 120)}.`);
+      throw new ProvenanceError(
+        `The extended-attribute listing could not be parsed: ${line.slice(0, 120)}.`,
+      );
     }
     const list = entries.get(current) ?? [];
     list.push(line);
@@ -916,33 +1030,34 @@ export function digestRootfs(rootfs: string, options: RootfsDigestOptions = {}):
   const root = resolve(rootfs);
   const rootStats = lstatSync(root, { bigint: true });
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
-    throw new ProvenanceError('The gVisor rootfs manifest requires a real directory, not a symlink.');
-  }
-
-  const xattrMode = options.xattrs ?? 'auto';
-  const table: XattrTable = xattrMode === 'skip'
-    ? { available: false, entries: new Map() }
-    : readXattrTable(root);
-  if (xattrMode === 'required' && !table.available) {
     throw new ProvenanceError(
-      'The gVisor rootfs manifest requires extended attributes, but no getfattr reader is installed.',
+      "The gVisor rootfs manifest requires a real directory, not a symlink.",
     );
   }
-  const xattrs: RootfsDigest['xattrs'] = table.available ? 'captured' : 'unavailable';
-  const extended = (relative: string): string => (table.entries.get(relative) ?? []).join('\0');
 
-  const content = createHash('sha256');
-  content.update('AIOS-GVISOR-ROOTFS-MANIFEST-v1\0');
-  const manifest = createHash('sha256');
+  const xattrMode = options.xattrs ?? "auto";
+  const table: XattrTable =
+    xattrMode === "skip" ? { available: false, entries: new Map() } : readXattrTable(root);
+  if (xattrMode === "required" && !table.available) {
+    throw new ProvenanceError(
+      "The gVisor rootfs manifest requires extended attributes, but no getfattr reader is installed.",
+    );
+  }
+  const xattrs: RootfsDigest["xattrs"] = table.available ? "captured" : "unavailable";
+  const extended = (relative: string): string => (table.entries.get(relative) ?? []).join("\0");
+
+  const content = createHash("sha256");
+  content.update("AIOS-GVISOR-ROOTFS-MANIFEST-v1\0");
+  const manifest = createHash("sha256");
   manifest.update(`AIOS-GVISOR-ROOTFS-MANIFEST-v2\0${xattrs}\0`);
-  const metadata = createHash('sha256');
+  const metadata = createHash("sha256");
   metadata.update(`AIOS-GVISOR-ROOTFS-METADATA-v2\0${xattrs}\0`);
-  const timestamps = createHash('sha256');
-  timestamps.update('AIOS-GVISOR-ROOTFS-TIMESTAMPS-v2\0');
+  const timestamps = createHash("sha256");
+  timestamps.update("AIOS-GVISOR-ROOTFS-TIMESTAMPS-v2\0");
   let entries = 0;
 
   const rootMode = Number(rootStats.mode & 0o7777n).toString(8);
-  metadata.update(`R\0${rootMode}\0${rootStats.uid}\0${rootStats.gid}\0${extended('')}\0`);
+  metadata.update(`R\0${rootMode}\0${rootStats.uid}\0${rootStats.gid}\0${extended("")}\0`);
   timestamps.update(`R\0${rootStats.mtimeNs}\0`);
 
   const walk = (absolute: string, relative: string): void => {
@@ -966,9 +1081,11 @@ export function digestRootfs(rootfs: string, options: RootfsDigestOptions = {}):
         manifest.update(`D\0${childRelative}\0${mode}\0${owner}\0${xattr}\0`);
         walk(childAbsolute, childRelative);
       } else if (stats.isFile()) {
-        const fileHash = hashFile(childAbsolute, 'sha256');
+        const fileHash = hashFile(childAbsolute, "sha256");
         content.update(`F\0${childRelative}\0${mode}\0${stats.size}\0${fileHash}\0`);
-        manifest.update(`F\0${childRelative}\0${mode}\0${owner}\0${stats.size}\0${fileHash}\0${xattr}\0`);
+        manifest.update(
+          `F\0${childRelative}\0${mode}\0${owner}\0${stats.size}\0${fileHash}\0${xattr}\0`,
+        );
       } else {
         content.update(`O\0${childRelative}\0${mode}\0${stats.size}\0`);
         manifest.update(`O\0${childRelative}\0${mode}\0${owner}\0${stats.size}\0${xattr}\0`);
@@ -976,14 +1093,14 @@ export function digestRootfs(rootfs: string, options: RootfsDigestOptions = {}):
     }
   };
 
-  walk(root, '');
+  walk(root, "");
   return {
     manifest_version: 2,
-    sha256: manifest.digest('hex'),
+    sha256: manifest.digest("hex"),
     entries,
-    content_sha256: content.digest('hex'),
-    metadata_sha256: metadata.digest('hex'),
-    timestamps_sha256: timestamps.digest('hex'),
+    content_sha256: content.digest("hex"),
+    metadata_sha256: metadata.digest("hex"),
+    timestamps_sha256: timestamps.digest("hex"),
     xattrs,
   };
 }

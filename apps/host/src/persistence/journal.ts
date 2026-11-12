@@ -1,16 +1,30 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
-import { fsyncDirectory } from './fsync-directory.js';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { fsyncDirectory } from "./fsync-directory.js";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_JOURNAL_BYTES = 64 * 1024 * 1024;
-const ZERO_HASH = '0'.repeat(64);
+const ZERO_HASH = "0".repeat(64);
 
 export class JournalError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'JournalError';
+    this.name = "JournalError";
   }
 }
 
@@ -36,30 +50,32 @@ export interface AppendOnlyJournalOptions {
  */
 function canonicalJson(value: unknown): string | undefined {
   if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item) ?? 'null').join(',')}]`;
+    return `[${value.map((item) => canonicalJson(item) ?? "null").join(",")}]`;
   }
-  if (value !== null && typeof value === 'object') {
+  if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
     const entries = Object.keys(record)
       .sort()
       .map((key) => [key, canonicalJson(record[key])] as const)
       .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
       .map(([key, json]) => `${JSON.stringify(key)}:${json}`);
-    return `{${entries.join(',')}}`;
+    return `{${entries.join(",")}}`;
   }
   if (value === undefined) return undefined;
   return JSON.stringify(value) as string;
 }
 
-function recordHash(record: Omit<JournalRecord, 'hash'>): string {
-  return createHash('sha256').update(canonicalJson(record) ?? '').digest('hex');
+function recordHash(record: Omit<JournalRecord, "hash">): string {
+  return createHash("sha256")
+    .update(canonicalJson(record) ?? "")
+    .digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const ARCHIVE_FORMAT = 'aios-operational-journal-archive';
+const ARCHIVE_FORMAT = "aios-operational-journal-archive";
 const ARCHIVE_VERSION = 1;
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 
@@ -81,29 +97,38 @@ export interface JournalArchive {
 }
 
 function archiveDigest(source: JournalArchiveSource, records: JournalRecord[]): string {
-  return createHash('sha256')
-    .update(canonicalJson({ version: ARCHIVE_VERSION, source, records }) ?? '')
-    .digest('hex');
+  return createHash("sha256")
+    .update(canonicalJson({ version: ARCHIVE_VERSION, source, records }) ?? "")
+    .digest("hex");
 }
 
 /** Validates an archive completely before any byte of it is trusted. */
 export function validateJournalArchive(value: unknown): JournalArchive {
-  if (!isRecord(value)
-    || value.format !== ARCHIVE_FORMAT
-    || value.version !== ARCHIVE_VERSION
-    || typeof value.created_at !== 'string' || !Number.isFinite(Date.parse(value.created_at))
-    || !isRecord(value.source)
-    || typeof value.source.file_name !== 'string' || value.source.file_name.length === 0
-    || !Number.isSafeInteger(value.source.record_count) || (value.source.record_count as number) < 1
-    || typeof value.source.head_hash !== 'string' || !/^[a-f0-9]{64}$/.test(value.source.head_hash)
-    || !Number.isSafeInteger(value.source.bytes) || (value.source.bytes as number) < 1
-    || !Array.isArray(value.records) || value.records.length === 0
-    || typeof value.archive_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.archive_sha256)) {
-    throw new JournalError('Journal archive has an unsupported or malformed header.');
+  if (
+    !isRecord(value) ||
+    value.format !== ARCHIVE_FORMAT ||
+    value.version !== ARCHIVE_VERSION ||
+    typeof value.created_at !== "string" ||
+    !Number.isFinite(Date.parse(value.created_at)) ||
+    !isRecord(value.source) ||
+    typeof value.source.file_name !== "string" ||
+    value.source.file_name.length === 0 ||
+    !Number.isSafeInteger(value.source.record_count) ||
+    (value.source.record_count as number) < 1 ||
+    typeof value.source.head_hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.source.head_hash) ||
+    !Number.isSafeInteger(value.source.bytes) ||
+    (value.source.bytes as number) < 1 ||
+    !Array.isArray(value.records) ||
+    value.records.length === 0 ||
+    typeof value.archive_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.archive_sha256)
+  ) {
+    throw new JournalError("Journal archive has an unsupported or malformed header.");
   }
   const source = value.source as unknown as JournalArchiveSource;
   if (value.records.length !== source.record_count) {
-    throw new JournalError('Journal archive record count does not match its manifest.');
+    throw new JournalError("Journal archive record count does not match its manifest.");
   }
   let previousHash = ZERO_HASH;
   const records: JournalRecord[] = [];
@@ -113,10 +138,10 @@ export function validateJournalArchive(value: unknown): JournalArchive {
     previousHash = record.hash;
   }
   if (records[records.length - 1]?.hash !== source.head_hash) {
-    throw new JournalError('Journal archive head hash does not match its records.');
+    throw new JournalError("Journal archive head hash does not match its records.");
   }
   if (archiveDigest(source, records) !== value.archive_sha256) {
-    throw new JournalError('Journal archive digest verification failed.');
+    throw new JournalError("Journal archive digest verification failed.");
   }
   return { ...(value as unknown as JournalArchive), source, records };
 }
@@ -125,24 +150,24 @@ export function validateJournalArchive(value: unknown): JournalArchive {
 function readVerifiedJournalFile(filePath: string, maxBytes: number): JournalRecord[] {
   const stats = lstatSync(filePath);
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1 || stats.size > maxBytes) {
-    throw new JournalError('Journal file must be a regular, unlinked file within the size limit.');
+    throw new JournalError("Journal file must be a regular, unlinked file within the size limit.");
   }
   const contents = readFileSync(filePath);
   if (contents.length === 0) return [];
   if (contents[contents.length - 1] !== 0x0a) {
-    throw new JournalError('Journal file ends with an incomplete record.');
+    throw new JournalError("Journal file ends with an incomplete record.");
   }
-  const text = contents.toString('utf8');
-  const lines = text.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
+  const text = contents.toString("utf8");
+  const lines = text.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
   const records: JournalRecord[] = [];
   let previousHash = ZERO_HASH;
   for (let index = 0; index < lines.length; index += 1) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(lines[index] ?? '');
+      parsed = JSON.parse(lines[index] ?? "");
     } catch {
-      throw new JournalError('Journal file contains an unreadable record.');
+      throw new JournalError("Journal file contains an unreadable record.");
     }
     const record = validateRecord(parsed, index + 1, previousHash);
     records.push(record);
@@ -153,9 +178,9 @@ function readVerifiedJournalFile(filePath: string, maxBytes: number): JournalRec
 
 function writeFileAtomically(filePath: string, contents: string): void {
   const temporary = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
-  const descriptor = openSync(temporary, 'wx', 0o600);
+  const descriptor = openSync(temporary, "wx", 0o600);
   try {
-    writeFileSync(descriptor, contents, 'utf8');
+    writeFileSync(descriptor, contents, "utf8");
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
@@ -167,51 +192,78 @@ function writeFileAtomically(filePath: string, contents: string): void {
 function acquireOfflineLock(lockPath: string): number {
   let descriptor: number;
   try {
-    descriptor = openSync(lockPath, 'wx', 0o600);
+    descriptor = openSync(lockPath, "wx", 0o600);
   } catch (error) {
-    if (!isRecord(error) || error.code !== 'EEXIST') throw error;
+    if (!isRecord(error) || error.code !== "EEXIST") throw error;
     let existing: unknown;
     try {
-      existing = JSON.parse(readFileSync(lockPath, 'utf8'));
+      existing = JSON.parse(readFileSync(lockPath, "utf8"));
     } catch {
-      throw new JournalError('An unreadable journal lock exists; verify no AIOS host is running before removing it.');
+      throw new JournalError(
+        "An unreadable journal lock exists; verify no AIOS host is running before removing it.",
+      );
     }
-    if (!isRecord(existing) || !Number.isSafeInteger(existing.pid) || (existing.pid as number) < 1) {
-      throw new JournalError('An invalid journal lock exists; refusing to remove it.');
+    if (
+      !isRecord(existing) ||
+      !Number.isSafeInteger(existing.pid) ||
+      (existing.pid as number) < 1
+    ) {
+      throw new JournalError("An invalid journal lock exists; refusing to remove it.");
     }
     let alive = true;
     try {
       process.kill(existing.pid as number, 0);
     } catch (processError) {
-      alive = !isRecord(processError) || processError.code !== 'ESRCH';
+      alive = !isRecord(processError) || processError.code !== "ESRCH";
     }
-    if (alive) throw new JournalError('The operational journal is open in another process.');
+    if (alive) throw new JournalError("The operational journal is open in another process.");
     unlinkSync(lockPath);
-    descriptor = openSync(lockPath, 'wx', 0o600);
+    descriptor = openSync(lockPath, "wx", 0o600);
   }
-  writeFileSync(descriptor, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), 'utf8');
+  writeFileSync(
+    descriptor,
+    JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }),
+    "utf8",
+  );
   fsyncSync(descriptor);
   return descriptor;
 }
 
 function releaseOfflineLock(lockPath: string, descriptor: number): void {
-  try { closeSync(descriptor); } catch { /* best effort */ }
-  try { unlinkSync(lockPath); } catch { /* best effort */ }
+  try {
+    closeSync(descriptor);
+  } catch {
+    /* best effort */
+  }
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* best effort */
+  }
 }
 
-function validateRecord(value: unknown, expectedSequence: number, previousHash: string): JournalRecord {
-  if (!isRecord(value)
-    || value.sequence !== expectedSequence
-    || typeof value.kind !== 'string' || value.kind.length === 0 || value.kind.length > 120
-    || value.previous_hash !== previousHash
-    || typeof value.hash !== 'string' || !/^[a-f0-9]{64}$/.test(value.hash)
-    || !('payload' in value)) {
-    throw new JournalError('Operational journal contains a malformed or out-of-sequence record.');
+function validateRecord(
+  value: unknown,
+  expectedSequence: number,
+  previousHash: string,
+): JournalRecord {
+  if (
+    !isRecord(value) ||
+    value.sequence !== expectedSequence ||
+    typeof value.kind !== "string" ||
+    value.kind.length === 0 ||
+    value.kind.length > 120 ||
+    value.previous_hash !== previousHash ||
+    typeof value.hash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.hash) ||
+    !("payload" in value)
+  ) {
+    throw new JournalError("Operational journal contains a malformed or out-of-sequence record.");
   }
   const record = value as unknown as JournalRecord;
   const { hash, ...unsigned } = record;
   if (recordHash(unsigned) !== hash) {
-    throw new JournalError('Operational journal hash-chain verification failed.');
+    throw new JournalError("Operational journal hash-chain verification failed.");
   }
   return record;
 }
@@ -251,32 +303,36 @@ export class AppendOnlyJournal {
   private readonly loaded: JournalRecord[] = [];
 
   constructor(options: AppendOnlyJournalOptions) {
-    if (!options || typeof options.filePath !== 'string' || !isAbsolute(options.filePath)) {
-      throw new JournalError('Operational journal path must be an absolute file path.');
+    if (!options || typeof options.filePath !== "string" || !isAbsolute(options.filePath)) {
+      throw new JournalError("Operational journal path must be an absolute file path.");
     }
     const requested = resolve(options.filePath);
     const directory = dirname(requested);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const canonicalDirectory = realpathSync(directory);
     if (!lstatSync(canonicalDirectory).isDirectory()) {
-      throw new JournalError('Operational journal parent must be a directory.');
+      throw new JournalError("Operational journal parent must be a directory.");
     }
     chmodSync(canonicalDirectory, 0o700);
     this.filePath = join(canonicalDirectory, basename(requested));
     this.lockPath = `${this.filePath}.lock`;
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_JOURNAL_BYTES;
     if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes < 4096) {
-      throw new JournalError('Operational journal size limit is invalid.');
+      throw new JournalError("Operational journal size limit is invalid.");
     }
     try {
       this.acquireLock();
       this.load();
-      this.descriptor = openSync(this.filePath, 'a', 0o600);
+      this.descriptor = openSync(this.filePath, "a", 0o600);
       fsyncSync(this.descriptor);
     } catch (error) {
       this.releaseLock();
       if (this.descriptor !== undefined) {
-        try { closeSync(this.descriptor); } catch { /* best effort */ }
+        try {
+          closeSync(this.descriptor);
+        } catch {
+          /* best effort */
+        }
         this.descriptor = undefined;
       }
       throw error;
@@ -312,8 +368,8 @@ export class AppendOnlyJournal {
 
   append(kind: string, payload: unknown): JournalRecord {
     this.assertOpen();
-    if (typeof kind !== 'string' || kind.length === 0 || kind.length > 120) {
-      throw new JournalError('Journal record kind is invalid.');
+    if (typeof kind !== "string" || kind.length === 0 || kind.length > 120) {
+      throw new JournalError("Journal record kind is invalid.");
     }
     const unsigned = {
       sequence: this.sequence + 1,
@@ -323,15 +379,18 @@ export class AppendOnlyJournal {
     };
     const record: JournalRecord = { ...unsigned, hash: recordHash(unsigned) };
     const line = `${JSON.stringify(record)}\n`;
-    const length = Buffer.byteLength(line, 'utf8');
+    const length = Buffer.byteLength(line, "utf8");
     if (length > MAX_RECORD_BYTES) {
-      throw new JournalError('Journal record exceeds the per-record size limit.');
+      throw new JournalError("Journal record exceeds the per-record size limit.");
     }
     if (this.bytes + length > this.maxBytes) {
-      throw new JournalError('Operational journal reached its size limit; compaction is required before more state can be written.');
+      throw new JournalError(
+        "Operational journal reached its size limit; compaction is required before more state can be written.",
+      );
     }
-    if (this.descriptor === undefined) throw new JournalError('Operational journal is not open for writing.');
-    writeFileSync(this.descriptor, line, 'utf8');
+    if (this.descriptor === undefined)
+      throw new JournalError("Operational journal is not open for writing.");
+    writeFileSync(this.descriptor, line, "utf8");
     fsyncSync(this.descriptor);
     this.bytes += length;
     this.sequence = record.sequence;
@@ -352,12 +411,12 @@ export class AppendOnlyJournal {
     bytes: number;
   } {
     this.assertOpen();
-    if (typeof destinationPath !== 'string' || !isAbsolute(destinationPath)) {
-      throw new JournalError('Journal archive path must be absolute.');
+    if (typeof destinationPath !== "string" || !isAbsolute(destinationPath)) {
+      throw new JournalError("Journal archive path must be absolute.");
     }
     const destination = resolve(destinationPath);
     if (!existsSync(dirname(destination))) {
-      throw new JournalError('Journal archive directory does not exist.');
+      throw new JournalError("Journal archive directory does not exist.");
     }
     const source: JournalArchiveSource = {
       file_name: basename(this.filePath),
@@ -375,8 +434,8 @@ export class AppendOnlyJournal {
       archive_sha256: archiveDigest(source, records),
     };
     const contents = JSON.stringify(archive);
-    if (Buffer.byteLength(contents, 'utf8') > MAX_ARCHIVE_BYTES) {
-      throw new JournalError('Journal archive exceeds the supported size limit.');
+    if (Buffer.byteLength(contents, "utf8") > MAX_ARCHIVE_BYTES) {
+      throw new JournalError("Journal archive exceeds the supported size limit.");
     }
     writeFileAtomically(destination, contents);
     chmodSync(destination, 0o600);
@@ -396,7 +455,11 @@ export class AppendOnlyJournal {
    * journal still proves where its state came from even though the old records now live in
    * the archive. A failed export aborts before the live file is touched.
    */
-  compactWithSnapshot(kind: string, payload: unknown, archivePath: string): {
+  compactWithSnapshot(
+    kind: string,
+    payload: unknown,
+    archivePath: string,
+  ): {
     archive_sha256: string;
     archive_path: string;
     through_sequence: number;
@@ -405,11 +468,11 @@ export class AppendOnlyJournal {
     record_count: number;
   } {
     this.assertOpen();
-    if (typeof kind !== 'string' || kind.length === 0 || kind.length > 120) {
-      throw new JournalError('Journal snapshot kind is invalid.');
+    if (typeof kind !== "string" || kind.length === 0 || kind.length > 120) {
+      throw new JournalError("Journal snapshot kind is invalid.");
     }
     if (!isRecord(payload)) {
-      throw new JournalError('Journal snapshot payload must be an object.');
+      throw new JournalError("Journal snapshot payload must be an object.");
     }
     const archive = this.exportArchive(archivePath);
     const throughSequence = this.sequence;
@@ -426,14 +489,16 @@ export class AppendOnlyJournal {
     const unsigned = { sequence: 1, kind, payload: snapshotPayload, previous_hash: ZERO_HASH };
     const record: JournalRecord = { ...unsigned, hash: recordHash(unsigned) };
     const line = `${JSON.stringify(record)}\n`;
-    const length = Buffer.byteLength(line, 'utf8');
+    const length = Buffer.byteLength(line, "utf8");
     if (length > this.maxBytes) {
-      throw new JournalError('Compaction snapshot exceeds the journal size limit; archive it and recover with a larger limit.');
+      throw new JournalError(
+        "Compaction snapshot exceeds the journal size limit; archive it and recover with a larger limit.",
+      );
     }
     const temporary = `${this.filePath}.compact-${process.pid}-${randomUUID()}`;
-    const descriptor = openSync(temporary, 'wx', 0o600);
+    const descriptor = openSync(temporary, "wx", 0o600);
     try {
-      writeFileSync(descriptor, line, 'utf8');
+      writeFileSync(descriptor, line, "utf8");
       fsyncSync(descriptor);
     } finally {
       closeSync(descriptor);
@@ -444,7 +509,7 @@ export class AppendOnlyJournal {
     }
     renameSync(temporary, this.filePath);
     fsyncDirectory(dirname(this.filePath));
-    this.descriptor = openSync(this.filePath, 'a', 0o600);
+    this.descriptor = openSync(this.filePath, "a", 0o600);
     fsyncSync(this.descriptor);
     this.loaded.length = 0;
     this.loaded.push(record);
@@ -474,27 +539,37 @@ export class AppendOnlyJournal {
     head_hash: string;
     backup_path?: string;
   } {
-    if (!isRecord(options as unknown)
-      || typeof options.filePath !== 'string' || !isAbsolute(options.filePath)
-      || typeof options.archivePath !== 'string' || !isAbsolute(options.archivePath)) {
-      throw new JournalError('Restore requires absolute journal and archive paths.');
+    if (
+      !isRecord(options as unknown) ||
+      typeof options.filePath !== "string" ||
+      !isAbsolute(options.filePath) ||
+      typeof options.archivePath !== "string" ||
+      !isAbsolute(options.archivePath)
+    ) {
+      throw new JournalError("Restore requires absolute journal and archive paths.");
     }
     const filePath = resolve(options.filePath);
     const archivePath = resolve(options.archivePath);
     const maxBytes = options.maxBytes ?? DEFAULT_MAX_JOURNAL_BYTES;
     const archiveStats = lstatSync(archivePath);
-    if (!archiveStats.isFile() || archiveStats.isSymbolicLink() || archiveStats.size > MAX_ARCHIVE_BYTES) {
-      throw new JournalError('Journal archive must be a regular file within the archive size limit.');
+    if (
+      !archiveStats.isFile() ||
+      archiveStats.isSymbolicLink() ||
+      archiveStats.size > MAX_ARCHIVE_BYTES
+    ) {
+      throw new JournalError(
+        "Journal archive must be a regular file within the archive size limit.",
+      );
     }
     let archiveValue: unknown;
     try {
-      archiveValue = JSON.parse(readFileSync(archivePath, 'utf8'));
+      archiveValue = JSON.parse(readFileSync(archivePath, "utf8"));
     } catch {
-      throw new JournalError('Journal archive is not readable JSON.');
+      throw new JournalError("Journal archive is not readable JSON.");
     }
     const archive = validateJournalArchive(archiveValue);
     if (!existsSync(dirname(filePath))) {
-      throw new JournalError('Restore target directory does not exist.');
+      throw new JournalError("Restore target directory does not exist.");
     }
     const lockPath = `${filePath}.lock`;
     const lockDescriptor = acquireOfflineLock(lockPath);
@@ -508,8 +583,10 @@ export class AppendOnlyJournal {
           existing = undefined;
         }
         if (existing !== undefined && existing.length > 0) {
-          if (existing.length === archive.records.length
-            && existing[existing.length - 1]?.hash === archive.source.head_hash) {
+          if (
+            existing.length === archive.records.length &&
+            existing[existing.length - 1]?.hash === archive.source.head_hash
+          ) {
             return {
               restored: false,
               unchanged: true,
@@ -517,19 +594,23 @@ export class AppendOnlyJournal {
               head_hash: archive.source.head_hash,
             };
           }
-          throw new JournalError('Restore target contains a different valid journal; refusing to overwrite it.');
+          throw new JournalError(
+            "Restore target contains a different valid journal; refusing to overwrite it.",
+          );
         }
         backupPath = `${filePath}.pre-restore-${Date.now()}`;
         renameSync(filePath, backupPath);
         chmodSync(backupPath, 0o600);
       }
-      const contents = `${archive.records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+      const contents = `${archive.records.map((record) => JSON.stringify(record)).join("\n")}\n`;
       writeFileAtomically(filePath, contents);
       chmodSync(filePath, 0o600);
       const verified = readVerifiedJournalFile(filePath, maxBytes);
-      if (verified.length !== archive.records.length
-        || verified[verified.length - 1]?.hash !== archive.source.head_hash) {
-        throw new JournalError('Restored journal failed verification.');
+      if (
+        verified.length !== archive.records.length ||
+        verified[verified.length - 1]?.hash !== archive.source.head_hash
+      ) {
+        throw new JournalError("Restored journal failed verification.");
       }
       return {
         restored: true,
@@ -547,21 +628,32 @@ export class AppendOnlyJournal {
     if (this.closed) return;
     this.closed = true;
     if (this.descriptor !== undefined) {
-      try { closeSync(this.descriptor); } catch { /* best effort */ }
+      try {
+        closeSync(this.descriptor);
+      } catch {
+        /* best effort */
+      }
       this.descriptor = undefined;
     }
     this.releaseLock();
   }
 
   private assertOpen(): void {
-    if (this.closed) throw new JournalError('Operational journal is closed.');
+    if (this.closed) throw new JournalError("Operational journal is closed.");
   }
 
   private load(): void {
     if (!existsSync(this.filePath)) return;
     const stats = lstatSync(this.filePath);
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1 || stats.size > this.maxBytes) {
-      throw new JournalError('Operational journal must be a regular, unlinked file within the size limit.');
+    if (
+      !stats.isFile() ||
+      stats.isSymbolicLink() ||
+      stats.nlink !== 1 ||
+      stats.size > this.maxBytes
+    ) {
+      throw new JournalError(
+        "Operational journal must be a regular, unlinked file within the size limit.",
+      );
     }
     chmodSync(this.filePath, 0o600);
 
@@ -572,7 +664,7 @@ export class AppendOnlyJournal {
       const lastNewline = contents.lastIndexOf(0x0a);
       const retained = lastNewline + 1;
       truncateSync(this.filePath, retained);
-      const recoveryDescriptor = openSync(this.filePath, 'r+');
+      const recoveryDescriptor = openSync(this.filePath, "r+");
       try {
         fsyncSync(recoveryDescriptor);
       } finally {
@@ -583,19 +675,20 @@ export class AppendOnlyJournal {
     }
     this.bytes = contents.length;
 
-    const text = contents.toString('utf8');
+    const text = contents.toString("utf8");
     if (text.length === 0) return;
-    const lines = text.split('\n');
-    if (lines[lines.length - 1] === '') lines.pop();
+    const lines = text.split("\n");
+    if (lines[lines.length - 1] === "") lines.pop();
     let previousHash = ZERO_HASH;
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index];
-      if (line === undefined) throw new JournalError('Operational journal contains an empty record.');
+      if (line === undefined)
+        throw new JournalError("Operational journal contains an empty record.");
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);
       } catch {
-        throw new JournalError('Operational journal contains an unreadable record.');
+        throw new JournalError("Operational journal contains an unreadable record.");
       }
       const record = validateRecord(parsed, index + 1, previousHash);
       this.loaded.push(record);
@@ -609,41 +702,60 @@ export class AppendOnlyJournal {
   private acquireLock(): void {
     let descriptor: number;
     try {
-      descriptor = openSync(this.lockPath, 'wx', 0o600);
+      descriptor = openSync(this.lockPath, "wx", 0o600);
     } catch (error) {
-      if (!isRecord(error) || error.code !== 'EEXIST') throw error;
+      if (!isRecord(error) || error.code !== "EEXIST") throw error;
       let existing: unknown;
       try {
-        existing = JSON.parse(readFileSync(this.lockPath, 'utf8'));
+        existing = JSON.parse(readFileSync(this.lockPath, "utf8"));
       } catch {
-        throw new JournalError('An unreadable operational-store lock exists; verify no AIOS host is running before removing it.');
+        throw new JournalError(
+          "An unreadable operational-store lock exists; verify no AIOS host is running before removing it.",
+        );
       }
-      if (!isRecord(existing) || !Number.isSafeInteger(existing.pid) || (existing.pid as number) < 1) {
-        throw new JournalError('An invalid operational-store lock exists; refusing to remove it.');
+      if (
+        !isRecord(existing) ||
+        !Number.isSafeInteger(existing.pid) ||
+        (existing.pid as number) < 1
+      ) {
+        throw new JournalError("An invalid operational-store lock exists; refusing to remove it.");
       }
       let alive = true;
       try {
         process.kill(existing.pid as number, 0);
       } catch (processError) {
-        alive = !isRecord(processError) || processError.code !== 'ESRCH';
+        alive = !isRecord(processError) || processError.code !== "ESRCH";
       }
-      if (alive) throw new JournalError('The operational store is already open in another process.');
+      if (alive)
+        throw new JournalError("The operational store is already open in another process.");
       unlinkSync(this.lockPath);
-      descriptor = openSync(this.lockPath, 'wx', 0o600);
+      descriptor = openSync(this.lockPath, "wx", 0o600);
     }
     this.lockDescriptor = descriptor;
     this.ownsLock = true;
-    writeFileSync(descriptor, JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }), 'utf8');
+    writeFileSync(
+      descriptor,
+      JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }),
+      "utf8",
+    );
     fsyncSync(descriptor);
   }
 
   private releaseLock(): void {
     if (this.lockDescriptor !== undefined) {
-      try { closeSync(this.lockDescriptor); } catch { /* best effort */ }
+      try {
+        closeSync(this.lockDescriptor);
+      } catch {
+        /* best effort */
+      }
       this.lockDescriptor = undefined;
     }
     if (this.ownsLock) {
-      try { unlinkSync(this.lockPath); } catch { /* best effort */ }
+      try {
+        unlinkSync(this.lockPath);
+      } catch {
+        /* best effort */
+      }
       this.ownsLock = false;
     }
   }

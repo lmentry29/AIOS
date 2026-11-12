@@ -1,22 +1,22 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 
-const FOUNDER = 'human:founder';
+const FOUNDER = "human:founder";
 
 export function baseProject(overrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   return {
     entity_id: randomUUID(),
-    entity_type: 'canonical_object',
-    entity_subtype: 'project',
-    name: 'a project',
-    purpose: 'p',
-    mission: 'm',
-    vision: 'v',
+    entity_type: "canonical_object",
+    entity_subtype: "project",
+    name: "a project",
+    purpose: "p",
+    mission: "m",
+    vision: "v",
     project_dna: {
-      mission: 'm',
+      mission: "m",
       core_principles: [],
       target_users: [],
-      architectural_philosophy: 'a',
+      architectural_philosophy: "a",
       quality_expectations: [],
       long_term_objectives: [],
       non_goals: [],
@@ -30,7 +30,7 @@ export function baseProject(overrides: Record<string, unknown> = {}) {
     version: 1,
     organizational_containers: [],
     owner_id: FOUNDER,
-    owner_type: 'human',
+    owner_type: "human",
     relationships: [],
     ...overrides,
   };
@@ -55,10 +55,10 @@ export function baseProject(overrides: Record<string, unknown> = {}) {
  * matters.
  */
 export const SHELVED_PROJECT = baseProject({
-  name: 'SHELVED_PROJECT',
-  project_status: 'archived',
-  lifecycle_state: 'active',
-  project_phase: 'operation',
+  name: "SHELVED_PROJECT",
+  project_status: "archived",
+  lifecycle_state: "active",
+  project_phase: "operation",
 });
 
 /**
@@ -66,8 +66,8 @@ export const SHELVED_PROJECT = baseProject({
  * stopped. The weaker companion to SHELVED_PROJECT.
  */
 export const PAUSED_MID_IMPLEMENTATION = baseProject({
-  name: 'PAUSED_MID_IMPLEMENTATION',
-  project_status: 'paused',
-  lifecycle_state: 'active',
-  project_phase: 'implementation',
+  name: "PAUSED_MID_IMPLEMENTATION",
+  project_status: "paused",
+  lifecycle_state: "active",
+  project_phase: "implementation",
 });

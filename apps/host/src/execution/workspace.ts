@@ -1,6 +1,15 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { HostConfigError, HostExecutionError } from '../errors.js';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { HostConfigError, HostExecutionError } from "../errors.js";
 
 /**
  * Owns per-task workspaces for an execution + verification pair.
@@ -17,11 +26,14 @@ export class RunWorkspaceManager {
     private readonly root: string,
     private readonly maxWorkspaces = 64,
   ) {
-    if (!isAbsolute(root)) throw new HostConfigError('Execution workspace_directory must be absolute.');
+    if (!isAbsolute(root))
+      throw new HostConfigError("Execution workspace_directory must be absolute.");
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const stats = lstatSync(root);
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      throw new HostConfigError('Execution workspace_directory must be a directory, not a symlink.');
+      throw new HostConfigError(
+        "Execution workspace_directory must be a directory, not a symlink.",
+      );
     }
     chmodSync(root, 0o700);
   }
@@ -46,30 +58,30 @@ export class RunWorkspaceManager {
    * path, never the host path.
    */
   resolveCwd(workspace: string, cwd: string | undefined): string {
-    if (cwd === undefined || cwd === '') return '.';
-    if (isAbsolute(cwd) || cwd.includes('\0')) {
-      throw new HostExecutionError('Task execution cwd must be a relative path without NUL bytes.');
+    if (cwd === undefined || cwd === "") return ".";
+    if (isAbsolute(cwd) || cwd.includes("\0")) {
+      throw new HostExecutionError("Task execution cwd must be a relative path without NUL bytes.");
     }
     const candidate = resolve(workspace, cwd);
     const rel = relative(workspace, candidate);
-    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new HostExecutionError('Task execution cwd must stay inside the run workspace.');
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new HostExecutionError("Task execution cwd must stay inside the run workspace.");
     }
     try {
       const real = realpathSync(candidate);
       const realRel = relative(realpathSync(workspace), real);
-      if (realRel === '..' || realRel.startsWith(`..${sep}`) || isAbsolute(realRel)) {
-        throw new HostExecutionError('Task execution cwd must stay inside the run workspace.');
+      if (realRel === ".." || realRel.startsWith(`..${sep}`) || isAbsolute(realRel)) {
+        throw new HostExecutionError("Task execution cwd must stay inside the run workspace.");
       }
       if (!statSync(real).isDirectory()) {
-        throw new HostExecutionError('Task execution cwd must be a directory.');
+        throw new HostExecutionError("Task execution cwd must be a directory.");
       }
     } catch (error) {
       if (error instanceof HostExecutionError) throw error;
       // A missing cwd is left for the sandbox command to fail honestly; it is not a
       // host escape and the provider still receives a workspace-relative path.
     }
-    return rel === '' ? '.' : rel;
+    return rel === "" ? "." : rel;
   }
 
   /** Removes a failed run's workspace so oversized or partial state is not retained. */
@@ -112,7 +124,7 @@ export function measureWorkspaceBytes(root: string): number {
     }
     entries += 1;
     if (entries > MAX_MEASURED_ENTRIES) {
-      throw new HostExecutionError('Workspace contains too many entries to measure safely.');
+      throw new HostExecutionError("Workspace contains too many entries to measure safely.");
     }
     if (stats.isSymbolicLink()) continue;
     if (stats.isDirectory()) {
@@ -176,7 +188,8 @@ export class WorkspaceQuotaGuard {
         this.onExceeded();
       }
     } catch (error) {
-      this.measurementFailure = error instanceof Error ? error.message : 'workspace measurement failed';
+      this.measurementFailure =
+        error instanceof Error ? error.message : "workspace measurement failed";
       this.onExceeded();
     }
   }
