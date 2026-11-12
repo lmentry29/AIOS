@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import { ActorRef } from './base.js';
-import { CanonicalObjectEntity } from './canonical-object.js';
+import { z } from "zod";
+import { ActorRef, MAX_COLLECTION_ITEMS, MAX_LIFECYCLE_HISTORY_ITEMS } from "./base.js";
+import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from "./canonical-object.js";
 
 // §5.4 Project — Canonical Object subtype, added by ADR-0011 (amending ADR-0007 and
 // ADR-0004 Amendment A). NOT a sixth entity type: it specializes the existing Canonical
@@ -40,13 +40,13 @@ import { CanonicalObjectEntity } from './canonical-object.js';
  */
 export const ProjectDna = z.object({
   mission: z.string(),
-  core_principles: z.array(z.string()).default([]),
-  target_users: z.array(z.string()).default([]),
+  core_principles: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  target_users: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
   architectural_philosophy: z.string(),
-  quality_expectations: z.array(z.string()).default([]),
-  long_term_objectives: z.array(z.string()).default([]),
-  non_goals: z.array(z.string()).default([]),
-  governance_constraints: z.array(z.string()).default([]),
+  quality_expectations: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  long_term_objectives: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  non_goals: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
+  governance_constraints: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
 });
 export type ProjectDna = z.infer<typeof ProjectDna>;
 
@@ -79,15 +79,15 @@ export type ProjectDna = z.infer<typeof ProjectDna>;
 
 /** Ch.7 — operational state. NOT lifecycle_state. NOT project_phase. */
 export const ProjectStatus = z.enum([
-  'initializing',
-  'planning',
-  'active_development',
-  'maintenance',
-  'paused',
-  'blocked',
-  'migrating',
-  'archived',
-  'retired',
+  "initializing",
+  "planning",
+  "active_development",
+  "maintenance",
+  "paused",
+  "blocked",
+  "migrating",
+  "archived",
+  "retired",
 ]);
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
 
@@ -99,17 +99,17 @@ export type ProjectStatus = z.infer<typeof ProjectStatus>;
  * must not be rejected. No forward-only rule is enforced anywhere.
  */
 export const ProjectPhase = z.enum([
-  'concept',
-  'research',
-  'architecture',
-  'planning',
-  'implementation',
-  'validation',
-  'deployment',
-  'operation',
-  'evolution',
-  'retirement',
-  'archive',
+  "concept",
+  "research",
+  "architecture",
+  "planning",
+  "implementation",
+  "validation",
+  "deployment",
+  "operation",
+  "evolution",
+  "retirement",
+  "archive",
 ]);
 export type ProjectPhase = z.infer<typeof ProjectPhase>;
 
@@ -137,10 +137,10 @@ export type ProjectStatusHistoryEntry = z.infer<typeof ProjectStatusHistoryEntry
  * "constitutional document." Everything else on a Project — including all three status
  * axes — is mutable; transitions are exactly what a Project is for.
  */
-export const PROJECT_IMMUTABLE_FIELDS = ['project_dna'] as const;
+export const PROJECT_IMMUTABLE_FIELDS = ["project_dna"] as const;
 
-const ProjectEntityShape = CanonicalObjectEntity.extend({
-  entity_subtype: z.literal('project'),
+const ProjectEntityShape = CanonicalObjectEntityShape.extend({
+  entity_subtype: z.literal("project"),
 
   purpose: z.string(),
   // PROSE, not references. `mission` is a mission *statement*, not a Work Hierarchy
@@ -156,7 +156,10 @@ const ProjectEntityShape = CanonicalObjectEntity.extend({
 
   project_status: ProjectStatus,
   project_phase: ProjectPhase,
-  project_status_history: z.array(ProjectStatusHistoryEntry).default([]),
+  project_status_history: z
+    .array(ProjectStatusHistoryEntry)
+    .max(MAX_LIFECYCLE_HISTORY_ITEMS)
+    .default([]),
 });
 
 /**
@@ -164,11 +167,12 @@ const ProjectEntityShape = CanonicalObjectEntity.extend({
  * (§4.1) — an Agent acts on Tasks rather than sitting in the hierarchy, and a Project
  * holds work rather than being a rung of it.
  */
-export const ProjectEntity = ProjectEntityShape.refine(
+const ProjectEntityWithoutHierarchy = ProjectEntityShape.refine(
   (p: z.infer<typeof ProjectEntityShape>) => p.work_hierarchy_parent === undefined,
   {
     message:
-      'A Project is an Organizational Container, not a Work Hierarchy level — it must not carry work_hierarchy_parent (ADR-0004 Amendment A, ADR-0011, COM §2d)',
-  }
+      "A Project is an Organizational Container, not a Work Hierarchy level — it must not carry work_hierarchy_parent (ADR-0004 Amendment A, ADR-0011, COM §2d)",
+  },
 );
+export const ProjectEntity = withCanonicalObjectLifecycle(ProjectEntityWithoutHierarchy);
 export type ProjectEntity = z.infer<typeof ProjectEntity>;

@@ -1,5 +1,9 @@
 packages:
   - "packages/*"
+  # apps/* are deployable hosts that compose the nine packages. They are applications,
+  # not additional @aios/* components, and do not change the package boundaries ADR-0009
+  # ratifies.
+  - "apps/*"
   # tests/integration and tests/conformance are workspace packages so they can
   # resolve @aios/* imports. implementation-playbook.md §6 keeps them centralized
   # rather than per-package, precisely because they test ACROSS package boundaries

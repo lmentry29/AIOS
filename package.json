@@ -2,8 +2,8 @@
   "name": "aios",
   "version": "0.1.0",
   "private": true,
-  "description": "AIOS — AI-native engineering organization runtime",
-  "license": "UNLICENSED",
+  "description": "AIOS — experimental reference implementation for persistent, auditable AI-agent engineering organizations",
+  "license": "MIT",
   "engines": {
     "node": ">=22.13"
   },

@@ -1,11 +1,12 @@
 import type {
+  CanonicalObjectSubstate,
   LifecycleState,
   ProjectEntity as ProjectEntityType,
   ProjectPhase,
   ProjectStatus,
-} from '@aios/core';
-import { ProjectEntity } from '@aios/core';
-import { ObjectStore, type EntityPatch } from '@aios/objects';
+} from "@aios/core";
+import { ProjectEntity } from "@aios/core";
+import { EntityNotFoundError, ObjectStore, type EntityPatch } from "@aios/objects";
 
 /**
  * ProjectStore — the Organizational Container layer's only implemented container type,
@@ -64,8 +65,8 @@ export class ProjectStore {
     // Project is a Canonical Object, an entity_type shared with memory_object,
     // artifact, and objective — so filter to the subtype, not just the type.
     return this.store
-      .list({ entityType: 'canonical_object' })
-      .filter((p) => p.entity_subtype === 'project');
+      .list({ entityType: "canonical_object" })
+      .filter((p) => p.entity_subtype === "project");
   }
 
   /**
@@ -76,7 +77,7 @@ export class ProjectStore {
    * SHELVED_PROJECT fixture and the no-aliasing note on deleteProject below).
    */
   listArchivedProjects(): ProjectEntityType[] {
-    return this.listProjects().filter((p) => p.lifecycle_state === 'archived');
+    return this.listProjects().filter((p) => p.lifecycle_state === "archived");
   }
 
   /**
@@ -84,10 +85,7 @@ export class ProjectStore {
    * ImmutableProjectFieldError from the persistence layer (COM §5.4; Part XI Ch.4 calls
    * DNA the project's "constitutional document").
    */
-  updateProject(
-    projectId: string,
-    patch: EntityPatch<ProjectEntityType>
-  ): ProjectEntityType {
+  updateProject(projectId: string, patch: EntityPatch<ProjectEntityType>): ProjectEntityType {
     return this.store.update(projectId, patch);
   }
 
@@ -100,23 +98,8 @@ export class ProjectStore {
    * aliasing COM §5.4 forbids (the three vocabularies collide in five places; 'archived'
    * means three different things). See the SHELVED_PROJECT fixture.
    */
-  setProjectStatus(
-    projectId: string,
-    status: ProjectStatus,
-    actor: string
-  ): ProjectEntityType {
-    const current = this.store.get(projectId);
-    if (!current) {
-      throw new Error(`No project found with entity_id "${projectId}".`);
-    }
-
-    return this.store.update(projectId, {
-      project_status: status,
-      project_status_history: [
-        ...current.project_status_history,
-        { status, entered_at: new Date().toISOString(), actor },
-      ],
-    } as EntityPatch<ProjectEntityType>);
+  setProjectStatus(projectId: string, status: ProjectStatus, actor: string): ProjectEntityType {
+    return this.store.appendProjectStatus(projectId, status, actor);
   }
 
   /**
@@ -144,7 +127,7 @@ export class ProjectStore {
     projectId: string,
     newState: LifecycleState,
     actor: string,
-    substate?: string
+    substate?: CanonicalObjectSubstate,
   ): ProjectEntityType {
     return this.store.transitionLifecycle(projectId, newState, actor, substate);
   }
@@ -164,6 +147,25 @@ export class ProjectStore {
    * file.
    */
   deleteProject(projectId: string, actor: string): ProjectEntityType {
-    return this.transitionProjectLifecycle(projectId, 'archived', actor);
+    let project = this.getProject(projectId);
+    if (!project) throw new EntityNotFoundError(projectId);
+    if (project.lifecycle_state === "archived") return project;
+
+    // ADR-0003 requires terminal archival to pass through completed. Bring earlier
+    // states through the canonical path rather than bypassing lifecycle history.
+    if (project.lifecycle_state === "created") {
+      project = this.transitionProjectLifecycle(projectId, "validated", actor);
+    }
+    if (project.lifecycle_state === "validated" || project.lifecycle_state === "suspended") {
+      if (project.lifecycle_state === "suspended") {
+        project = this.transitionProjectLifecycle(projectId, "active", actor);
+      } else {
+        project = this.transitionProjectLifecycle(projectId, "active", actor);
+      }
+    }
+    if (project.lifecycle_state === "active" || project.lifecycle_state === "monitored") {
+      project = this.transitionProjectLifecycle(projectId, "completed", actor);
+    }
+    return this.transitionProjectLifecycle(projectId, "archived", actor);
   }
 }

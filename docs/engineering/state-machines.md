@@ -207,3 +207,30 @@ sequenceDiagram
     AEL-->>SEL: Task complete
     SEL->>SEL: coordinate next dispatch
 ```
+
+---
+
+## 9. Host execution ledger (not a canonical lifecycle)
+
+**Implemented by ADR-0021.** This is deliberately separate from the canonical
+`lifecycle_state` enum. Adding `cancelled` to the shared lifecycle would change ADR-0003 for
+every entity; the host instead records the execution outcome in the operational journal.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Running: sandbox invocation starts
+    Running --> Completed: executor returns success
+    Running --> Failed: executor/provider error
+    Running --> Cancelled: authorized cancellation; abort + SIGKILL
+    Running --> Interrupted: host restart reconciliation
+    Completed --> [*]
+    Failed --> [*]
+    Cancelled --> [*]
+    Interrupted --> [*]
+```
+
+A queued Task can be cancelled before it starts; it remains canonical `created`, while its
+execution record is terminal `cancelled`. An active Task moves to canonical `suspended`. A
+late executor result cannot overwrite a terminal execution record. `completed` means the
+sandbox command completed; it does not mean the Task passed independent verification. See
+ADR-0021 for the authorization, concurrency, and reconciliation rules.

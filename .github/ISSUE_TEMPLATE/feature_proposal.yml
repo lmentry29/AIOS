@@ -1,0 +1,45 @@
+name: Feature proposal
+description: Propose a scoped improvement to AIOS.
+title: "[Proposal]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the user problem, not the implementation. Substantial architectural changes require an ADR; do not treat an issue as architectural approval.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who encounters this problem, and what currently fails or costs too much?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the observable behavior from a user's or package consumer's perspective.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs
+      description: What alternatives did you consider, and why are they weaker?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Suggested scope
+      description: Identify affected packages, interfaces, tests, and documentation if known.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and reviewed the current implementation limitations.
+          required: true
+        - label: I have not included secrets, private data, or confidential material.
+          required: true

@@ -1,25 +1,129 @@
 import type {
   CanonicalEntity,
   LifecycleState,
+  ProjectStatus,
   Relationship,
   RelationshipDirection,
-} from '@aios/core';
+} from "@aios/core";
 import {
   CanonicalEntity as CanonicalEntitySchema,
   OBJECTIVE_DEFINITION_FIELDS,
   PROJECT_IMMUTABLE_FIELDS,
-} from '@aios/core';
+} from "@aios/core";
 import {
+  AccessPolicyMutationError,
   AppendOnlyFieldError,
   EntityIdConflictError,
   EntityNotFoundError,
   ImmutableEntityError,
+  InvalidLifecycleTransitionError,
   ImmutableObjectiveFieldError,
   ImmutableProjectFieldError,
-} from './errors.js';
+  LifecycleTransitionError,
+  ProjectStatusTransitionError,
+} from "./errors.js";
 
-/** Fields update() may never touch, at runtime, regardless of caller typing (COM §11). */
-const APPEND_ONLY_FIELDS = ['lifecycle_history', 'relationships'] as const;
+/** Compare JSON-shaped immutable fields without depending on object key insertion order. */
+function valuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => valuesEqual(value, right[index]))
+    );
+  }
+  if (left !== null && right !== null && typeof left === "object" && typeof right === "object") {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord).sort();
+    const rightKeys = Object.keys(rightRecord).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) => key === rightKeys[index] && valuesEqual(leftRecord[key], rightRecord[key]),
+      )
+    );
+  }
+  return false;
+}
+
+/** Deep-copy the plain JSON-shaped entity records held by this in-memory store. */
+function cloneRecord<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(cloneRecord) as unknown as T;
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, cloneRecord(nested)]),
+    ) as unknown as T;
+  }
+  return value;
+}
+
+/** Fields update() may never touch, regardless of caller typing (COM §11, Project Ch.7). */
+const APPEND_ONLY_FIELDS = [
+  "lifecycle_history",
+  "relationships",
+  "project_status_history",
+] as const;
+const LIFECYCLE_FIELDS = ["lifecycle_state", "lifecycle_substate"] as const;
+
+/** Canonical base lifecycle graph from ADR-0003 / state-machines.md §1. */
+const ALLOWED_LIFECYCLE_TRANSITIONS: Record<LifecycleState, readonly LifecycleState[]> = {
+  created: ["validated"],
+  validated: ["active"],
+  active: ["monitored", "suspended", "completed"],
+  monitored: ["active", "suspended", "completed"],
+  suspended: ["active"],
+  completed: ["archived"],
+  archived: [],
+};
+
+/** Replay may extend appended collections, never rewrite or truncate them. */
+function assertAppendOnlyPrefix(
+  entityId: string,
+  field: string,
+  current: readonly unknown[],
+  restored: readonly unknown[],
+): void {
+  if (restored.length < current.length) {
+    throw new AppendOnlyFieldError(entityId, [field]);
+  }
+  for (let index = 0; index < current.length; index += 1) {
+    if (!valuesEqual(current[index], restored[index])) {
+      throw new AppendOnlyFieldError(entityId, [field]);
+    }
+  }
+}
+
+function isLifecycleTransitionAllowed(
+  current: CanonicalEntity,
+  to: LifecycleState,
+  substate?: string,
+): boolean {
+  if (current.lifecycle_state !== to) {
+    return ALLOWED_LIFECYCLE_TRANSITIONS[current.lifecycle_state].includes(to);
+  }
+  if (to !== "active" || substate === current.lifecycle_substate) return false;
+
+  const substateTransitions: Record<string, Record<string, readonly (string | undefined)[]>> = {
+    agent: {
+      planning: ["reasoning"],
+      reasoning: ["executing"],
+      executing: ["monitoring"],
+      monitoring: ["planning", undefined],
+    },
+    canonical_object: {
+      mutating: ["persisting"],
+      persisting: ["synchronizing"],
+      synchronizing: ["mutating", undefined],
+    },
+  };
+  const entityTransitions = substateTransitions[current.entity_type];
+  const currentSubstate = current.lifecycle_substate;
+  if (!entityTransitions || !currentSubstate) return false;
+  return entityTransitions[currentSubstate]?.includes(substate) ?? false;
+}
 
 /**
  * Subtypes whose fields are immutable after creation, and what to throw when a write
@@ -67,17 +171,27 @@ interface ParsingSchema<T> {
   parse(data: unknown): T;
 }
 
+export interface ObjectStoreOptions {
+  /** Privileged bootstrap only. Ordinary stores must not accept caller-supplied policy attachments. */
+  allowAccessPolicyOnCreate?: boolean;
+}
+
 export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
   Omit<
     T,
-    | 'entity_id'
-    | 'entity_type'
-    | 'created_at'
-    | 'created_by'
-    | 'version'
-    | 'modified_at'
-    | 'lifecycle_history'
-    | 'relationships'
+    | "entity_id"
+    | "access_policy"
+    | "entity_type"
+    | "created_at"
+    | "created_by"
+    | "version"
+    | "modified_at"
+    | "lifecycle_state"
+    | "lifecycle_substate"
+    | "project_status"
+    | "lifecycle_history"
+    | "relationships"
+    | "project_status_history"
   >
 >;
 
@@ -100,26 +214,80 @@ export type EntityPatch<T extends CanonicalEntity = CanonicalEntity> = Partial<
 export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
   private readonly records = new Map<string, T>();
   private readonly schema: ParsingSchema<T>;
+  private readonly options: ObjectStoreOptions;
 
-  constructor(schema: ParsingSchema<T> = CanonicalEntitySchema as unknown as ParsingSchema<T>) {
+  constructor(
+    schema: ParsingSchema<T> = CanonicalEntitySchema as unknown as ParsingSchema<T>,
+    options: ObjectStoreOptions = {},
+  ) {
     this.schema = schema;
+    this.options = options;
   }
 
   create(entity: T): T {
     const parsed = this.schema.parse(entity);
+    if (parsed.access_policy !== undefined && this.options.allowAccessPolicyOnCreate !== true) {
+      throw new AccessPolicyMutationError(parsed.entity_id);
+    }
     if (this.records.has(parsed.entity_id)) {
       throw new EntityIdConflictError(parsed.entity_id);
     }
     this.records.set(parsed.entity_id, parsed);
-    return parsed;
+    return this.clone(parsed);
   }
 
   get(entityId: string): T | undefined {
-    return this.records.get(entityId);
+    const entity = this.records.get(entityId);
+    return entity ? this.clone(entity) : undefined;
   }
 
-  list(filter?: { entityType?: CanonicalEntity['entity_type'] }): T[] {
-    const all = Array.from(this.records.values());
+  /**
+   * Recovery-only hydration of a previously validated snapshot.
+   *
+   * A durable adapter replays journal records through this method instead of re-running
+   * `create`/`update`/`transitionLifecycle`, because replay must not invent new timestamps,
+   * versions, or lifecycle-history entries. The write is still validated: the schema is
+   * applied, an existing record may only advance (`version` strictly increases and
+   * `lifecycle_history`/`relationships` extend the existing arrays as prefixes), and a
+   * duplicate first write is rejected.
+   *
+   * Do NOT use this from request paths. It exists for adapters whose own storage already
+   * proved integrity (for example a hash-chained journal) and is not a way to bypass the
+   * lifecycle graph, immutability rules, or append-only guards.
+   */
+  restore(entity: T): T {
+    const parsed = this.schema.parse(entity);
+    if (parsed.access_policy !== undefined && this.options.allowAccessPolicyOnCreate !== true) {
+      throw new AccessPolicyMutationError(parsed.entity_id);
+    }
+    const current = this.records.get(parsed.entity_id);
+    if (current) {
+      if (parsed.version <= current.version) {
+        throw new InvalidLifecycleTransitionError(
+          parsed.entity_id,
+          current.lifecycle_state,
+          parsed.lifecycle_state,
+        );
+      }
+      assertAppendOnlyPrefix(
+        parsed.entity_id,
+        "lifecycle_history",
+        current.lifecycle_history,
+        parsed.lifecycle_history,
+      );
+      assertAppendOnlyPrefix(
+        parsed.entity_id,
+        "relationships",
+        current.relationships,
+        parsed.relationships,
+      );
+    }
+    this.records.set(parsed.entity_id, parsed);
+    return this.clone(parsed);
+  }
+
+  list(filter?: { entityType?: CanonicalEntity["entity_type"] }): T[] {
+    const all = Array.from(this.records.values(), (entity) => this.clone(entity));
     if (!filter?.entityType) return all;
     return all.filter((e) => e.entity_type === filter.entityType);
   }
@@ -130,6 +298,9 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
       throw new EntityNotFoundError(entityId);
     }
     this.assertMutable(current);
+    this.assertAccessPolicyUntouched(entityId, patch);
+    this.assertLifecycleFieldsUntouched(entityId, patch);
+    this.assertProjectStatusUntouched(entityId, patch);
     this.assertAppendOnlyFieldsUntouched(entityId, patch);
     this.assertImmutableFieldsUnchanged(current, patch);
 
@@ -141,21 +312,30 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
   }
 
   transitionLifecycle(
     entityId: string,
     newState: LifecycleState,
     actor: string,
-    substate?: string
+    substate?: string,
   ): T {
     const current = this.records.get(entityId);
     if (!current) {
       throw new EntityNotFoundError(entityId);
     }
-    this.assertMutable(current);
+    if (!isLifecycleTransitionAllowed(current, newState, substate)) {
+      throw new InvalidLifecycleTransitionError(entityId, current.lifecycle_state, newState);
+    }
+    const isMemoryObjectArchival =
+      current.entity_type === "canonical_object" &&
+      current.entity_subtype === "memory_object" &&
+      current.lifecycle_state === "completed" &&
+      newState === "archived";
+    if (!isMemoryObjectArchival) this.assertMutable(current);
 
+    const now = new Date().toISOString();
     const updated = this.schema.parse({
       ...current,
       lifecycle_state: newState,
@@ -165,16 +345,55 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
         {
           state: newState,
           substate,
-          entered_at: new Date().toISOString(),
+          entered_at: now,
           actor,
         },
       ],
       version: current.version + 1,
-      modified_at: new Date().toISOString(),
+      modified_at: now,
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
+  }
+
+  appendProjectStatus(entityId: string, status: ProjectStatus, actor: string): T {
+    const current = this.records.get(entityId);
+    if (!current) {
+      throw new EntityNotFoundError(entityId);
+    }
+    this.assertMutable(current);
+    if (current.entity_type !== "canonical_object" || current.entity_subtype !== "project") {
+      throw new Error(
+        `Entity "${entityId}" is not a Project and has no Project status transition contract.`,
+      );
+    }
+
+    const project = current as T & {
+      project_status_history: Array<{
+        status: ProjectStatus;
+        entered_at: string;
+        actor: string;
+      }>;
+    };
+    if (!Array.isArray(project.project_status_history)) {
+      throw new Error(`Entity "${entityId}" does not have Project status history.`);
+    }
+
+    const now = new Date().toISOString();
+    const updated = this.schema.parse({
+      ...current,
+      project_status: status,
+      project_status_history: [
+        ...project.project_status_history,
+        { status, entered_at: now, actor },
+      ],
+      version: current.version + 1,
+      modified_at: now,
+    });
+
+    this.records.set(entityId, updated);
+    return this.clone(updated);
   }
 
   addRelationship(entityId: string, relationship: Relationship): T {
@@ -192,53 +411,119 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
     });
 
     this.records.set(entityId, updated);
-    return updated;
+    return this.clone(updated);
   }
 
   linkRelationship(
     sourceId: string,
     targetId: string,
-    targetEntityType: CanonicalEntity['entity_type'],
     relationshipType: string,
-    direction: RelationshipDirection = 'outbound'
+    direction: RelationshipDirection = "outbound",
   ): { source: T; target: T } {
+    if (sourceId === targetId) {
+      throw new Error("An entity cannot be linked to itself.");
+    }
+
+    const source = this.records.get(sourceId);
+    if (!source) {
+      throw new EntityNotFoundError(sourceId);
+    }
     const target = this.records.get(targetId);
     if (!target) {
       throw new EntityNotFoundError(targetId);
     }
 
-    const source = this.addRelationship(sourceId, {
-      target_entity_id: targetId,
-      target_entity_type: targetEntityType,
-      relationship_type: relationshipType,
-      direction,
+    // Preflight both sides and parse both candidates before committing either write.
+    // Otherwise an immutable/invalid target could leave a one-sided relationship.
+    this.assertMutable(source);
+    this.assertMutable(target);
+
+    const now = new Date().toISOString();
+    const updatedSource = this.schema.parse({
+      ...source,
+      relationships: [
+        ...source.relationships,
+        {
+          target_entity_id: targetId,
+          target_entity_type: target.entity_type,
+          relationship_type: relationshipType,
+          direction,
+        },
+      ],
+      version: source.version + 1,
+      modified_at: now,
     });
 
-    const updatedTarget = this.addRelationship(targetId, {
-      target_entity_id: sourceId,
-      target_entity_type: source.entity_type,
-      relationship_type: relationshipType,
-      direction: direction === 'outbound' ? 'inbound' : 'outbound',
+    const updatedTarget = this.schema.parse({
+      ...target,
+      relationships: [
+        ...target.relationships,
+        {
+          target_entity_id: sourceId,
+          target_entity_type: source.entity_type,
+          relationship_type: relationshipType,
+          direction: direction === "outbound" ? "inbound" : "outbound",
+        },
+      ],
+      version: target.version + 1,
+      modified_at: now,
     });
 
-    return { source, target: updatedTarget };
+    this.records.set(sourceId, updatedSource);
+    this.records.set(targetId, updatedTarget);
+    return { source: this.clone(updatedSource), target: this.clone(updatedTarget) };
+  }
+
+  /** Return detached snapshots so callers cannot mutate records outside validated writes. */
+  private clone(entity: T): T {
+    return cloneRecord(entity);
   }
 
   private assertMutable(entity: T): void {
-    if (entity.entity_subtype === 'memory_object' && entity.lifecycle_state === 'completed') {
+    if (entity.lifecycle_state === "archived") {
+      throw new ImmutableEntityError(entity.entity_id);
+    }
+    if (
+      entity.entity_type === "canonical_object" &&
+      entity.entity_subtype === "memory_object" &&
+      entity.lifecycle_state === "completed"
+    ) {
       throw new ImmutableEntityError(entity.entity_id);
     }
   }
 
+  /** Project operational status must be changed with its append-only audit entry. */
+  private assertProjectStatusUntouched(entityId: string, patch: EntityPatch<T>): void {
+    const patched = patch as unknown as Record<string, unknown>;
+    if ("project_status" in patched) {
+      throw new ProjectStatusTransitionError(entityId);
+    }
+  }
+
+  /** Lifecycle fields can only be changed via transitionLifecycle(), never update(). */
+  private assertAccessPolicyUntouched(entityId: string, patch: EntityPatch<T>): void {
+    if (Object.hasOwn(patch, "access_policy")) {
+      throw new AccessPolicyMutationError(entityId);
+    }
+  }
+
+  private assertLifecycleFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
+    const patched = patch as unknown as Record<string, unknown>;
+    const touched = LIFECYCLE_FIELDS.filter((field) => field in patched);
+    if (touched.length > 0) {
+      throw new LifecycleTransitionError(entityId, touched);
+    }
+  }
+
   /**
-   * Runtime backstop for the append-only guarantee on lifecycle_history and
-   * relationships (COM §11). EntityPatch<T> Omits both fields at the TYPE level, which
+   * Runtime backstop for append-only lifecycle_history and relationships (COM §11)
+   * plus Project status history (Project Ch.7). EntityPatch<T> omits all protected fields at the TYPE level, which
    * stops a normally-typed caller at compile time — but that protection vanishes for a
    * plain JS caller, a deserialized JSON patch, or any cast that bypasses the type.
    * Key-presence, not value comparison: unlike assertImmutableFieldsUnchanged's no-op
    * allowance for a re-submitted identical value, these fields may never be named in a
    * patch at all — only transitionLifecycle() and addRelationship()/linkRelationship()
-   * are sanctioned write paths.
+   * are sanctioned write paths. Project status changes use appendProjectStatus().
    */
   private assertAppendOnlyFieldsUntouched(entityId: string, patch: EntityPatch<T>): void {
     const patched = patch as unknown as Record<string, unknown>;
@@ -270,17 +555,17 @@ export class ObjectStore<T extends CanonicalEntity = CanonicalEntity> {
    * with an identical value is a no-op rather than a spurious failure.
    */
   private assertImmutableFieldsUnchanged(current: T, patch: EntityPatch<T>): void {
-    const rule = current.entity_subtype
-      ? IMMUTABLE_FIELDS_BY_SUBTYPE[current.entity_subtype]
-      : undefined;
+    const rule =
+      current.entity_type === "canonical_object" && current.entity_subtype
+        ? IMMUTABLE_FIELDS_BY_SUBTYPE[current.entity_subtype]
+        : undefined;
     if (!rule) return;
 
     const record = current as unknown as Record<string, unknown>;
     const patched = patch as unknown as Record<string, unknown>;
 
     const changed = rule.fields.filter(
-      (field) =>
-        field in patched && JSON.stringify(patched[field]) !== JSON.stringify(record[field])
+      (field) => field in patched && !valuesEqual(patched[field], record[field]),
     );
 
     if (changed.length > 0) {

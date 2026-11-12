@@ -1,10 +1,25 @@
-import type { KnowledgeStage } from './knowledge-stage.js';
+import type { KnowledgeStage } from "./knowledge-stage.js";
+
+/**
+ * Thrown when a permanent Memory promotion is attempted without a recorded approval from
+ * an authorized human principal, or when the approval is rejected, expired, consumed, or
+ * bound to a different record/stage/content.
+ *
+ * Ephemeral observations and draft-stage promotions (candidate, validated) do not require
+ * approval and never throw this. `published` and `institutional_standard` are permanent.
+ */
+export class MemoryApprovalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MemoryApprovalError";
+  }
+}
 
 /** Thrown when an operation references a knowledge id not held by this service. */
 export class KnowledgeNotFoundError extends Error {
   constructor(id: string) {
     super(`No knowledge record found with id "${id}".`);
-    this.name = 'KnowledgeNotFoundError';
+    this.name = "KnowledgeNotFoundError";
   }
 }
 
@@ -24,9 +39,9 @@ export class KnowledgeNotFoundError extends Error {
 export class InvalidStagePromotionError extends Error {
   constructor(id: string, from: KnowledgeStage, to: KnowledgeStage) {
     super(
-      `Cannot promote knowledge "${id}" from "${from}" to "${to}" — promotion only moves forward along the Knowledge Evolution axis (Memory Engine Ch.23).`
+      `Cannot promote knowledge "${id}" from "${from}" to "${to}" — promotion only moves forward along the Knowledge Evolution axis (Memory Engine Ch.23).`,
     );
-    this.name = 'InvalidStagePromotionError';
+    this.name = "InvalidStagePromotionError";
   }
 }
 
@@ -39,8 +54,8 @@ export class InvalidStagePromotionError extends Error {
 export class ArchivedKnowledgeError extends Error {
   constructor(id: string) {
     super(
-      `Knowledge "${id}" is in 'historical_archive', which is terminal — it cannot be promoted.`
+      `Knowledge "${id}" is in 'historical_archive', which is terminal — it cannot be promoted.`,
     );
-    this.name = 'ArchivedKnowledgeError';
+    this.name = "ArchivedKnowledgeError";
   }
 }

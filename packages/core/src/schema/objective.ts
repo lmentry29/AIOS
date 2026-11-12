@@ -1,5 +1,6 @@
-import { z } from 'zod';
-import { CanonicalObjectEntity } from './canonical-object.js';
+import { z } from "zod";
+import { MAX_COLLECTION_ITEMS } from "./base.js";
+import { CanonicalObjectEntityShape, withCanonicalObjectLifecycle } from "./canonical-object.js";
 
 // §5.3 Objective — Canonical Object subtype, added by ADR-0010 (amending ADR-0007).
 // NOT a sixth entity type: it specializes the existing Canonical Object type via the
@@ -30,10 +31,10 @@ import { CanonicalObjectEntity } from './canonical-object.js';
  * later sourced, these are the members to revisit; the field types are settled by
  * ADR-0010 and are not.
  */
-export const ObjectivePriority = z.enum(['low', 'medium', 'high', 'critical']);
+export const ObjectivePriority = z.enum(["low", "medium", "high", "critical"]);
 export type ObjectivePriority = z.infer<typeof ObjectivePriority>;
 
-export const ObjectiveRiskProfile = z.enum(['low', 'medium', 'high', 'critical']);
+export const ObjectiveRiskProfile = z.enum(["low", "medium", "high", "critical"]);
 export type ObjectiveRiskProfile = z.infer<typeof ObjectiveRiskProfile>;
 
 /**
@@ -48,30 +49,31 @@ export type ObjectiveRiskProfile = z.infer<typeof ObjectiveRiskProfile>;
  * via IMMUTABLE_FIELDS_BY_SUBTYPE, and ImmutableObjectiveFieldError, which it throws.
  */
 export const OBJECTIVE_DEFINITION_FIELDS = [
-  'purpose',
-  'desired_outcome',
-  'constraints',
-  'success_criteria',
-  'priority',
-  'risk_profile',
-  'known_unknowns',
-  'acceptance_criteria',
+  "purpose",
+  "desired_outcome",
+  "constraints",
+  "success_criteria",
+  "priority",
+  "risk_profile",
+  "known_unknowns",
+  "acceptance_criteria",
 ] as const;
 
-export const ObjectiveEntity = CanonicalObjectEntity.extend({
-  entity_subtype: z.literal('objective'),
+const ObjectiveEntityShape = CanonicalObjectEntityShape.extend({
+  entity_subtype: z.literal("objective"),
 
   purpose: z.string(),
   desired_outcome: z.string(),
-  constraints: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
   // Non-empty: an Objective with no success criteria is not gradeable (ADR-0010 §4).
-  success_criteria: z.array(z.string()).nonempty(),
+  success_criteria: z.array(z.string()).nonempty().max(MAX_COLLECTION_ITEMS),
   priority: ObjectivePriority,
   risk_profile: ObjectiveRiskProfile,
-  known_unknowns: z.array(z.string()).default([]),
+  known_unknowns: z.array(z.string()).max(MAX_COLLECTION_ITEMS).default([]),
   // Retained separately from success_criteria because Ch.4 lists both. The distinction
   // is thin and flagged for possible follow-on cleanup (ADR-0010, Consequences 3);
   // collapsing them would be a substantive change, not a transcription.
-  acceptance_criteria: z.array(z.string()).nonempty(),
+  acceptance_criteria: z.array(z.string()).nonempty().max(MAX_COLLECTION_ITEMS),
 });
+export const ObjectiveEntity = withCanonicalObjectLifecycle(ObjectiveEntityShape);
 export type ObjectiveEntity = z.infer<typeof ObjectiveEntity>;

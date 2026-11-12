@@ -2,7 +2,7 @@
 export class PluginNotFoundError extends Error {
   constructor(pluginId: string) {
     super(`No plugin found with entity_id "${pluginId}".`);
-    this.name = 'PluginNotFoundError';
+    this.name = "PluginNotFoundError";
   }
 }
 
@@ -14,8 +14,8 @@ export class PluginNotFoundError extends Error {
 export class PluginIdConflictError extends Error {
   constructor(pluginId: string) {
     super(
-      `entity_id "${pluginId}" already exists in the plugin registry and cannot be reused (COM §9).`
+      `entity_id "${pluginId}" already exists in the plugin registry and cannot be reused (COM §9).`,
     );
-    this.name = 'PluginIdConflictError';
+    this.name = "PluginIdConflictError";
   }
 }

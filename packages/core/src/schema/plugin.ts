@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { CanonicalEntity } from './base.js';
+import { z } from "zod";
+import { CanonicalEntity } from "./base.js";
 
 // §4.4 Plugin — extends base. FLAGGED LOW-CONFIDENCE per COM §1.6/§6 item 4:
 // modeled from Tooling Ecosystem's Adapter/Tool concepts, not from a
@@ -7,20 +7,26 @@ import { CanonicalEntity } from './base.js';
 // treat this file as more settled than the doc itself claims it is.
 
 export const PluginInstallStatus = z.enum([
-  'available',
-  'installed',
-  'enabled',
-  'disabled',
-  'removed',
+  "available",
+  "installed",
+  "enabled",
+  "disabled",
+  "removed",
 ]);
 export type PluginInstallStatus = z.infer<typeof PluginInstallStatus>;
 
-export const PluginEntity = CanonicalEntity.extend({
-  entity_type: z.literal('plugin'),
-  governing_layer: z.literal('tool_abstraction_layer'),
+const PluginEntityShape = CanonicalEntity.extend({
+  entity_type: z.literal("plugin"),
+  governing_layer: z.literal("tool_abstraction_layer"),
   wraps_adapter: z.string().uuid().optional(),
   // Orthogonal to lifecycle_state by design (§4.4) — do not conflate
   // install_status with lifecycle_state in downstream logic.
   install_status: PluginInstallStatus,
 });
+export const PluginEntity = PluginEntityShape.refine(
+  (plugin) =>
+    plugin.lifecycle_substate === undefined &&
+    plugin.lifecycle_history.every((entry) => entry.substate === undefined),
+  { message: "Plugin has no ratified lifecycle_substate vocabulary (COM §4.4)" },
+);
 export type PluginEntity = z.infer<typeof PluginEntity>;

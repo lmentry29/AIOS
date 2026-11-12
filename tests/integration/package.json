@@ -13,7 +13,9 @@
     "@aios/containers": "workspace:*",
     "@aios/core": "workspace:*",
     "@aios/objects": "workspace:*",
-    "@aios/work-hierarchy": "workspace:*"
+    "@aios/work-hierarchy": "workspace:*",
+    "@aios/founder": "workspace:*",
+    "@aios/orchestration": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

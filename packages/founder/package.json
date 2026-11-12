@@ -13,10 +13,12 @@
   },
   "dependencies": {
     "@aios/objects": "workspace:*",
-    "@aios/learning": "workspace:*"
+    "@aios/learning": "workspace:*",
+    "@aios/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@types/node": "^20.19.43"
   }
 }

@@ -7,7 +7,7 @@
 export class EntityIdConflictError extends Error {
   constructor(entityId: string) {
     super(`entity_id "${entityId}" already exists in the store and cannot be reused (COM §9).`);
-    this.name = 'EntityIdConflictError';
+    this.name = "EntityIdConflictError";
   }
 }
 
@@ -15,7 +15,7 @@ export class EntityIdConflictError extends Error {
 export class EntityNotFoundError extends Error {
   constructor(entityId: string) {
     super(`No entity found with entity_id "${entityId}".`);
-    this.name = 'EntityNotFoundError';
+    this.name = "EntityNotFoundError";
   }
 }
 
@@ -37,9 +37,9 @@ export class EntityNotFoundError extends Error {
 export class ImmutableObjectiveFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `Cannot modify definition field(s) [${fields.join(', ')}] on Objective "${entityId}" — an Objective's definition is immutable after creation (COM §5.3, ADR-0010). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `Cannot modify definition field(s) [${fields.join(", ")}] on Objective "${entityId}" — an Objective's definition is immutable after creation (COM §5.3, ADR-0010). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableObjectiveFieldError';
+    this.name = "ImmutableObjectiveFieldError";
   }
 }
 
@@ -62,9 +62,9 @@ export class ImmutableObjectiveFieldError extends Error {
 export class ImmutableProjectFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `Cannot modify field(s) [${fields.join(', ')}] on Project "${entityId}" — Project DNA is immutable after creation (COM §5.4, ADR-0011; Part XI Ch.4 calls it the project's "constitutional document"). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `Cannot modify field(s) [${fields.join(", ")}] on Project "${entityId}" — Project DNA is immutable after creation (COM §5.4, ADR-0011; Part XI Ch.4 calls it the project's "constitutional document"). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableProjectFieldError';
+    this.name = "ImmutableProjectFieldError";
   }
 }
 
@@ -79,20 +79,21 @@ export class ImmutableProjectFieldError extends Error {
 export class ImmutableEntityError extends Error {
   constructor(entityId: string) {
     super(
-      `entity_id "${entityId}" is a completed Memory Object and is immutable (COM §5.1). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`
+      `entity_id "${entityId}" is a completed Memory Object and is immutable (COM §5.1). Create a new entity_id with an incremented version and a "supersedes" relationship instead.`,
     );
-    this.name = 'ImmutableEntityError';
+    this.name = "ImmutableEntityError";
   }
 }
 
 /**
- * Thrown when update() is called with a patch object that touches `lifecycle_history`
- * or `relationships`. Per COM §11, both fields are append-only — "the record is
+ * Thrown when update() is called with a patch object that touches
+ * `lifecycle_history`, `relationships`, or `project_status_history`. Per COM §11 and
+ * Project Ch.7, these fields are append-only — "the record is
  * mutable, but its history is not" — and the only sanctioned write paths are
  * transitionLifecycle() (for lifecycle_history) and addRelationship()/
  * linkRelationship() (for relationships).
  *
- * EntityPatch<T> already Omits both fields at the TYPE level, which blocks a
+ * EntityPatch<T> already omits these fields at the TYPE level, which blocks a
  * normally-typed caller at compile time. This check is the runtime backstop for
  * every caller that isn't: a plain JS caller, a deserialized JSON patch, or a
  * TypeScript caller using a cast to bypass EntityPatch. Without it, the append-only
@@ -101,8 +102,59 @@ export class ImmutableEntityError extends Error {
 export class AppendOnlyFieldError extends Error {
   constructor(entityId: string, fields: readonly string[]) {
     super(
-      `update() cannot modify [${fields.join(', ')}] on entity_id "${entityId}" — both lifecycle_history and relationships are append-only (COM §11). Use transitionLifecycle() or addRelationship()/linkRelationship() instead.`
+      `update() cannot modify [${fields.join(", ")}] on entity_id "${entityId}" — these history/relationship fields are append-only. Use transitionLifecycle(), addRelationship()/linkRelationship(), or appendProjectStatus() as appropriate (COM §11, Project Ch.7).`,
     );
-    this.name = 'AppendOnlyFieldError';
+    this.name = "AppendOnlyFieldError";
+  }
+}
+
+/**
+ * Thrown when update() attempts to set lifecycle_state or lifecycle_substate directly.
+ * Lifecycle state changes must go through transitionLifecycle(), which appends the
+ * corresponding audit entry and updates provenance atomically (COM §3.2, §11).
+ */
+export class LifecycleTransitionError extends Error {
+  constructor(entityId: string, fields: readonly string[]) {
+    super(
+      `update() cannot modify [${fields.join(", ")}] on entity_id "${entityId}" — lifecycle fields must be changed through transitionLifecycle() so lifecycle_history remains append-only (COM §3.2, §11).`,
+    );
+    this.name = "LifecycleTransitionError";
+  }
+}
+
+/**
+ * Thrown when update() attempts to change project_status without appending its audit
+ * entry. Project operational status changes must go through appendProjectStatus().
+ */
+export class ProjectStatusTransitionError extends Error {
+  constructor(entityId: string) {
+    super(
+      `update() cannot modify project_status on entity_id "${entityId}" — use appendProjectStatus() so the status change and audit history are committed together (Project Ch.7).`,
+    );
+    this.name = "ProjectStatusTransitionError";
+  }
+}
+
+/**
+ * Thrown when a generic update attempts to change a resource's access_policy reference.
+ * Policy attachment is a privileged security operation and must never be smuggled
+ * through an ordinary entity patch.
+ */
+export class AccessPolicyMutationError extends Error {
+  constructor(entityId: string) {
+    super(
+      `ordinary writes cannot attach or modify access_policy on entity_id "${entityId}" — policy attachment and revocation require the trusted authorization-administration path.`,
+    );
+    this.name = "AccessPolicyMutationError";
+  }
+}
+
+/** Thrown when a lifecycle transition is not permitted by the canonical state graph. */
+export class InvalidLifecycleTransitionError extends Error {
+  constructor(entityId: string, from: string, to: string) {
+    super(
+      `Cannot transition entity "${entityId}" from lifecycle state "${from}" to "${to}" (ADR-0003, state-machines.md).`,
+    );
+    this.name = "InvalidLifecycleTransitionError";
   }
 }

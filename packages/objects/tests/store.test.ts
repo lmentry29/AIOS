@@ -1,116 +1,369 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { TaskEntity as TaskEntityType } from '@aios/core';
-import { ObjectStore } from '../src/store.js';
-import { EntityIdConflictError, EntityNotFoundError, ImmutableEntityError } from '../src/errors.js';
+import { describe, expect, it, vi } from "vitest";
+import type { TaskEntity as TaskEntityType } from "@aios/core";
+import { ObjectStore } from "../src/store.js";
+import {
+  AccessPolicyMutationError,
+  AppendOnlyFieldError,
+  EntityIdConflictError,
+  EntityNotFoundError,
+  ImmutableEntityError,
+  InvalidLifecycleTransitionError,
+} from "../src/errors.js";
 
 function baseFields(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date().toISOString();
   return {
     entity_id: crypto.randomUUID(),
-    name: 'test entity',
-    lifecycle_state: 'created' as const,
+    name: "test entity",
+    lifecycle_state: "created" as const,
     lifecycle_history: [],
     created_at: now,
-    created_by: 'human:founder',
+    created_by: "human:founder",
     modified_at: now,
     version: 1,
     organizational_containers: [],
-    owner_id: 'human:founder',
-    owner_type: 'human' as const,
+    owner_id: "human:founder",
+    owner_type: "human" as const,
     relationships: [],
     ...overrides,
   };
 }
 
-describe('ObjectStore — base CanonicalEntity behavior', () => {
-  it('creates and retrieves a canonical_object entity', () => {
+describe("ObjectStore — base CanonicalEntity behavior", () => {
+  it("returns detached snapshots so callers cannot mutate stored records directly", () => {
     const store = new ObjectStore();
-    const entity = baseFields({ entity_type: 'canonical_object' });
+    const created = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+
+    created.name = "mutated create result";
+    created.relationships.push({
+      target_entity_id: crypto.randomUUID(),
+      target_entity_type: "task",
+      relationship_type: "depends_on",
+      direction: "outbound",
+    });
+    const fetched = store.get(created.entity_id);
+    if (!fetched) throw new Error("Created entity was not retrievable.");
+    fetched.name = "mutated get result";
+    fetched.lifecycle_history.push({
+      state: "active",
+      entered_at: new Date().toISOString(),
+      actor: "human:founder",
+    });
+    const listed = store.list();
+    const listedEntity = listed[0];
+    if (!listedEntity) throw new Error("Created entity was not listed.");
+    listedEntity.name = "mutated list result";
+    listedEntity.organizational_containers.push({
+      entity_id: crypto.randomUUID(),
+      container_type: "project",
+    });
+
+    const persisted = store.get(created.entity_id);
+    if (!persisted) throw new Error("Created entity disappeared from the store.");
+    expect(persisted.name).toBe("test entity");
+    expect(persisted.relationships).toHaveLength(0);
+    expect(persisted.lifecycle_history).toHaveLength(0);
+    expect(persisted.organizational_containers).toHaveLength(0);
+  });
+
+  it("rejects caller-supplied access-policy attachments unless privileged bootstrap is enabled", () => {
+    const entity = baseFields({
+      entity_type: "canonical_object",
+      access_policy: crypto.randomUUID(),
+    });
+
+    expect(() => new ObjectStore().create(entity as never)).toThrow(AccessPolicyMutationError);
+
+    const bootstrapStore = new ObjectStore(undefined, { allowAccessPolicyOnCreate: true });
+    const created = bootstrapStore.create(entity as never);
+    expect(created.access_policy).toBe(entity.access_policy);
+  });
+
+  it("creates and retrieves a canonical_object entity", () => {
+    const store = new ObjectStore();
+    const entity = baseFields({ entity_type: "canonical_object" });
     const created = store.create(entity as never);
     expect(store.get(created.entity_id)).toEqual(created);
   });
 
-  it('rejects create() with a duplicate entity_id, even after archival', () => {
+  it("rejects create() with a duplicate entity_id, even after archival", () => {
     const store = new ObjectStore();
-    const entity = baseFields({ entity_type: 'canonical_object' });
+    const entity = baseFields({ entity_type: "canonical_object" });
     const created = store.create(entity as never);
 
-    store.transitionLifecycle(created.entity_id, 'archived', 'human:founder');
+    store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder");
+    store.transitionLifecycle(created.entity_id, "completed", "human:founder");
+    store.transitionLifecycle(created.entity_id, "archived", "human:founder");
 
+    expect(() => store.update(created.entity_id, { description: "cannot edit archive" })).toThrow(
+      ImmutableEntityError,
+    );
     expect(() => store.create(entity as never)).toThrow(EntityIdConflictError);
   });
 
-  it('bumps version and modified_at atomically on update()', () => {
+  it("rejects access_policy reassignment through generic update()", () => {
+    const store = new ObjectStore(undefined, { allowAccessPolicyOnCreate: true });
+    const entity = store.create(
+      baseFields({
+        entity_type: "canonical_object",
+        access_policy: crypto.randomUUID(),
+      }) as never,
+    );
+
+    expect(() =>
+      store.update(entity.entity_id, { access_policy: crypto.randomUUID() } as never),
+    ).toThrow(AccessPolicyMutationError);
+    expect(store.get(entity.entity_id)?.access_policy).toBe(entity.access_policy);
+    expect(store.get(entity.entity_id)?.version).toBe(entity.version);
+  });
+
+  it("bumps version and modified_at atomically on update()", () => {
     const store = new ObjectStore();
-    const entity = baseFields({ entity_type: 'canonical_object' });
+    const entity = baseFields({ entity_type: "canonical_object" });
     const created = store.create(entity as never);
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date(new Date(created.modified_at).getTime() + 1000));
-    const updated = store.update(created.entity_id, { description: 'now has a description' });
+    const updated = store.update(created.entity_id, { description: "now has a description" });
     vi.useRealTimers();
 
     expect(updated.version).toBe(created.version + 1);
     expect(updated.modified_at).not.toBe(created.modified_at);
-    expect(updated.description).toBe('now has a description');
+    expect(updated.description).toBe("now has a description");
   });
 
-  it('appends (does not replace) lifecycle_history on transitionLifecycle()', () => {
+  it("rejects lifecycle jumps that violate the canonical state graph", () => {
     const store = new ObjectStore();
-    const entity = baseFields({ entity_type: 'canonical_object' });
-    const created = store.create(entity as never);
+    const created = store.create(baseFields({ entity_type: "canonical_object" }) as never);
 
-    const t1 = store.transitionLifecycle(created.entity_id, 'validated', 'human:founder');
-    const t2 = store.transitionLifecycle(created.entity_id, 'active', 'human:founder', 'mutating');
+    expect(() => store.transitionLifecycle(created.entity_id, "active", "human:founder")).toThrow(
+      InvalidLifecycleTransitionError,
+    );
+    expect(store.get(created.entity_id)?.lifecycle_state).toBe("created");
+    expect(store.get(created.entity_id)?.version).toBe(created.version);
 
-    expect(t1.lifecycle_history).toHaveLength(1);
-    expect(t2.lifecycle_history).toHaveLength(2);
-    expect(t2.lifecycle_history[0].state).toBe('validated');
-    expect(t2.lifecycle_history[1].state).toBe('active');
-  });
-
-  it('throws EntityNotFoundError for operations against an unknown entity_id', () => {
-    const store = new ObjectStore();
-    expect(() => store.update('00000000-0000-4000-8000-000000000000', {})).toThrow(
-      EntityNotFoundError
+    store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder");
+    store.transitionLifecycle(created.entity_id, "completed", "human:founder");
+    expect(() => store.transitionLifecycle(created.entity_id, "active", "human:founder")).toThrow(
+      InvalidLifecycleTransitionError,
     );
   });
 
-  it('rejects mutation of a completed memory_object (COM §5.1 immutability)', () => {
+  it("allows active substate progression while preserving the canonical state", () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder", "mutating");
+    const persisting = store.transitionLifecycle(
+      created.entity_id,
+      "active",
+      "human:founder",
+      "persisting",
+    );
+    expect(() =>
+      store.transitionLifecycle(created.entity_id, "active", "human:founder", "persisting"),
+    ).toThrow(InvalidLifecycleTransitionError);
+
+    expect(persisting.lifecycle_state).toBe("active");
+    expect(persisting.lifecycle_substate).toBe("persisting");
+    expect(() =>
+      store.transitionLifecycle(created.entity_id, "active", "human:founder", "mutating"),
+    ).toThrow(InvalidLifecycleTransitionError);
+
+    const synchronizing = store.transitionLifecycle(
+      created.entity_id,
+      "active",
+      "human:founder",
+      "synchronizing",
+    );
+    const mutating = store.transitionLifecycle(
+      created.entity_id,
+      "active",
+      "human:founder",
+      "mutating",
+    );
+    expect(synchronizing.lifecycle_substate).toBe("synchronizing");
+    expect(mutating.lifecycle_substate).toBe("mutating");
+    expect(mutating.lifecycle_history.map((entry) => entry.state)).toEqual([
+      "validated",
+      "active",
+      "active",
+      "active",
+      "active",
+    ]);
+  });
+
+  it("permits a completed Memory Object to be archived without reopening mutation", () => {
+    const store = new ObjectStore();
+    const memory = store.create(
+      baseFields({
+        entity_type: "canonical_object",
+        entity_subtype: "memory_object",
+        memory_type: "decision",
+        confidence: 0.9,
+        importance: "high",
+        evidence: [],
+        source_references: [],
+      }) as never,
+    );
+    store.transitionLifecycle(memory.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(memory.entity_id, "active", "human:founder");
+    store.transitionLifecycle(memory.entity_id, "completed", "human:founder");
+
+    const archived = store.transitionLifecycle(memory.entity_id, "archived", "human:founder");
+    expect(archived.lifecycle_state).toBe("archived");
+    expect(archived.lifecycle_history.at(-1)?.state).toBe("archived");
+  });
+
+  it("enforces Agent active-substate order in ObjectStore", () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: "agent" }) as never);
+    store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder", "planning");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder", "reasoning");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder", "executing");
+    const monitoring = store.transitionLifecycle(
+      created.entity_id,
+      "active",
+      "human:founder",
+      "monitoring",
+    );
+
+    expect(monitoring.lifecycle_substate).toBe("monitoring");
+    expect(() =>
+      store.transitionLifecycle(created.entity_id, "active", "human:founder", "executing"),
+    ).toThrow(InvalidLifecycleTransitionError);
+  });
+
+  it("appends (does not replace) lifecycle_history on transitionLifecycle()", () => {
+    const store = new ObjectStore();
+    const entity = baseFields({ entity_type: "canonical_object" });
+    const created = store.create(entity as never);
+
+    const t1 = store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    const t2 = store.transitionLifecycle(created.entity_id, "active", "human:founder", "mutating");
+
+    expect(t1.lifecycle_history).toHaveLength(1);
+    expect(t2.lifecycle_history).toHaveLength(2);
+    expect(t2.lifecycle_history[0].state).toBe("validated");
+    expect(t2.lifecycle_history[1].state).toBe("active");
+    expect(t2.lifecycle_history[1].entered_at).toBe(t2.modified_at);
+  });
+
+  it("throws EntityNotFoundError for operations against an unknown entity_id", () => {
+    const store = new ObjectStore();
+    expect(() => store.update("00000000-0000-4000-8000-000000000000", {})).toThrow(
+      EntityNotFoundError,
+    );
+  });
+
+  it("scopes subtype immutability rules to Canonical Objects, not matching labels on other entity types", () => {
+    const store = new ObjectStore();
+    const taskShapedMemory = store.create(
+      baseFields({
+        entity_type: "task",
+        entity_subtype: "memory_object",
+        lifecycle_state: "completed",
+      }) as never,
+    );
+    const taskShapedObjective = store.create(
+      baseFields({
+        entity_type: "task",
+        entity_subtype: "objective",
+      }) as never,
+    );
+
+    expect(store.update(taskShapedMemory.entity_id, { name: "mutable task" }).name).toBe(
+      "mutable task",
+    );
+    expect(store.update(taskShapedObjective.entity_id, { name: "mutable task" }).name).toBe(
+      "mutable task",
+    );
+  });
+
+  it("rejects mutation of a completed memory_object (COM §5.1 immutability)", () => {
     const store = new ObjectStore();
     const entity = baseFields({
-      entity_type: 'canonical_object',
-      entity_subtype: 'memory_object',
-      memory_type: 'decision',
+      entity_type: "canonical_object",
+      entity_subtype: "memory_object",
+      memory_type: "decision",
       confidence: 0.9,
-      importance: 'high',
+      importance: "high",
       evidence: [],
       source_references: [],
     });
     const created = store.create(entity as never);
-    store.transitionLifecycle(created.entity_id, 'completed', 'human:founder');
+    store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+    store.transitionLifecycle(created.entity_id, "active", "human:founder");
+    store.transitionLifecycle(created.entity_id, "completed", "human:founder");
 
-    expect(() => store.update(created.entity_id, { description: 'edit attempt' })).toThrow(
-      ImmutableEntityError
+    expect(() => store.update(created.entity_id, { description: "edit attempt" })).toThrow(
+      ImmutableEntityError,
     );
   });
 
-  it('appends bidirectional relationship entries via linkRelationship()', () => {
+  it("does not partially link when the target is immutable", () => {
     const store = new ObjectStore();
-    const a = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
-    const b = store.create(baseFields({ entity_type: 'canonical_object' }) as never);
-
-    const { source, target } = store.linkRelationship(
-      a.entity_id,
-      b.entity_id,
-      'canonical_object',
-      'derived_from'
+    const source = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    const target = store.create(
+      baseFields({
+        entity_type: "canonical_object",
+        entity_subtype: "memory_object",
+        lifecycle_state: "completed",
+      }) as never,
     );
 
+    expect(() =>
+      store.linkRelationship(source.entity_id, target.entity_id, "derived_from"),
+    ).toThrow(ImmutableEntityError);
+    expect(store.get(source.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(target.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(source.entity_id)?.version).toBe(source.version);
+    expect(store.get(target.entity_id)?.version).toBe(target.version);
+  });
+
+  it("rejects self-links without mutating the entity", () => {
+    const store = new ObjectStore();
+    const entity = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+
+    expect(() =>
+      store.linkRelationship(entity.entity_id, entity.entity_id, "derived_from"),
+    ).toThrow(/cannot be linked to itself/);
+    expect(store.get(entity.entity_id)?.relationships).toHaveLength(0);
+    expect(store.get(entity.entity_id)?.version).toBe(entity.version);
+  });
+
+  it("derives relationship entity types from the actual stored target", () => {
+    const store = new ObjectStore();
+    const source = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    const target = store.create(baseFields({ entity_type: "task" }) as never);
+
+    const { source: linkedSource, target: linkedTarget } = store.linkRelationship(
+      source.entity_id,
+      target.entity_id,
+      "depends_on",
+    );
+
+    expect(linkedSource.relationships[0]?.target_entity_type).toBe("task");
+    expect(linkedTarget.relationships[0]?.target_entity_type).toBe("canonical_object");
+  });
+
+  it("appends bidirectional relationship entries via linkRelationship()", () => {
+    const store = new ObjectStore();
+    const a = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    const b = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+
+    const { source, target } = store.linkRelationship(a.entity_id, b.entity_id, "derived_from");
+
     expect(source.relationships).toHaveLength(1);
-    expect(source.relationships[0].direction).toBe('outbound');
+    expect(source.relationships[0].direction).toBe("outbound");
+    expect(source.version).toBe(a.version + 1);
     expect(target.relationships).toHaveLength(1);
-    expect(target.relationships[0].direction).toBe('inbound');
+    expect(target.relationships[0].direction).toBe("inbound");
+    expect(target.version).toBe(b.version + 1);
+    expect(source.modified_at).toBe(target.modified_at);
   });
 });
 
@@ -124,15 +377,15 @@ describe('ObjectStore — base CanonicalEntity behavior', () => {
  * step the project knowledge calls for instead of resolving the
  * Task/Object storage boundary by further discussion.
  */
-describe('ObjectStore — Task-shaped entity insertion (COM §10 evidence)', () => {
-  it('stores and retrieves a Task entity with a required work_hierarchy_parent', () => {
+describe("ObjectStore — Task-shaped entity insertion (COM §10 evidence)", () => {
+  it("stores and retrieves a Task entity with a required work_hierarchy_parent", () => {
     const store = new ObjectStore();
 
     const task: TaskEntityType = baseFields({
-      entity_type: 'task',
+      entity_type: "task",
       work_hierarchy_parent: {
         entity_id: crypto.randomUUID(),
-        level: 'objective',
+        level: "objective",
       },
       actions: [],
     }) as unknown as TaskEntityType;
@@ -140,18 +393,18 @@ describe('ObjectStore — Task-shaped entity insertion (COM §10 evidence)', () 
     const created = store.create(task);
     const retrieved = store.get(created.entity_id);
 
-    expect(retrieved?.entity_type).toBe('task');
-    expect(retrieved?.work_hierarchy_parent?.level).toBe('objective');
+    expect(retrieved?.entity_type).toBe("task");
+    expect(retrieved?.work_hierarchy_parent?.level).toBe("objective");
   });
 
-  it('demonstrates update() silently drops Task-specific fields not present in the base schema (COM §10 evidence)', () => {
+  it("demonstrates update() silently drops Task-specific fields not present in the base schema (COM §10 evidence)", () => {
     const store = new ObjectStore();
 
     const task: TaskEntityType = baseFields({
-      entity_type: 'task',
+      entity_type: "task",
       work_hierarchy_parent: {
         entity_id: crypto.randomUUID(),
-        level: 'objective',
+        level: "objective",
       },
       actions: [],
     }) as unknown as TaskEntityType;
@@ -178,16 +431,53 @@ describe('ObjectStore — Task-shaped entity insertion (COM §10 evidence)', () 
 
     expect((updated as unknown as TaskEntityType).assigned_agent).toBeUndefined();
 
+    store.transitionLifecycle(updated.entity_id, "validated", agentId);
     const transitioned = store.transitionLifecycle(
       updated.entity_id,
-      'active',
+      "active",
       agentId,
-      'executing'
+      "executing",
     );
 
-    expect(transitioned.lifecycle_state).toBe('active');
+    expect(transitioned.lifecycle_state).toBe("active");
     // The data loss persists through subsequent operations too, since
     // transitionLifecycle() also parses against the base schema.
     expect((transitioned as unknown as TaskEntityType).assigned_agent).toBeUndefined();
+  });
+});
+
+describe("ObjectStore — recovery-only restore", () => {
+  it("hydrates an exact snapshot without bumping versions or rewriting history", () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    const transitioned = store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+
+    const recovery = new ObjectStore();
+    const restored = recovery.restore(transitioned);
+
+    expect(restored).toEqual(transitioned);
+    expect(restored.version).toBe(2);
+    expect(recovery.get(created.entity_id)).toEqual(transitioned);
+  });
+
+  it("refuses replay that rewinds a version or rewrites append-only history", () => {
+    const store = new ObjectStore();
+    const created = store.create(baseFields({ entity_type: "canonical_object" }) as never);
+    const transitioned = store.transitionLifecycle(created.entity_id, "validated", "human:founder");
+
+    const recovery = new ObjectStore();
+    recovery.restore(created);
+    recovery.restore(transitioned);
+
+    // A replayed snapshot may only advance the record.
+    expect(() => recovery.restore(transitioned)).toThrow(InvalidLifecycleTransitionError);
+    // It may also never rewrite or truncate append-only history.
+    expect(() =>
+      recovery.restore({
+        ...transitioned,
+        version: transitioned.version + 1,
+        lifecycle_history: [],
+      }),
+    ).toThrow(AppendOnlyFieldError);
   });
 });

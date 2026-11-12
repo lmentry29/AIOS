@@ -1,0 +1,30 @@
+{
+  "name": "@aios/host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aios-host": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@aios/core": "workspace:*",
+    "@aios/founder": "workspace:*",
+    "@aios/learning": "workspace:*",
+    "@aios/objects": "workspace:*",
+    "@aios/orchestration": "workspace:*",
+    "@aios/work-hierarchy": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

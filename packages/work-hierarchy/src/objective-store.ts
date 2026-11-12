@@ -1,6 +1,10 @@
-import type { LifecycleState, ObjectiveEntity as ObjectiveEntityType, Relationship } from '@aios/core';
-import { ObjectiveEntity } from '@aios/core';
-import { ObjectStore, type EntityPatch } from '@aios/objects';
+import type {
+  LifecycleState,
+  ObjectiveEntity as ObjectiveEntityType,
+  Relationship,
+} from "@aios/core";
+import { ObjectiveEntity } from "@aios/core";
+import { ObjectStore, type EntityPatch } from "@aios/objects";
 
 /**
  * ObjectiveStore — the Work Hierarchy's Objective level, per ADR-0010 (Accepted
@@ -45,8 +49,8 @@ export class ObjectiveStore {
     // Objectives are Canonical Objects; filter to the subtype, since Canonical Object
     // is a shared entity_type across memory_object / artifact / objective.
     return this.store
-      .list({ entityType: 'canonical_object' })
-      .filter((o) => o.entity_subtype === 'objective');
+      .list({ entityType: "canonical_object" })
+      .filter((o) => o.entity_subtype === "objective");
   }
 
   /**
@@ -55,7 +59,7 @@ export class ObjectiveStore {
    */
   updateObjective(
     objectiveId: string,
-    patch: EntityPatch<ObjectiveEntityType>
+    patch: EntityPatch<ObjectiveEntityType>,
   ): ObjectiveEntityType {
     return this.store.update(objectiveId, patch);
   }
@@ -65,7 +69,7 @@ export class ObjectiveStore {
     objectiveId: string,
     newState: LifecycleState,
     actor: string,
-    substate?: string
+    substate?: string,
   ): ObjectiveEntityType {
     return this.store.transitionLifecycle(objectiveId, newState, actor, substate);
   }
@@ -78,9 +82,9 @@ export class ObjectiveStore {
   addDependency(objectiveId: string, dependsOnObjectiveId: string): ObjectiveEntityType {
     const relationship: Relationship = {
       target_entity_id: dependsOnObjectiveId,
-      target_entity_type: 'canonical_object',
-      relationship_type: 'depends_on',
-      direction: 'outbound',
+      target_entity_type: "canonical_object",
+      relationship_type: "depends_on",
+      direction: "outbound",
     };
     return this.store.addRelationship(objectiveId, relationship);
   }
