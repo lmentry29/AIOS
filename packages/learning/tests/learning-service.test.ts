@@ -157,7 +157,9 @@ describe("LearningService — queries", () => {
     if (!listed) throw new Error("Knowledge record missing from stage query.");
     (listed.content as { nested: { value: number } }).nested.value = 77;
 
-    expect((svc.getKnowledge(id)?.content as { nested: { value: number } }).nested.value).toBe(1);
+    const current = svc.getKnowledge(id);
+    if (!current) throw new Error("Knowledge record missing after mutation.");
+    expect((current.content as { nested: { value: number } }).nested.value).toBe(1);
   });
 
   it("lists records by stage", async () => {

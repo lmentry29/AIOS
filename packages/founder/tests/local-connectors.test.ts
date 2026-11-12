@@ -66,7 +66,8 @@ describe("AuthorizedLocalConnectorEvidenceReader", () => {
     expect(String(url)).toContain("/api/connectors/gmail/search?query=subject%3Ainterview");
     expect(init?.method).toBe("GET");
     expect(init?.redirect).toBe("error");
-    expect((init?.headers as Record<string, string>).authorization).toContain("Basic ");
+    const headers = init?.headers as Record<string, string> | undefined;
+    expect(headers?.authorization).toContain("Basic ");
     expect(results[0]?.source_type).toBe("gmail");
     expect(results[0]?.source_id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(results[0]?.snippet).toContain("interview");

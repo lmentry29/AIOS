@@ -17,7 +17,7 @@
  * This file imports the built host provenance module so CI does not maintain a second
  * hashing implementation. Run `pnpm turbo build` before invoking it.
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,

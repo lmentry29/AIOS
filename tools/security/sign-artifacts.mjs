@@ -8,7 +8,7 @@
  */
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
   createTrustRoot,
   generateSigningKey,

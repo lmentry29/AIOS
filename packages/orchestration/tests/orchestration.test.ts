@@ -56,13 +56,7 @@ function workflow(taskIds: string[], overrides: Record<string, unknown> = {}): W
   } as WorkflowEntity;
 }
 
-function harness(
-  options: {
-    allow?: boolean;
-    verified?: boolean;
-    throwOnExecute?: boolean;
-  } = {},
-) {
+function harness(options: { allow?: boolean; verified?: boolean; throwOnExecute?: boolean } = {}) {
   const tasks = new TaskStore();
   const verifierId = randomUUID();
   const calls: string[] = [];
