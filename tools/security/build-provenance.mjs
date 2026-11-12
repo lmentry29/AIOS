@@ -186,7 +186,7 @@ function main() {
     try {
       const verified = verifyBuildAttestation({
         attestation: loadBuildAttestation(attestationPath),
-        trust_root: loadTrustRoot(trustRootPath),
+        trust_root: loadTrustRoot(trustRootPath, 'artifact'),
         ...(flags('artifact').length === 0 ? {} : { actual_artifacts: artifactArguments() }),
         expected: expected(),
       });

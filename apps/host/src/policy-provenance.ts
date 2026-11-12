@@ -100,6 +100,9 @@ function keyFromTrustRoot(trustRoot: TrustRoot, keyId: string): TrustedKey {
   if (key === undefined) {
     throw new PolicyProvenanceError("The policy signing key is not present in the trust root.");
   }
+  if (key.purpose !== "policy") {
+    throw new PolicyProvenanceError("The policy signing key is not a policy-purpose key.");
+  }
   return key;
 }
 
@@ -273,14 +276,14 @@ export class PolicyProvenanceAuthority implements PolicyProvenancePort, AuditHea
   }): PolicyProvenanceAuthority {
     return new PolicyProvenanceAuthority(
       undefined,
-      loadTrustRoot(options.trust_root_file),
+      loadTrustRoot(options.trust_root_file, "policy"),
       "",
       options.now ?? (() => new Date()),
     );
   }
 
   static fromFiles(options: PolicyProvenanceAuthorityOptions): PolicyProvenanceAuthority {
-    const trustRoot = loadTrustRoot(options.trust_root_file);
+    const trustRoot = loadTrustRoot(options.trust_root_file, "policy");
     const bytes = readBoundedRegularFile(
       options.private_key_file,
       "policy signing private key",

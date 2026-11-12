@@ -199,6 +199,7 @@ try {
         public_key_pem: policySigningKey.public_key_pem,
         not_before: new Date(trustRootNow - 60_000).toISOString(),
         not_after: new Date(trustRootNow + 24 * 60 * 60 * 1000).toISOString(),
+        purpose: "policy",
       }),
       null,
       2,

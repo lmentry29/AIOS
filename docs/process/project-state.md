@@ -233,10 +233,21 @@ Policy bundles and decisions now carry local detached provenance (ADR-0034).
 - ADR-0016 — **Accepted (2026-11-10)**: `packages/*` are the platform domain; `apps/host`
   is the trusted local application; UI is an untrusted future client. The host rejects every
   `Origin` until a session/CSRF/cookie ADR exists.
-- ADR-0017 — **Proposed (2026-11-10)**: Mission as a Canonical Object subtype. Blocked on a
-  sourced field-level model; do not invent a sixth entity or merge Mission with containers.
-- ADR-0018 — **Proposed (2026-11-10)**: infrastructure records as canonical objects with
-  secret references only. No infrastructure store or secret broker exists.
+- ADR-0017 — **Accepted (2026-11-12)**: Mission as a Canonical Object subtype with
+  `name`, `purpose`, lifecycle state/history and `owner_id`; additive migration. The schema
+  and store are implemented; host routes and durable Mission journaling remain follow-on work.
+- ADR-0018 — **Accepted (2026-11-12)**: infrastructure records as canonical objects with
+  secret references only, plus a host-owned secret broker. No infrastructure store or broker
+  is implemented yet.
+- ADR-0035 — **Accepted (2026-11-12)**: purpose-bound v2 trust roots, HSM/KMS production
+  custody, external audit witness, and Sigstore/SLSA build provenance without a runtime
+  attestation claim. v2 purpose checks are implemented; operator resources remain pending.
+- ADR-0036 — **Accepted (2026-11-12)**: Mission/infrastructure work model and the narrowed
+  Project-only container contract.
+- ADR-0037 — **Accepted (2026-11-12)**: Linux + macOS 26 Apple silicon platform matrix,
+  same-origin passkey UI authentication, durable scheduling, and cgroup v2/Landlock limits.
+- ADR-0038 — **Accepted (2026-11-12)**: read-only live integrations and signed application
+  distribution with no auto-update.
 - ADR-0019 — **Accepted (2026-11-10)**: fixed `local.exec`, fail-closed sandbox providers
   (Docker/bubblewrap/Seatbelt), bounded/hashed evidence, and an independently executed
   verifier command. Verification decisions name their verifier, the identity is persisted in

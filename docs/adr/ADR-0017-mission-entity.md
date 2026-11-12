@@ -2,9 +2,10 @@
 
 ## Status
 
-**Proposed** (2026-11-10). Blocked on a field-level Mission model. This ADR does not
-change runtime behavior until accepted; the current code still follows ADR-0010, where
-Mission is a typed reference with no backing record.
+**Accepted** (2026-11-12). The owner approved the field model and additive migration.
+The Mission schema and store are implemented in `@aios/core` and `@aios/work-hierarchy`;
+host routes and durable Mission journaling are follow-on work. When this ADR was Proposed
+(2026-11-10), the code still followed ADR-0010 and Mission was a typed reference.
 
 ## Context
 
@@ -19,7 +20,7 @@ At the same time, the Canonical Object Model forbids a sixth top-level entity ty
 AGENTS.md rule 4 forbids merging the Work Hierarchy with Organizational Containers. Any
 resolution must preserve both constraints.
 
-## Decision (proposed)
+## Decision
 
 1. **Mission becomes a Canonical Object subtype**, `entity_subtype: 'mission'`, exactly as
    Objective and Project are Canonical Object subtypes. It is not a sixth top-level
@@ -28,9 +29,10 @@ resolution must preserve both constraints.
    target of `work_hierarchy_parent` at level `'mission'`; it must not carry an
    `organizational_containers`-only substitute, and it must not be placed inside a
    Project record as a parent.
-3. **The field model must be sourced before acceptance.** The minimum proposal is:
-   `name`, `purpose` (prose), `status`, `owner_id`, and append-only lifecycle history
-   inherited from `CanonicalEntity`. No schedule, budget, department, or container fields
+3. **The field model must be sourced before acceptance.** The accepted minimum is:
+`name`, `purpose` (prose), `status`, `owner_id`, and append-only lifecycle history
+inherited from `CanonicalEntity`. `status` is the base `lifecycle_state`; it is not a
+second status axis. No schedule, budget, department, or container fields
    are added without a source and a separate decision.
 4. **Storage follows the existing object-store seam.** A Mission is created and read
    through a canonical repository, not through a new database or the Obsidian vault.

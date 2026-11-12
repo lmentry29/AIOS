@@ -116,13 +116,16 @@ function onlyFields(
 function keyFromTrustRoot(trustRoot: TrustRoot, keyId: string): TrustedKey {
   if (!SHA256_HEX.test(keyId))
     throw new VerifierDecisionError("The verifier signing key id is malformed.");
-  if (trustRoot.schema_version !== 1)
+  if (trustRoot.schema_version !== 2)
     throw new VerifierDecisionError("The trust root schema is unsupported.");
   const key = trustRoot.keys.find((entry) => entry.key_id === keyId);
   if (key === undefined) {
     throw new VerifierDecisionError(
       `The verifier signing key ${keyId} is not present in the trust root.`,
     );
+  }
+  if (key.purpose !== "verifier") {
+    throw new VerifierDecisionError("The verifier signing key is not a verifier-purpose key.");
   }
   if (key.status !== "trusted") {
     throw new VerifierDecisionError(`The verifier signing key ${keyId} is revoked.`);
@@ -530,7 +533,7 @@ export function loadVerifierDecisionSigner(options: {
   return VerifierDecisionSigner.fromPrivateKey({
     private_key_pem: bytes.toString("utf8"),
     key_id: options.key_id,
-    trust_root: loadTrustRoot(options.trust_root_file),
+    trust_root: loadTrustRoot(options.trust_root_file, "verifier"),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 }

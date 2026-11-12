@@ -200,10 +200,10 @@ function resolveAgentUnlessConfigured(
 /**
  * Refuses to compose the host when the policy signer is also trusted as a verifier key.
  *
- * The trust-root schema has no purpose field (ADR-0033/0034), so the strongest local
- * separation available without a new trust-root format is to require distinct key ids and
- * to reject a verifier root that contains the configured policy signing key. Key custody
- * and a purpose-bound production root remain operator decisions, not claims of this check.
+ * ADR-0035 now gives every trust-root key exactly one purpose. This composition check is
+ * retained as defense-in-depth so a misconfigured policy key id cannot reach the verifier
+ * root even if a future root contains mixed purposes. HSM/KMS custody remains an
+ * operator-supplied requirement, not a claim of this check.
  */
 export function assertSeparatePolicyAndVerifierKeys(
   config: Pick<HostConfig, 'policy_provenance' | 'execution'>,
@@ -216,7 +216,7 @@ export function assertSeparatePolicyAndVerifierKeys(
       'The policy signing key id must not be the configured verifier signing key id.',
     );
   }
-  const verifierRoot = loadTrustRoot(execution.verifier_trust_root_file);
+  const verifierRoot = loadTrustRoot(execution.verifier_trust_root_file, 'verifier');
   if (verifierRoot.keys.some((key) => key.key_id === config.policy_provenance.key_id)) {
     throw new Error(
       'The configured policy signing key must not be present in the verifier trust root.',

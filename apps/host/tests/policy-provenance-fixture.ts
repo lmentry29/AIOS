@@ -46,6 +46,7 @@ export function createPolicyAuthority(
     public_key_pem: key.public_key_pem,
     not_before: (options.notBefore ?? new Date(now.getTime() - 60_000)).toISOString(),
     not_after: (options.notAfter ?? new Date(now.getTime() + 24 * 60 * 60 * 1000)).toISOString(),
+    purpose: "policy",
     ...(options.status === undefined ? {} : { status: options.status }),
   });
   writeFileSync(trustRootPath, `${JSON.stringify(trustRoot, null, 2)}\n`, { mode: 0o600 });

@@ -3,6 +3,7 @@ import type {
   AgentEntity,
   CanonicalEntity,
   MemoryObjectEntity,
+  MissionEntity,
   ObjectiveEntity,
   ProjectEntity,
   TaskEntity,
@@ -75,6 +76,20 @@ export function makeMemoryObject(overrides: Record<string, unknown> = {}): Memor
     source_references: [],
     ...overrides,
   }) as unknown as MemoryObjectEntity;
+}
+
+/**
+ * A Mission — a Canonical Object subtype (`entity_subtype: 'mission'`), per ADR-0017.
+ * It is the Work Hierarchy root and must never carry `work_hierarchy_parent`.
+ */
+export function makeMission(overrides: Record<string, unknown> = {}): MissionEntity {
+  return base({
+    entity_type: 'canonical_object',
+    entity_subtype: 'mission',
+    name: 'Founder intelligence',
+    purpose: 'Make durable, inspectable decisions about the work that matters.',
+    ...overrides,
+  }) as unknown as MissionEntity;
 }
 
 /**

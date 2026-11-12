@@ -138,7 +138,7 @@ function isEmptyTrustRoot(path) {
     typeof parsed === "object" &&
     parsed !== null &&
     !Array.isArray(parsed) &&
-    parsed.schema_version === 1 &&
+    (parsed.schema_version === 1 || parsed.schema_version === 2) &&
     Array.isArray(parsed.keys) &&
     parsed.keys.length === 0
   );
@@ -162,11 +162,13 @@ function main() {
   if (command === "init") {
     const rootPath = resolve(flag("trust-root"));
     const key = publicKey(flag("public-key"));
+    const purpose = flag("purpose", false) ?? "artifact";
     const root = createTrustRoot({
       key_id: key.key_id,
       public_key_pem: key.public_key_pem,
       not_before: flag("not-before"),
       not_after: flag("not-after"),
+      purpose,
     });
     let exists = false;
     try {
@@ -196,7 +198,8 @@ function main() {
   }
   if (command === "rotate") {
     const rootPath = resolve(flag("trust-root"));
-    const existing = loadTrustRoot(rootPath);
+    const purpose = flag("purpose", false) ?? "artifact";
+    const existing = loadTrustRoot(rootPath, purpose);
     const key = publicKey(flag("public-key"));
     const root = createTrustRootFromKeys([
       ...existing.keys,
@@ -205,6 +208,7 @@ function main() {
         public_key_pem: key.public_key_pem,
         not_before: flag("not-before"),
         not_after: flag("not-after"),
+        purpose,
       },
     ]);
     writeAtomic(rootPath, root);
@@ -243,6 +247,7 @@ function main() {
       trust_root: rootPath,
       keys: root.keys.map((key) => ({
         key_id: key.key_id,
+        purpose: key.purpose,
         status: key.status,
         not_before: key.not_before,
         not_after: key.not_after,

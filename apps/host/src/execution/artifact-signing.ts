@@ -30,6 +30,9 @@ export class SigningError extends Error {
 
 export type ArtifactKind = 'gvisor-runtime-pin' | 'gvisor-rootfs-manifest';
 export type KeyStatus = 'trusted' | 'revoked';
+/** One key may authorize exactly one subject class (ADR-0035). */
+export type KeyPurpose = 'artifact' | 'policy' | 'verifier' | 'audit';
+const KEY_PURPOSES: readonly KeyPurpose[] = ['artifact', 'policy', 'verifier', 'audit'];
 
 export const STATEMENT_SCHEMA_VERSION = 2 as const;
 
@@ -52,13 +55,14 @@ export interface TrustedKey {
   key_id: string;
   algorithm: 'ed25519';
   public_key_pem: string;
+  purpose: KeyPurpose;
   status: KeyStatus;
   not_before: string;
   not_after: string;
 }
 
 export interface TrustRoot {
-  schema_version: 1;
+  schema_version: 2;
   keys: TrustedKey[];
 }
 
@@ -335,12 +339,17 @@ export interface TrustRootKeyInput {
   public_key_pem: string;
   not_before: string;
   not_after: string;
+  purpose?: KeyPurpose;
   status?: KeyStatus;
 }
 
 function trustRootKey(key: TrustRootKeyInput, index: number): TrustedKey {
   if (!KEY_ID.test(key.key_id) || key.key_id !== keyIdForPublicKey(key.public_key_pem)) {
     throw new SigningError(`The trusted key ${index} id does not match its public key.`);
+  }
+  const purpose = key.purpose ?? 'artifact';
+  if (!KEY_PURPOSES.includes(purpose)) {
+    throw new SigningError(`The trusted key ${key.key_id} has an invalid purpose.`);
   }
   const status = key.status ?? 'trusted';
   if (status !== 'trusted' && status !== 'revoked') {
@@ -355,6 +364,7 @@ function trustRootKey(key: TrustRootKeyInput, index: number): TrustedKey {
     key_id: key.key_id,
     algorithm: 'ed25519',
     public_key_pem: key.public_key_pem,
+    purpose,
     status,
     not_before: notBefore,
     not_after: notAfter,
@@ -375,19 +385,23 @@ export function createTrustRootFromKeys(keys: readonly TrustRootKeyInput[]): Tru
     seen.add(key.key_id);
     normalized.push(trustRootKey(key, index));
   }
-  return { schema_version: 1, keys: normalized };
+  return { schema_version: 2, keys: normalized };
 }
 
 export function createTrustRoot(key: TrustRootKeyInput): TrustRoot {
   return createTrustRootFromKeys([key]);
 }
 
-export function loadTrustRoot(path: string): TrustRoot {
+export function loadTrustRoot(
+  path: string,
+  expectedPurpose: KeyPurpose = 'artifact',
+): TrustRoot {
   const raw = readCappedFile(path, 'trust root', MAX_TRUST_ROOT_BYTES);
   const parsed = parseStrictJson(raw.toString('utf8'), 'trust root');
-  if (!isRecord(parsed) || parsed.schema_version !== 1) {
-    throw new SigningError('The trust root must be a JSON object with schema_version 1.');
+  if (!isRecord(parsed) || (parsed.schema_version !== 1 && parsed.schema_version !== 2)) {
+    throw new SigningError('The trust root must be a JSON object with schema_version 1 or 2.');
   }
+  const schemaVersion = parsed.schema_version;
   requireOnlyFields(parsed, ['schema_version', 'keys'], 'trust root');
   if (!Array.isArray(parsed.keys)) {
     throw new SigningError('The trust root must contain a keys array.');
@@ -401,7 +415,9 @@ export function loadTrustRoot(path: string): TrustRoot {
     if (!isRecord(entry)) throw new SigningError(`The trust root key ${index} must be an object.`);
     requireOnlyFields(
       entry,
-      ['key_id', 'algorithm', 'public_key_pem', 'status', 'not_before', 'not_after'],
+      schemaVersion === 1
+        ? ['key_id', 'algorithm', 'public_key_pem', 'status', 'not_before', 'not_after']
+        : ['key_id', 'algorithm', 'public_key_pem', 'purpose', 'status', 'not_before', 'not_after'],
       `trust root key ${index}`,
     );
     const keyId = requireString(entry.key_id, `keys[${index}].key_id`, 64);
@@ -414,6 +430,10 @@ export function loadTrustRoot(path: string): TrustRoot {
     seen.add(keyId);
     if (entry.algorithm !== 'ed25519') {
       throw new SigningError(`The trust root key ${keyId} must use ed25519.`);
+    }
+    const purpose = schemaVersion === 1 ? expectedPurpose : entry.purpose;
+    if (!KEY_PURPOSES.includes(purpose as KeyPurpose)) {
+      throw new SigningError(`The trust root key ${keyId} must have one valid purpose.`);
     }
     const publicKeyPem = requireString(entry.public_key_pem, `keys[${index}].public_key_pem`, MAX_PEM_BYTES);
     if (keyIdForPublicKey(publicKeyPem) !== keyId) {
@@ -432,6 +452,7 @@ export function loadTrustRoot(path: string): TrustRoot {
       key_id: keyId,
       algorithm: 'ed25519',
       public_key_pem: publicKeyPem,
+      purpose: purpose as KeyPurpose,
       status,
       not_before: notBefore,
       not_after: notAfter,
@@ -442,7 +463,7 @@ export function loadTrustRoot(path: string): TrustRoot {
       'The trust root contains no keys; provision a signing key and commit its public key before enabling signed artifacts.',
     );
   }
-  return { schema_version: 1, keys };
+  return { schema_version: 2, keys };
 }
 
 export function sourceFromEnvironment(environment: NodeJS.ProcessEnv = process.env): SignatureSource {
@@ -484,6 +505,9 @@ export function signArtifact(options: {
     const key = options.trust_root.keys.find((entry) => entry.key_id === options.key_id);
     if (key === undefined) {
       throw new SigningError(`The signing key ${options.key_id} is not present in the trust root.`);
+    }
+    if (key.purpose !== 'artifact') {
+      throw new SigningError(`The signing key ${options.key_id} is not an artifact-purpose key.`);
     }
     if (key.status !== 'trusted') {
       throw new SigningError(`The signing key ${options.key_id} is revoked in the trust root.`);
@@ -609,10 +633,13 @@ export function verifyArtifactSignature(options: {
     }
   }
   const expectedSubject = validateSubject(options.expected_subject, 'expected');
-  const trustRoot = loadTrustRoot(options.trust_root_path);
+  const trustRoot = loadTrustRoot(options.trust_root_path, 'artifact');
   const key = trustRoot.keys.find((entry) => entry.key_id === statement.key_id);
   if (key === undefined) {
     throw new SigningError(`The signature key ${statement.key_id} is not present in the trust root.`);
+  }
+  if (key.purpose !== 'artifact') {
+    throw new SigningError(`The signature key ${statement.key_id} is not an artifact-purpose key.`);
   }
   if (key.status === 'revoked') {
     throw new SigningError(`The signature key ${statement.key_id} is revoked in the trust root.`);

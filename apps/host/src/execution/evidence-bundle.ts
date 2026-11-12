@@ -33,6 +33,7 @@ export type EvidenceBundleFailure =
   | 'UNSUPPORTED_VERSION'
   | 'MALFORMED_BUNDLE'
   | 'UNKNOWN_KEY'
+  | 'WRONG_KEY_PURPOSE'
   | 'KEY_REVOKED'
   | 'KEY_NOT_YET_VALID'
   | 'KEY_EXPIRED'
@@ -705,9 +706,10 @@ export function verifyEvidenceBundle(options: {
 }): VerifiedEvidenceBundle {
   const bundle = parseEvidenceBundle(typeof options.bundle === 'string' ? options.bundle : JSON.stringify(options.bundle));
   const header = bundle.header;
-  if (options.trust_root.schema_version !== 1) fail('MALFORMED_BUNDLE', 'The trust root schema is unsupported.');
+  if (options.trust_root.schema_version !== 2) fail('MALFORMED_BUNDLE', 'The trust root schema is unsupported.');
   const trusted = options.trust_root.keys.find((key) => key.key_id === header.signing_key.key_id);
   if (!trusted) fail('UNKNOWN_KEY', `The bundle signing key ${header.signing_key.key_id} is absent from the trust root.`);
+  if (trusted.purpose !== 'artifact') fail('WRONG_KEY_PURPOSE', 'The bundle signing key is not an artifact-purpose key.');
   if (trusted.status !== 'trusted') fail('KEY_REVOKED', `The bundle signing key ${header.signing_key.key_id} is revoked.`);
   if (trusted.public_key_pem !== header.signing_key.public_key_pem) {
     fail('UNKNOWN_KEY', 'The bundle signing key does not match the trust root key material.');
@@ -769,7 +771,7 @@ export function loadEvidenceBundle(path: string): EvidenceBundle {
 }
 
 export function loadTrustRootForBundle(path: string): TrustRoot {
-  return loadTrustRoot(path);
+  return loadTrustRoot(path, 'artifact');
 }
 
 /** Writes a bundle atomically with owner-only permissions. */

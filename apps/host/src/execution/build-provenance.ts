@@ -39,6 +39,7 @@ export type BuildAttestationFailure =
   | 'KEY_NOT_YET_VALID'
   | 'KEY_EXPIRED'
   | 'WRONG_KEY'
+  | 'WRONG_KEY_PURPOSE'
   | 'SIGNATURE'
   | 'ATTESTATION_DIGEST'
   | 'WRONG_REPOSITORY'
@@ -392,9 +393,10 @@ export function verifyBuildAttestation(options: {
     typeof options.attestation === 'string' ? options.attestation : JSON.stringify(options.attestation),
   );
   validatePortable(attestation, 0);
-  if (options.trust_root.schema_version !== 1) fail('MALFORMED_ATTESTATION', 'The trust root schema is unsupported.');
+  if (options.trust_root.schema_version !== 2) fail('MALFORMED_ATTESTATION', 'The trust root schema is unsupported.');
   const key = options.trust_root.keys.find((entry) => entry.key_id === attestation.signing_key.key_id);
   if (key === undefined) fail('UNKNOWN_KEY', 'The attestation signing key is absent from the trust root.');
+  if (key.purpose !== 'artifact') fail('WRONG_KEY_PURPOSE', 'The attestation signing key is not an artifact-purpose key.');
   if (key.status !== 'trusted') fail('KEY_REVOKED', 'The attestation signing key is revoked.');
   if (key.public_key_pem !== attestation.signing_key.public_key_pem) {
     fail('UNKNOWN_KEY', 'The attestation signing key does not match the trust root key material.');

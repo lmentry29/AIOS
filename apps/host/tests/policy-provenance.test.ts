@@ -162,6 +162,7 @@ describe("policy bundle provenance", () => {
           public_key_pem: key.public_key_pem,
           not_before: new Date(now - 60_000).toISOString(),
           not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+          purpose: "verifier",
         }),
       ),
       { mode: 0o600 },
@@ -321,18 +322,20 @@ describe("policy bundle provenance", () => {
     writeFileSync(nextKeyPath, next.private_key_pem, { mode: 0o600 });
     const root = JSON.parse(readFileSync(first.config.trust_root_file, "utf8")) as TrustRoot;
     const combined = createTrustRootFromKeys([
-      ...root.keys.map(({ key_id, public_key_pem, not_before, not_after, status }) => ({
+      ...root.keys.map(({ key_id, public_key_pem, not_before, not_after, status, purpose }) => ({
         key_id,
         public_key_pem,
         not_before,
         not_after,
         status,
+        purpose,
       })),
       {
         key_id: next.key_id,
         public_key_pem: next.public_key_pem,
         not_before: new Date(Date.now() - 60_000).toISOString(),
         not_after: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        purpose: "policy",
       },
     ]);
     writeFileSync(first.config.trust_root_file, `${JSON.stringify(combined, null, 2)}\n`, {

@@ -100,6 +100,7 @@ function main() {
       public_key_pem: key.public_key_pem,
       not_before: new Date(now - 60 * 60 * 1000).toISOString(),
       not_after: new Date(now + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      purpose: 'artifact',
     });
     writeFileSync(privatePath, key.private_key_pem, { mode: 0o600, flag: 'wx' });
     writeFileSync(trustRootPath, `${JSON.stringify(trustRoot, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
@@ -112,7 +113,7 @@ function main() {
     const keyPath = regularFile(flag('key'), 'private key');
     const trustRootPath = regularFile(flag('trust-root'), 'trust root');
     const out = resolve(flag('out'));
-    const trustRoot = loadTrustRoot(trustRootPath);
+    const trustRoot = loadTrustRoot(trustRootPath, 'artifact');
     const publicKey = generatePublicKey(keyPath);
     const statement = signArtifact({
       artifact_kind: artifactKind,

@@ -78,6 +78,7 @@ function main() {
       public_key_pem: publicKeyPem,
       not_before: flag('not-before'),
       not_after: flag('not-after'),
+      purpose: 'artifact',
     }));
     return;
   }
@@ -111,7 +112,7 @@ function main() {
     try {
       const verified = verifyEvidenceBundle({
         bundle: loadEvidenceBundle(bundlePath),
-        trust_root: loadTrustRoot(trustRootPath),
+        trust_root: loadTrustRoot(trustRootPath, 'artifact'),
         ...(expectedHead === undefined ? {} : { expected_head_hash: expectedHead }),
       });
       output({ ok: true, command: 'verify', bundle: bundlePath, ...verified });

@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { AgentRunner } from '@aios/agents';
 import { ImmutableObjectiveFieldError } from '@aios/objects';
-import { ObjectiveStore, TaskStore } from '@aios/work-hierarchy';
-import { FOUNDER, makeAgent, makeObjective, makeTask } from './fixtures.js';
+import { MissionStore, ObjectiveStore, TaskStore } from '@aios/work-hierarchy';
+import { FOUNDER, makeAgent, makeMission, makeObjective, makeTask } from './fixtures.js';
 
 /**
  * FULL CHAIN: Mission → Objective → Task → Agent
@@ -18,26 +18,24 @@ import { FOUNDER, makeAgent, makeObjective, makeTask } from './fixtures.js';
  * Objective a Canonical Object subtype, and packages/core/src/schema/objective.ts
  * implements it. This is the test that closes the Milestone 1 DoD.
  *
- * MISSION IS STILL A DANGLING REFERENCE, and that is deliberate, not a shortcut.
- * ADR-0010 §3 keeps Mission a non-entity: the corpus specifies no field-level model
- * for it, so promoting it would mean inventing its fields. The chain below is therefore
- * genuinely asymmetric — the Objective→Task link dereferences to a real record, and the
- * Mission→Objective link does not. Both facts are asserted, so the gap stays visible
- * rather than being quietly papered over by a stub Mission.
+ * The chain now dereferences end to end: Mission is a Canonical Object subtype with a
+ * real store (ADR-0017), Objective points to that Mission record, and Task points to the
+ * Objective. The historical dangling-reference assertion has been replaced by a real
+ * resolution test so the accepted model cannot silently regress to a bare UUID.
  */
 
 describe('Mission → Objective → Task → Agent (playbook §8, Milestone 1 DoD)', () => {
   function buildChain() {
+    const missionStore = new MissionStore();
     const objectiveStore = new ObjectiveStore();
     const taskStore = new TaskStore();
     const runner = new AgentRunner(taskStore);
 
-    // Mission: a typed UUID with no backing record, by design (ADR-0010 §3).
-    const missionId = randomUUID();
+    const mission = missionStore.createMission(makeMission());
 
     const objective = objectiveStore.createObjective(
       makeObjective({
-        work_hierarchy_parent: { entity_id: missionId, level: 'mission' },
+        work_hierarchy_parent: { entity_id: mission.entity_id, level: 'mission' },
       }),
     );
 
@@ -49,11 +47,11 @@ describe('Mission → Objective → Task → Agent (playbook §8, Milestone 1 Do
 
     const agent = runner.createAgent(makeAgent());
 
-    return { objectiveStore, taskStore, runner, missionId, objective, task, agent };
+    return { missionStore, objectiveStore, taskStore, runner, mission, objective, task, agent };
   }
 
   it('links the whole chain, and the Task’s parent dereferences to a real Objective', () => {
-    const { objectiveStore, task, objective, missionId } = buildChain();
+    const { missionStore, objectiveStore, task, objective, mission } = buildChain();
 
     // THE ASSERTION ADR-0010 EXISTS TO MAKE TRUE. Before it, this entity_id was a
     // well-typed UUID pointing at nothing — the dangling reference that stopped the
@@ -64,25 +62,24 @@ describe('Mission → Objective → Task → Agent (playbook §8, Milestone 1 Do
     expect(parent?.entity_id).toBe(objective.entity_id);
     expect(parent?.purpose).toBe('CI feedback is too slow to be useful');
 
-    // And the Objective hangs off the Mission, completing the ADR-0004 chain.
+    // And the Objective hangs off a real Mission, completing the ADR-0004 chain.
     expect(objective.work_hierarchy_parent?.level).toBe('mission');
-    expect(objective.work_hierarchy_parent?.entity_id).toBe(missionId);
+    const missionParent = missionStore.getMission(
+      objective.work_hierarchy_parent?.entity_id ?? '',
+    );
+    expect(missionParent?.entity_id).toBe(mission.entity_id);
+    expect(missionParent?.purpose).toBe(
+      'Make durable, inspectable decisions about the work that matters.',
+    );
   });
 
-  it('leaves Mission a dangling reference — knowingly retained, not an oversight', async () => {
+  it('resolves the Mission through the public MissionStore surface', async () => {
     const { objective } = buildChain();
-
-    // The Mission id is well-typed and points at nothing: @aios/work-hierarchy exports
-    // a store for Objective and Task, and none for Mission, so there is nothing to
-    // resolve it against. ADR-0010 §3 — the corpus specifies no field-level model for
-    // Mission, and inventing one would be the unilateral resolution the standing rule
-    // forbids. This asserts the asymmetry against the package's real public surface,
-    // so if a MissionStore is ever added, this test fails and forces an update.
     const workHierarchy = await import('@aios/work-hierarchy');
+
     expect(Object.keys(workHierarchy)).toContain('ObjectiveStore');
     expect(Object.keys(workHierarchy)).toContain('TaskStore');
-    expect(Object.keys(workHierarchy)).not.toContain('MissionStore');
-
+    expect(Object.keys(workHierarchy)).toContain('MissionStore');
     expect(objective.work_hierarchy_parent?.level).toBe('mission');
     expect(objective.work_hierarchy_parent?.entity_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,

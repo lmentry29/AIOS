@@ -2,8 +2,9 @@
 
 ## Status
 
-**Proposed** (2026-11-10). No infrastructure inventory, provider credential, or deployment
-record is implemented by this ADR.
+**Accepted** (2026-11-12). The owner approved canonical infrastructure records with a
+host-owned secret broker. No infrastructure inventory, provider credential, or deployment
+record is implemented yet; this ADR authorizes that work.
 
 ## Context
 

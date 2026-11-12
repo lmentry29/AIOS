@@ -764,6 +764,7 @@ describe('trusted host HTTP surface', () => {
       public_key_pem: generated.public_key_pem,
       not_before: new Date(now - 60_000).toISOString(),
       not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+      purpose: 'verifier',
     });
     const keyPath = join(directory, 'verifier.pem');
     const trustRootPath = join(directory, 'trust-root.json');

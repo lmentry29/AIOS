@@ -176,12 +176,12 @@ describe('strict statement parsing', () => {
 
   it('rejects duplicate, unknown and dangerous trust-root entries', () => {
     const value = fixture();
-    const duplicate = { schema_version: 1, keys: [...value.trustRoot.keys, ...value.trustRoot.keys] };
+    const duplicate = { schema_version: 2, keys: [...value.trustRoot.keys, ...value.trustRoot.keys] };
     writeFileSync(value.trustRootPath, JSON.stringify(duplicate));
     expect(() => verify(value)).toThrow(/duplicate key id/);
 
     const unknown = {
-      schema_version: 1,
+      schema_version: 2,
       keys: [{ ...value.trustRoot.keys[0], extra: true }],
     };
     writeFileSync(value.trustRootPath, JSON.stringify(unknown));

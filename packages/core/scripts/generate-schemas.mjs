@@ -84,6 +84,10 @@ const lifecycleContracts = {
     substateModule: "canonical-object",
     substateEnum: "CanonicalObjectSubstate",
   },
+  "mission.MissionEntity": {
+    substateModule: "canonical-object",
+    substateEnum: "CanonicalObjectSubstate",
+  },
 };
 
 const applyLifecycleContract = (moduleName, exportName, schema, mod, sharedModules) => {
