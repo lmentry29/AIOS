@@ -163,7 +163,7 @@ binary and a workspace-local Turbo cache. No lockfile or dependency was changed 
 workaround.
 
 `pnpm format:check` is now green after the owner-approved repository-wide migration:
-the current gate checks **208 files with 0 findings**, and `biome format --write .` fixed
+the current gate checks **209 files with 0 findings**, and `biome format --write .` fixed
 **149 files**. This replaced the historical baseline rather than cherry-picking the added
 files. The previous line-number citations in the production-reachability table were
 re-anchored in the same migration commit. The migration changed formatting only; the full
@@ -204,6 +204,44 @@ conformance 107, integration 43; host **287 passed / 17 skipped** across 31 file
 files, 3 skipped files). The 17 skipped host tests are live gVisor/Docker/rootfs probes and
 are not counted as passing. Security run `43136727667`
 (https://github.com/lmentry29/AIOS/actions/runs/43136727667) passed both jobs on `646e1cc`.
+
+## Red-team audit and current gate (2026-11-12)
+
+An adversarial pass treated the infrastructure/broker and DAG scheduler as hostile input and
+journal-replay surfaces. Findings fixed in this pass:
+
+- Canonical base fields such as `relationships[].relationship_type` could carry a
+  secret-shaped string past the infrastructure-specific `SafeText` checks. The schema now
+  scans every nested string and rejects the whole record.
+- A duplicate create or a post-broker journal failure could leave an unreferenced broker
+  entry. The route removes it on the failure path, and the broker rolls back in-memory state
+  when a durable write fails. A replayed infrastructure record cannot retarget `secret_ref`
+  or change immutable identity fields.
+- UUID hex-case aliases could create two scheduler nodes for one Task or evade a self-edge
+  check. Task, Mission, node and dependency UUIDs are canonicalized before validation.
+- Scheduler replay trusted mutable graph state. It now requires a contiguous revision,
+  immutable identity/dependency/quorum fields, append-only distinct approvals, legal state
+  transitions, and an auto-resume opt-in for any direct running-to-pending transition.
+- `recover()` is startup-only; it cannot be called by a live scheduler to turn an active
+  claim into a second owner. A late completion cannot close an interrupted node.
+
+Regression tests: `apps/host/tests/infrastructure.test.ts` (4), `secret-broker.test.ts` (2),
+`dag-scheduler.test.ts` (12), and `persistence.test.ts` (15, including reordered/duplicated
+journal segments). The new tests assert broker/directory modes, duplicate-create cleanup,
+compaction redaction, reference immutability, quorum/approval replay, immutable graph replay,
+revision gaps, unwanted auto-resume, startup-only recovery, and truncated completion.
+
+Current full gate: **777 passed / 17 skipped**; host **318 passed / 17 skipped** across 33
+passed files and 3 skipped files. `pnpm format:check`: **209 files, 0 findings**. Build,
+typecheck and lint pass across the workspace. The 17 skips remain live provider/platform
+probes and are not counted as passing.
+
+Deliberately accepted: a complete-line suffix truncation of the operational journal is
+indistinguishable from a legitimate shorter journal without an independent head anchor. The
+chain detects edits, reordering and duplicated segments; scheduler replay rejects missing
+revisions and illegal transitions, and recovery never treats a missing completion as
+completed. External WORM/RFC3161 anchoring remains CL-006/CL-021 and the residual row is
+CL-024. Broker ciphertext is outside the journal and compaction snapshot.
 
 ## Residual boundaries
 

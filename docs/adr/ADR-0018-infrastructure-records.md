@@ -85,6 +85,27 @@ policy read, create/read/rotate, restart, broker resolution, plaintext redaction
 broker store, response and authorization audit, unavailable-broker and reserved-reference
 denial).
 
+## Red-team hardening amendment (2026-11-12)
+
+The adversarial review found and closed four gaps in the first implementation:
+
+- Secret-shaped text could be placed in canonical base fields whose vocabulary is open (for
+  example `relationships[].relationship_type`), bypassing the `SafeText` checks on the
+  infrastructure-specific fields. `InfrastructureEntity` now scans every nested string and
+  rejects the record before it can reach a response or the journal.
+- A duplicate entity id or journal-capacity failure could commit a broker entry before the
+  infrastructure record failed. The create route now removes that unreferenced entry; the
+  broker's create/rotate writes are transactional in memory when a durable write fails.
+- The route now validates the broker's actual UTF-8 byte and NUL limits, rather than accepting
+  a multi-byte or NUL-containing value and returning an internal broker error.
+- Journal replay could retarget a record's `secret_ref` or identity fields. The infrastructure
+  repository rejects those restores and its update path rejects host-assigned reference
+  changes. Rotation changes only the value behind the same entry id.
+
+The regression suite also asserts broker and parent-directory modes, duplicate-create
+cleanup, compaction redaction, and a replayed reference retarget. Production HSM/KMS custody
+remains CL-007; none of this amendment claims it.
+
 ## Tests required before acceptance
 
 - A secret-shaped field is rejected by the schema, not merely ignored.

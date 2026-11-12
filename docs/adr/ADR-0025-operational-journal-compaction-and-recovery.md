@@ -77,3 +77,20 @@ valid journal, and verifier acceptance/rejection of the same result before and a
 compaction cycle. `tools/security/journal-drill.mjs` executes the same lifecycle against the
 built journal and prints observed results; the run is recorded in
 `docs/security/validation-ledger.md`.
+
+## Red-team replay amendment (2026-11-12)
+
+A malicious reorder or duplicated segment is rejected by the contiguous sequence and previous
+hash checks; a scheduler graph whose revision skips a record, mutates immutable fields, regresses
+a terminal node, duplicates an approval, releases a gated node early or returns a non-opted
+running node directly to pending is rejected on replay. Recovery still converts a surviving
+running record to interrupted, so truncated completion never becomes silent completion. The
+infrastructure collection rejects replay that retargets `secret_ref` or changes immutable
+identity fields, and broker ciphertext is never part of the journal or its snapshot.
+
+Complete-line suffix truncation remains indistinguishable from a legitimate shorter journal
+without an independent head anchor. The chain detects edits, reordering and duplicated
+segments, but cannot prove that the newest complete records existed. External WORM/RFC3161
+anchoring (CL-006/CL-021) is the owner-gated control that closes this; complete-line rollback
+detection is tracked separately in CL-024. The local authorization audit head does not anchor
+the operational journal.

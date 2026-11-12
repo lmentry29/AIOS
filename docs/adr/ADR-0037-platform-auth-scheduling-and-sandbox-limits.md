@@ -118,6 +118,26 @@ CL-014's durable scheduling substrate is implemented in
   return them to pending; all others require an explicit resume call. A resumed gated node
   with insufficient approvals returns to `awaiting_approval`.
 
+### Scheduler red-team amendment (2026-11-12)
+
+The adversarial pass hardened the substrate against a caller who can append or replay a
+scheduler record:
+
+- Task, Mission, node and dependency UUIDs are canonicalized to lowercase before duplicate,
+  dependency, self-edge and cycle checks. Hex-case aliases can no longer create two nodes for
+  one Task or evade the cycle check.
+- Replay validates graph identity, Mission, auto-resume flag, created time, node identities,
+  task ids, dependencies and quorum as immutable; requires a contiguous revision increment;
+  permits only legal node-state transitions; treats approvals as append-only; rejects duplicate
+  approvals; and rejects a gated node released with fewer than its quorum.
+- A running node may return directly to pending only when the graph opted into auto-resume.
+  Non-opted graphs must pass through interrupted and an explicit `resume()`.
+- `recover()` is now startup-only. A scheduler that has already created, claimed, approved,
+  completed or resumed work cannot call it again to turn a live claim into a second owner.
+- Interrupted is terminal until explicitly resumed; a late `complete()` cannot silently close
+  it. The regression suite covers all of these paths, plus compaction and truncated-journal
+  recovery.
+
 Scheduling state is not execution authority: a claim names a Task, and execution still goes
 through the Orchestration Kernel's exact `execute` grant and independent verifier. No
 scheduler path auto-executes a Task. The host-wide execution cap and the existing kernel
