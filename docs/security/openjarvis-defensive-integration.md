@@ -155,7 +155,7 @@ binary and a workspace-local Turbo cache. No lockfile or dependency was changed 
 workaround.
 
 `pnpm format:check` is now green after the owner-approved repository-wide migration:
-`biome format .` checked **201 files with 0 findings**, and `biome format --write .` fixed
+the current gate checks **203 files with 0 findings**, and `biome format --write .` fixed
 **149 files**. This replaced the historical baseline rather than cherry-picking the added
 files. The previous line-number citations in the production-reachability table were
 re-anchored in the same migration commit. The migration changed formatting only; the full

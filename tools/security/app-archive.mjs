@@ -10,7 +10,7 @@
  * The archive contains no `.env`, private key, trust root, journal, workspace or
  * node_modules content. Verification never extracts the archive.
  */
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -22,6 +22,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  keyIdForPublicKey,
   loadTrustRoot,
   parseStrictJson,
   signArtifact,
@@ -389,6 +390,18 @@ export function createReleaseArchive(options) {
       manifest,
       signed: false,
     };
+  }
+  let privateKeyPublicPem;
+  try {
+    privateKeyPublicPem = createPublicKey(createPrivateKey(options.privateKeyPem)).export({
+      type: "spki",
+      format: "pem",
+    });
+  } catch {
+    fail("The signing key file is not a valid private key.");
+  }
+  if (keyIdForPublicKey(privateKeyPublicPem) !== options.keyId) {
+    fail("The signing key id does not match the private key.");
   }
   const statement = signArtifact({
     artifact_kind: "application-archive",

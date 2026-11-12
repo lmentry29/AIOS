@@ -72,9 +72,11 @@ ADR-0011, not a claim that the Container Service is complete.
 
 ## Consequences
 
-- Mission has real schema and store tests; host integration remains explicit unfinished work.
-- Infrastructure and the secret broker require a new store, broker adapter, policy routes, and
-  tests; no credential is accepted in a canonical record.
+- Mission has real schema, store, durable journal, compaction and exact-grant host tests.
+  Creation is authorized by the existing exact `intake` grant on the new Mission resource;
+  no ownership bypass was added.
+- Infrastructure and the secret broker remain implementation work: they require a new store,
+  broker adapter, policy routes, and tests; no credential is accepted in a canonical record.
 - `@aios/containers` remains Project-only and must not expose unsupported container types as
   resolvable records.
 - Project remains an Organizational Container; no Mission or Project hierarchy merge occurs.
