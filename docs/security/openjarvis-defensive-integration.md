@@ -190,6 +190,16 @@ This documentation-only follow-up is a separate head. Its Security run is record
 branch run history:
 https://github.com/lmentry29/AIOS/actions/workflows/security.yml?query=branch%3Asecurity%2Fopenjarvis-defensive-integration
 
+## Current full-gate evidence (2026-11-12)
+
+At code head `646e1cc` (the docs-only follow-up after `d232c91`), the forced workspace gate is
+**46/46 tasks successful, 0 cached, exit status 0**. Totals: core 51, objects 32, tools 10,
+containers 21, work-hierarchy 24, learning 28, agents 6, founder 95, orchestration 31,
+conformance 107, integration 43; host **287 passed / 17 skipped** across 31 files (28 passed
+files, 3 skipped files). The 17 skipped host tests are live gVisor/Docker/rootfs probes and
+are not counted as passing. Security run `43136727667`
+(https://github.com/lmentry29/AIOS/actions/runs/43136727667) passed both jobs on `646e1cc`.
+
 ## Residual boundaries
 
 - The local Obsidian++ service is a separate process and is not authenticated as a host
