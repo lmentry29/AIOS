@@ -169,6 +169,27 @@ default, which hid the 15 added-file findings during the repository-wide scan; f
 the added files explicitly surfaced and fixed them. No unrelated baseline file was
 reformatted.
 
+## CI evidence (2026-11-12)
+
+The Security workflow now includes `security/openjarvis-defensive-integration` in its
+`push` trigger. The `pull_request` and `main` triggers, `permissions: contents: read`, and
+all job contents are unchanged. Security run **43136322627**
+(https://github.com/lmentry29/AIOS/actions/runs/43136322627) passed for code head
+`d232c91f8f439091649b83b79c8e691e47ffd1a3`; both the live-sandbox and supply-chain jobs
+succeeded.
+
+The first branch run, **43135546414**
+(https://github.com/lmentry29/AIOS/actions/runs/43135546414), failed at
+`session-operator-drill.mjs`: the drill still wrote a host config without the required
+`policy_provenance` object. `d232c91` provisions a disposable Ed25519 trust root and
+owner-only signing key in the drill's temp directory; the drill passes all 13 steps
+locally without weakening host validation. Local suites after the fix: founder 95/95,
+host 287 passed / 17 skipped.
+
+This documentation-only follow-up is a separate head. Its Security run is recorded in the
+branch run history:
+https://github.com/lmentry29/AIOS/actions/workflows/security.yml?query=branch%3Asecurity%2Fopenjarvis-defensive-integration
+
 ## Residual boundaries
 
 - The local Obsidian++ service is a separate process and is not authenticated as a host
