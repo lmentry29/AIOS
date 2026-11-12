@@ -3,12 +3,14 @@ import type {
   ArtifactEntity,
   CanonicalEntity,
   LifecycleState,
+  MissionEntity,
   TaskEntity,
   WorkflowEntity,
 } from "@aios/core";
 import type { HostSessionEntry } from "../config.js";
 import {
   ArtifactEntity as ArtifactSchema,
+  MissionEntity as MissionSchema,
   TaskEntity as TaskSchema,
   WorkflowEntity as WorkflowSchema,
 } from "@aios/core";
@@ -112,7 +114,7 @@ export class DurableCollection<T extends CanonicalEntity> {
 
   constructor(
     private readonly journal: AppendOnlyJournal,
-    private readonly collection: "tasks" | "workflows" | "artifacts",
+    private readonly collection: "tasks" | "workflows" | "artifacts" | "missions",
     schema: { parse(data: unknown): T },
   ) {
     this.schema = schema;
@@ -166,6 +168,37 @@ export class DurableCollection<T extends CanonicalEntity> {
 
   private persist(entity: T): void {
     this.journal.append("entity", { collection: this.collection, entity });
+  }
+}
+
+/** Durable Mission collection; the Work Hierarchy root is journaled with its history. */
+export class DurableMissionRepository extends DurableCollection<MissionEntity> {
+  constructor(journal: AppendOnlyJournal) {
+    super(journal, "missions", MissionSchema);
+  }
+
+  createMission(mission: MissionEntity): MissionEntity {
+    return this.create(mission);
+  }
+
+  getMission(missionId: string): MissionEntity | undefined {
+    return this.get(missionId);
+  }
+
+  listMissions(): MissionEntity[] {
+    return this.list({ entityType: "canonical_object" });
+  }
+
+  updateMission(missionId: string, patch: EntityPatch<MissionEntity>): MissionEntity {
+    return this.update(missionId, patch);
+  }
+
+  transitionMissionLifecycle(
+    missionId: string,
+    state: LifecycleState,
+    actor: string,
+  ): MissionEntity {
+    return this.transitionLifecycle(missionId, state, actor);
   }
 }
 
@@ -439,6 +472,8 @@ export interface OperationalSnapshot {
   tasks: unknown[];
   workflows: unknown[];
   artifacts: unknown[];
+  /** Optional for pre-Mission snapshots; a missing list replays as no missions. */
+  missions?: unknown[];
   runs: unknown[];
   executions: unknown[];
   /** Added after F-013; old snapshots remain readable and leave configured sessions intact. */
@@ -459,6 +494,7 @@ export interface OperationalSnapshot {
 export class DurableOperationalStore {
   readonly journal: AppendOnlyJournal;
   readonly tasks: DurableTaskRepository;
+  readonly missions: DurableMissionRepository;
   readonly workflows: DurableCollection<WorkflowEntity>;
   readonly artifacts: DurableCollection<ArtifactEntity>;
   readonly runs: DurableRunCoordinator;
@@ -481,6 +517,7 @@ export class DurableOperationalStore {
     });
     const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
     this.tasks = new DurableTaskRepository(this.journal);
+    this.missions = new DurableMissionRepository(this.journal);
     this.workflows = new DurableCollection<WorkflowEntity>(
       this.journal,
       "workflows",
@@ -501,12 +538,14 @@ export class DurableOperationalStore {
           !isRecord(record.payload) ||
           (record.payload.collection !== "tasks" &&
             record.payload.collection !== "workflows" &&
-            record.payload.collection !== "artifacts")
+            record.payload.collection !== "artifacts" &&
+            record.payload.collection !== "missions")
         ) {
           throw new JournalError("Operational journal contains an unknown entity collection.");
         }
         const collection = record.payload.collection;
         if (collection === "tasks") this.tasks.restore(record.payload.entity);
+        else if (collection === "missions") this.missions.restore(record.payload.entity);
         else if (collection === "workflows") this.workflows.restore(record.payload.entity);
         else this.artifacts.restore(record.payload.entity);
       } else if (record.kind === "run") {
@@ -529,7 +568,14 @@ export class DurableOperationalStore {
             );
           }
         }
+        if (snapshot.missions !== undefined && !Array.isArray(snapshot.missions)) {
+          throw new JournalError(
+            "Operational journal contains a compaction snapshot with a malformed Mission collection.",
+          );
+        }
         for (const entity of snapshot.tasks as unknown[]) this.tasks.restore(entity);
+        for (const entity of (snapshot.missions as unknown[] | undefined) ?? [])
+          this.missions.restore(entity);
         for (const entity of snapshot.workflows as unknown[]) this.workflows.restore(entity);
         for (const entity of snapshot.artifacts as unknown[]) this.artifacts.restore(entity);
         for (const run of snapshot.runs as unknown[]) this.runs.restore(run);
@@ -555,6 +601,7 @@ export class DurableOperationalStore {
   compact(archivePath: string): ReturnType<AppendOnlyJournal["compactWithSnapshot"]> {
     const snapshot: OperationalSnapshot = {
       tasks: this.tasks.list(),
+      missions: this.missions.listMissions(),
       workflows: this.workflows.list(),
       artifacts: this.artifacts.list(),
       runs: this.runs.list(),

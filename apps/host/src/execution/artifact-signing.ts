@@ -28,7 +28,7 @@ export class SigningError extends Error {
   }
 }
 
-export type ArtifactKind = "gvisor-runtime-pin" | "gvisor-rootfs-manifest";
+export type ArtifactKind = "gvisor-runtime-pin" | "gvisor-rootfs-manifest" | "application-archive";
 export type KeyStatus = "trusted" | "revoked";
 /** One key may authorize exactly one subject class (ADR-0035). */
 export type KeyPurpose = "artifact" | "policy" | "verifier" | "audit";
@@ -38,7 +38,7 @@ export const STATEMENT_SCHEMA_VERSION = 2 as const;
 
 const MAX_STATEMENT_BYTES = 1024 * 1024;
 const MAX_TRUST_ROOT_BYTES = 1024 * 1024;
-const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_DEPTH = 32;
 const MAX_TRUSTED_KEYS = 64;
 const MAX_SUBJECT_FIELDS = 64;
@@ -623,7 +623,8 @@ export function parseSignedStatement(text: string): SignedStatement {
   }
   if (
     parsed.artifact_kind !== "gvisor-runtime-pin" &&
-    parsed.artifact_kind !== "gvisor-rootfs-manifest"
+    parsed.artifact_kind !== "gvisor-rootfs-manifest" &&
+    parsed.artifact_kind !== "application-archive"
   ) {
     throw new SigningError("The signature statement has an unknown artifact_kind.");
   }

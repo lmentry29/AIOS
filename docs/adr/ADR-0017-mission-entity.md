@@ -3,8 +3,8 @@
 ## Status
 
 **Accepted** (2026-11-12). The owner approved the field model and additive migration.
-The Mission schema and store are implemented in `@aios/core` and `@aios/work-hierarchy`;
-host routes and durable Mission journaling are follow-on work. When this ADR was Proposed
+The Mission schema and store are implemented in `@aios/core` and `@aios/work-hierarchy`,
+with durable host journaling and exact-grant create/read routes. When this ADR was Proposed
 (2026-11-10), the code still followed ADR-0010 and Mission was a typed reference.
 
 ## Context
@@ -56,12 +56,13 @@ second status axis. No schedule, budget, department, or container fields
 
 ## Consequences
 
-- No Mission UI, API, scheduler, or store should be claimed until this ADR is accepted and
-  the field model is reviewed.
-- If accepted, the schema must be added to `packages/core`, generated JSON Schema must be
-  regenerated, and lifecycle/conformance tests must cover the new subtype.
-- The unresolved Mission model is recorded as a product gap rather than silently replaced
-  by a Project or a free-text field.
+- The schema is in `packages/core`, generated JSON Schema is regenerated, and lifecycle
+  tests cover the subtype.
+- The host journals Missions with the same validated durable collection as Tasks and
+  Workflows; compaction and restart replay preserve lifecycle history.
+- Mission create/read routes require exact grants; there is no ownership bypass.
+- Scheduling and admission policy remain separate concerns and are not implied by this
+  field model.
 
 ## Tests required before acceptance
 
@@ -74,6 +75,11 @@ second status axis. No schedule, budget, department, or container fields
 
 ## Evidence
 
-Current code: `docs/engineering/canonical-object-model.md` §2b/§2c and
-`packages/core/src/schema/task.ts`. No Mission schema or store exists. This ADR is
-intentionally not marked Accepted.
+- `packages/core/src/schema/mission.ts` and `schemas/generated/mission.json`.
+- `packages/work-hierarchy/src/mission-store.ts` and its 5 store tests.
+- `packages/core/tests/mission.test.ts` and the full-chain integration test now resolves a
+  Mission through the public store surface.
+- `apps/host/src/persistence/operational-store.ts` journals `missions` and restores them from
+  compaction snapshots.
+- `apps/host/src/server.ts` exposes exact-grant `POST /v1/missions`, `GET /v1/missions` and
+  `GET /v1/missions/:id`; host tests cover create, duplicate conflict, list, read and denial.

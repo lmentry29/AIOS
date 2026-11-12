@@ -9,7 +9,7 @@ import {
   DispatchConflictError,
   DurableOperationalStore,
 } from "../src/persistence/operational-store.js";
-import { AGENT_ID, FOUNDER, makeTask, makeWorkflow } from "./fixtures.js";
+import { AGENT_ID, FOUNDER, makeMission, makeTask, makeWorkflow } from "./fixtures.js";
 
 function stateDirectory(): string {
   return mkdtempSync(join(tmpdir(), "aios-operational-"));
@@ -40,6 +40,28 @@ describe("durable operational state", () => {
     expect(restored?.lifecycle_history.map((entry) => entry.state)).toEqual(["validated"]);
     // entity_id is never reused, including after recovery (COM §9).
     expect(() => second.tasks.createTask(task)).toThrow(/already exists/);
+    second.close();
+  });
+
+  it("journals Missions, their lifecycle history and the snapshot collection", () => {
+    const directory = stateDirectory();
+    const mission = makeMission();
+
+    const first = new DurableOperationalStore({ directory });
+    first.missions.createMission(mission);
+    first.missions.transitionMissionLifecycle(mission.entity_id, "validated", FOUNDER);
+    const archive = join(directory, "missions-archive.json");
+    first.compact(archive);
+    first.close();
+
+    const second = new DurableOperationalStore({ directory });
+    const restored = second.missions.getMission(mission.entity_id);
+    expect(restored?.entity_subtype).toBe("mission");
+    expect(restored?.purpose).toBe(
+      "Make durable, inspectable decisions about the work that matters.",
+    );
+    expect(restored?.lifecycle_history.map((entry) => entry.state)).toEqual(["validated"]);
+    expect(second.missions.listMissions()).toHaveLength(1);
     second.close();
   });
 

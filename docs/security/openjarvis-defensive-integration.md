@@ -143,11 +143,12 @@ Full uncached gate:
 Result: **46/46 tasks successful, 0 cached, exit status 0**. Test totals:
 
 - `@aios/founder`: 95 passed across 10 files.
-- `@aios/host`: 261 passed, 17 skipped across 29 files (26 passed files, 3 skipped files).
-  The skips are live gVisor/Docker/rootfs probes that require a host environment; they are
-  not counted as passing evidence. The new lifecycle and local-provenance tests are included.
-- conformance: 107 passed; integration: 43 passed; orchestration: 30 passed. The remaining
+- `@aios/host`: 298 passed, 17 skipped across 30 passed files and 3 skipped files. The
+  skips are live gVisor/Docker/rootfs probes that require a host environment; they are not
+  counted as passing evidence. Mission, signed-archive and lifecycle tests are included.
+- conformance: 107 passed; integration: 43 passed; orchestration: 31 passed. The remaining
   packages' configured tasks, including `--passWithNoTests` where applicable, succeeded.
+  Full workspace total: **757 passed / 17 skipped**.
 
 The VM exposed pnpm only through `npx`, so the gate used a temporary workspace-local pnpm
 binary and a workspace-local Turbo cache. No lockfile or dependency was changed for that
@@ -164,10 +165,11 @@ gate below is the evidence that behavior did not change.
 
 The Security workflow now includes `security/openjarvis-defensive-integration` in its
 `push` trigger. The `pull_request` and `main` triggers, `permissions: contents: read`, and
-all job contents are unchanged. Security run **43136322627**
-(https://github.com/lmentry29/AIOS/actions/runs/43136322627) passed for code head
-`d232c91f8f439091649b83b79c8e691e47ffd1a3`; both the live-sandbox and supply-chain jobs
-succeeded.
+all job contents are unchanged. Security run **43234936169**
+(https://github.com/lmentry29/AIOS/actions/runs/43234936169) passed for code head
+`7f0b350ecd606215df42db1c7f82eec6bfc7c107`; both the live-sandbox and supply-chain jobs
+succeeded. Earlier run **43136322627** passed for code head
+`d232c91f8f439091649b83b79c8e691e47ffd1a3`.
 
 The first branch run, **43135546414**
 (https://github.com/lmentry29/AIOS/actions/runs/43135546414), failed at

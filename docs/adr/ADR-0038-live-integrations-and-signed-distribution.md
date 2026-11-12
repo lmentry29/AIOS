@@ -60,8 +60,10 @@ installation.
 
 - Live tests remain blocked until operator accounts and vault access exist; no live claim is
   made from fixtures.
-- A signed archive and offline verifier are implementation work; the existing release workflow
-  is a manual artifact build, not a signed distribution.
+- `tools/security/app-archive.mjs` implements the deterministic archive and offline verifier.
+  The release workflow produces only an unsigned review archive because the operator's
+  artifact-purpose key is not present in the repository; a signed release remains
+  operator-supplied.
 - The release manifest is a security artifact and must be verified before installation.
 
 ## Tests required

@@ -21,11 +21,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo build
+      # This is the reviewable, unsigned archive. A release artifact additionally
+      # requires the operator's artifact-purpose key and detached signature; see
+      # tools/security/app-archive.mjs. No signing key exists in the repository.
+      - run: >-
+          node tools/security/app-archive.mjs create
+          --root .
+          --out "$RUNNER_TEMP/aios-host.tar"
+          --commit "$GITHUB_SHA"
+          --release aios-host
+          --profile local-secure
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: aios-host-build
+          name: aios-host-unsigned-archive
           if-no-files-found: error
           retention-days: 14
-          path: |
-            apps/host/dist
-            packages/*/dist
+          path: ${{ runner.temp }}/aios-host.tar

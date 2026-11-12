@@ -234,8 +234,8 @@ Policy bundles and decisions now carry local detached provenance (ADR-0034).
   is the trusted local application; UI is an untrusted future client. The host rejects every
   `Origin` until a session/CSRF/cookie ADR exists.
 - ADR-0017 — **Accepted (2026-11-12)**: Mission as a Canonical Object subtype with
-  `name`, `purpose`, lifecycle state/history and `owner_id`; additive migration. The schema
-  and store are implemented; host routes and durable Mission journaling remain follow-on work.
+  `name`, `purpose`, lifecycle state/history and `owner_id`; additive migration. The schema,
+  durable operational collection, exact-grant HTTP create/read routes and tests are implemented.
 - ADR-0018 — **Accepted (2026-11-12)**: infrastructure records as canonical objects with
   secret references only, plus a host-owned secret broker. No infrastructure store or broker
   is implemented yet.

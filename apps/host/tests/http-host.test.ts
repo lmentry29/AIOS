@@ -37,6 +37,7 @@ import {
   OPERATOR_TOKEN,
   VAULT_RESOURCE_ID,
   VERIFIER_ID,
+  makeMission,
   makePolicy,
   makeTask,
   makeWorkflow,
@@ -393,6 +394,43 @@ function suspendTask(harness: Harness, taskId: string): void {
 }
 
 describe("trusted host HTTP surface", () => {
+  it("lists and reads a durable Mission only through the exact read grant", async () => {
+    const mission = makeMission();
+    const harness = await startHost({
+      policy: makePolicy(randomUUID(), randomUUID(), { missionId: mission.entity_id }),
+    });
+
+    const created = await call(harness, "POST", "/v1/missions", {
+      token: FOUNDER_TOKEN,
+      body: { entity: mission },
+    });
+    expect(created.status).toBe(201);
+
+    const duplicate = await call(harness, "POST", "/v1/missions", {
+      token: FOUNDER_TOKEN,
+      body: { entity: mission },
+    });
+    expect(duplicate.status).toBe(409);
+
+    const list = await call(harness, "GET", "/v1/missions", { token: FOUNDER_TOKEN });
+    expect(list.status).toBe(200);
+    expect(list.body?.total).toBe(1);
+    expect((list.body?.missions as Array<{ entity_id: string }>)[0]?.entity_id).toBe(
+      mission.entity_id,
+    );
+
+    const read = await call(harness, "GET", `/v1/missions/${mission.entity_id}`, {
+      token: FOUNDER_TOKEN,
+    });
+    expect(read.status).toBe(200);
+    expect((read.body?.mission as { purpose: string }).purpose).toBe(mission.purpose);
+
+    const denied = await call(harness, "GET", `/v1/missions/${mission.entity_id}`, {
+      token: OPERATOR_TOKEN,
+    });
+    expect(denied.status).toBe(403);
+  });
+
   it("serves health without authentication and exposes no local configuration", async () => {
     const harness = await startHost();
     const health = await call(harness, "GET", "/health");

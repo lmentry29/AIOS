@@ -8,6 +8,8 @@ import {
   PolicyPublicationError,
   PolicyRevocationError,
 } from "@aios/founder";
+import { MissionEntity as MissionSchema } from "@aios/core";
+import { EntityIdConflictError } from "@aios/objects";
 import {
   ExecutionAttemptConflictError,
   ExecutionCapacityError,
@@ -447,6 +449,7 @@ async function requireAllowed(
   action:
     | "read_status"
     | "read_evidence"
+    | "intake"
     | "cancel"
     | "resume"
     | "retry"
@@ -777,6 +780,81 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           status: 200,
           body: { policy_id: policyId, retired: true, targets },
         };
+      },
+    },
+    {
+      pattern: /^\/v1\/missions$/,
+      allow: ["GET", "POST"],
+      handle: async ({ runtime: host, session, req, url, readJson }) => {
+        if (req.method === "GET") {
+          const limit = pageLimit(url);
+          const missions = [];
+          for (const mission of host.missionStore.listMissions()) {
+            if (
+              await host.authorization.authorize({
+                actor_id: session.principal_id,
+                action: "read_status",
+                resource_id: mission.entity_id,
+              })
+            ) {
+              missions.push(mission);
+            }
+          }
+          return {
+            status: 200,
+            body: { missions: missions.slice(0, limit), total: missions.length },
+          };
+        }
+        const requestBody = jsonBody(await readJson());
+        const parsed = MissionSchema.safeParse(requestBody.entity);
+        if (!parsed.success) {
+          throw new HostHttpError(400, "invalid_entity", "Mission entity is schema-invalid.");
+        }
+        const mission = parsed.data;
+        if (
+          mission.created_by !== session.principal_id ||
+          mission.owner_id !== session.principal_id
+        ) {
+          throw new HostHttpError(
+            403,
+            "actor_mismatch",
+            "Mission provenance and ownership must match the authenticated principal.",
+          );
+        }
+        if (mission.lifecycle_state !== "created" || mission.lifecycle_history.length > 0) {
+          throw new HostHttpError(
+            400,
+            "invalid_initial_state",
+            "A new Mission must start in created state with empty lifecycle history.",
+          );
+        }
+        await requireAllowed(host, session, "intake", mission.entity_id);
+        try {
+          const created = host.missionStore.createMission(mission);
+          return {
+            status: 201,
+            body: {
+              entity_id: created.entity_id,
+              lifecycle_state: created.lifecycle_state,
+            },
+          };
+        } catch (error) {
+          if (error instanceof EntityIdConflictError) {
+            throw new HostHttpError(409, "entity_conflict", error.message);
+          }
+          throw error;
+        }
+      },
+    },
+    {
+      pattern: /^\/v1\/missions\/([^/]+)$/,
+      allow: ["GET"],
+      handle: async ({ runtime: host, session }, params) => {
+        const missionId = uuidParam(params[1], "missionId");
+        await requireAllowed(host, session, "read_status", missionId);
+        const mission = host.missionStore.getMission(missionId);
+        if (!mission) throw new HostHttpError(404, "not_found", "Mission was not found.");
+        return { status: 200, body: { mission } };
       },
     },
     {

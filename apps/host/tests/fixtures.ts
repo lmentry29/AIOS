@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AccessPolicy } from "@aios/founder";
-import type { TaskEntity, WorkflowEntity } from "@aios/core";
+import type { MissionEntity, TaskEntity, WorkflowEntity } from "@aios/core";
 
 export const FOUNDER = "human:founder";
 export const OPERATOR = "human:operator";
@@ -37,6 +37,17 @@ function base(createdBy: string) {
   };
 }
 
+export function makeMission(overrides: Record<string, unknown> = {}): MissionEntity {
+  return {
+    ...base(FOUNDER),
+    entity_type: "canonical_object",
+    entity_subtype: "mission",
+    name: "Founder intelligence",
+    purpose: "Make durable, inspectable decisions about the work that matters.",
+    ...overrides,
+  } as unknown as MissionEntity;
+}
+
 export function makeTask(overrides: Record<string, unknown> = {}): TaskEntity {
   return {
     ...base(FOUNDER),
@@ -71,7 +82,7 @@ export function makeWorkflow(
 export function makePolicy(
   taskId: string,
   workflowId: string,
-  options: { intakeOnly?: boolean } = {},
+  options: { intakeOnly?: boolean; missionId?: string } = {},
 ): AccessPolicy {
   const founderActions = options.intakeOnly
     ? ["intake" as const]
@@ -93,7 +104,7 @@ export function makePolicy(
         effect: "allow",
         subject_ids: [FOUNDER],
         actions: founderActions,
-        resource_ids: [taskId, workflowId],
+        resource_ids: [taskId, workflowId, ...(options.missionId ? [options.missionId] : [])],
       },
       ...(options.intakeOnly
         ? []

@@ -32,6 +32,7 @@ import { DurableLearningStore } from "./persistence/learning-store.js";
 import {
   DurableOperationalStore,
   type DurableCollection,
+  type DurableMissionRepository,
   type DurableRunCoordinator,
   type DurableTaskRepository,
 } from "./persistence/operational-store.js";
@@ -115,6 +116,7 @@ export interface HostRuntime {
   learning: LearningService;
   runs: DurableRunCoordinator;
   taskStore: DurableTaskRepository;
+  missionStore: DurableMissionRepository;
   workflowStore: DurableCollection<WorkflowEntity>;
   artifactStore: DurableCollection<ArtifactEntity>;
   /** Workflows whose interrupted dispatch/execution was recovered at startup. */
@@ -287,6 +289,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     const recoveredWorkflows = recovered.workflows;
     const recoveredExecutions = recovered.executions;
     const taskStore = operational.tasks;
+    const missionStore = operational.missions;
     const workflowStore = operational.workflows;
     const artifactStore = operational.artifacts;
     const objectStore = new ObjectStore<CanonicalEntity>(CanonicalEntitySchema);
@@ -335,7 +338,12 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
 
     const founder = new FounderInterface(
       {
-        list: () => [...objectStore.list(), ...taskStore.listTasks(), ...workflowStore.list()],
+        list: () => [
+          ...objectStore.list(),
+          ...missionStore.listMissions(),
+          ...taskStore.listTasks(),
+          ...workflowStore.list(),
+        ],
       },
       learning,
       boundary,
@@ -381,6 +389,7 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       learning,
       runs: operational.runs,
       taskStore,
+      missionStore,
       workflowStore,
       artifactStore,
       recoveredWorkflows,
