@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 
 /**
  * Explicit taint labels for content that entered AIOS from outside the host trust boundary.
@@ -8,9 +8,9 @@ import { randomUUID } from 'node:crypto';
  * sinks, and failed declassification audits all fail closed.
  */
 export const TAINT_LABELS = [
-  'external_untrusted',
-  'prompt_injection_risk',
-  'connector_poisoning_risk',
+  "external_untrusted",
+  "prompt_injection_risk",
+  "connector_poisoning_risk",
 ] as const;
 
 export type TaintLabel = (typeof TAINT_LABELS)[number];
@@ -35,39 +35,39 @@ export interface Tainted<T> {
 export class TaintError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'TaintError';
+    this.name = "TaintError";
   }
 }
 
 export class TaintSinkError extends TaintError {
   constructor(
-    readonly code: 'unknown_sink' | 'blocked_label',
+    readonly code: "unknown_sink" | "blocked_label",
     message: string,
   ) {
     super(message);
-    this.name = 'TaintSinkError';
+    this.name = "TaintSinkError";
   }
 }
 
 export class TaintDeclassificationError extends TaintError {
   constructor(
-    readonly code: 'invalid_actor' | 'reason_required' | 'audit_failed',
+    readonly code: "invalid_actor" | "reason_required" | "audit_failed",
     message: string,
   ) {
     super(message);
-    this.name = 'TaintDeclassificationError';
+    this.name = "TaintDeclassificationError";
   }
 }
 
 function isHumanPrincipal(value: unknown): value is string {
-  return typeof value === 'string' && /^human:[^\s:*]+$/.test(value);
+  return typeof value === "string" && /^human:[^\s:*]+$/.test(value);
 }
 
 function normalizeLabels(labels: readonly unknown[]): TaintLabel[] {
   const unique = new Set<TaintLabel>();
   for (const label of labels) {
-    if (typeof label !== 'string' || !TAINT_LABEL_SET.has(label)) {
-      throw new TaintError('Taint contains an unsupported label.');
+    if (typeof label !== "string" || !TAINT_LABEL_SET.has(label)) {
+      throw new TaintError("Taint contains an unsupported label.");
     }
     unique.add(label as TaintLabel);
   }
@@ -80,8 +80,8 @@ function normalizeSources(sources: readonly unknown[]): string[] {
   }
   const unique = new Set<string>();
   for (const source of sources) {
-    if (typeof source !== 'string' || source.length === 0 || source.length > MAX_SOURCE_LENGTH) {
-      throw new TaintError('Taint source identifiers must be non-empty bounded strings.');
+    if (typeof source !== "string" || source.length === 0 || source.length > MAX_SOURCE_LENGTH) {
+      throw new TaintError("Taint source identifiers must be non-empty bounded strings.");
     }
     unique.add(source);
   }
@@ -109,7 +109,7 @@ export function mergeTaint(...marks: readonly (TaintMark | undefined)[]): TaintM
   for (const mark of marks) {
     if (mark === undefined) continue;
     if (!Array.isArray(mark.labels) || !Array.isArray(mark.sources)) {
-      throw new TaintError('Taint marks must contain labels and sources arrays.');
+      throw new TaintError("Taint marks must contain labels and sources arrays.");
     }
     for (const label of normalizeLabels(mark.labels)) labels.add(label);
     for (const source of normalizeSources(mark.sources)) sources.add(source);
@@ -144,24 +144,24 @@ export class TaintSinkPolicy {
   constructor(options: TaintSinkPolicyOptions) {
     for (const [sink, labels] of Object.entries(options.allowed_labels)) {
       if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(sink)) {
-        throw new TaintError('Taint sink names must be lowercase identifiers.');
+        throw new TaintError("Taint sink names must be lowercase identifiers.");
       }
       this.allowed.set(sink, new Set(normalizeLabels(labels)));
     }
   }
 
   assertAllowed(mark: TaintMark, sink: string): void {
-    if (typeof sink !== 'string' || sink.length === 0 || sink.length > MAX_SINK_NAME) {
-      throw new TaintSinkError('unknown_sink', 'Taint sink name is invalid.');
+    if (typeof sink !== "string" || sink.length === 0 || sink.length > MAX_SINK_NAME) {
+      throw new TaintSinkError("unknown_sink", "Taint sink name is invalid.");
     }
     const allowed = this.allowed.get(sink);
     if (allowed === undefined) {
-      throw new TaintSinkError('unknown_sink', `Taint sink "${sink}" is not declared.`);
+      throw new TaintSinkError("unknown_sink", `Taint sink "${sink}" is not declared.`);
     }
     for (const label of normalizeLabels(mark.labels)) {
       if (!allowed.has(label)) {
         throw new TaintSinkError(
-          'blocked_label',
+          "blocked_label",
           `Taint label "${label}" is not permitted at sink "${sink}".`,
         );
       }
@@ -169,11 +169,7 @@ export class TaintSinkPolicy {
   }
 }
 
-export function assertTaintSink(
-  mark: TaintMark,
-  sink: string,
-  policy: TaintSinkPolicy,
-): void {
+export function assertTaintSink(mark: TaintMark, sink: string, policy: TaintSinkPolicy): void {
   policy.assertAllowed(mark, sink);
 }
 
@@ -196,11 +192,13 @@ export class InMemoryTaintDeclassificationAudit implements TaintDeclassification
   private readonly records: TaintDeclassificationAuditRecord[] = [];
 
   async append(record: TaintDeclassificationAuditRecord): Promise<void> {
-    this.records.push(Object.freeze({
-      ...record,
-      labels: Object.freeze([...record.labels]),
-      sources: Object.freeze([...record.sources]),
-    }));
+    this.records.push(
+      Object.freeze({
+        ...record,
+        labels: Object.freeze([...record.labels]),
+        sources: Object.freeze([...record.sources]),
+      }),
+    );
   }
 
   list(): TaintDeclassificationAuditRecord[] {
@@ -230,19 +228,22 @@ export async function declassify<T>(
 ): Promise<T> {
   if (!isHumanPrincipal(request.actor_id)) {
     throw new TaintDeclassificationError(
-      'invalid_actor',
-      'Only an authenticated human principal may declassify tainted content.',
+      "invalid_actor",
+      "Only an authenticated human principal may declassify tainted content.",
     );
   }
-  if (typeof request.sink !== 'string' || !/^[a-z][a-z0-9_.-]{0,127}$/.test(request.sink)) {
-    throw new TaintDeclassificationError('reason_required', 'A valid sink is required.');
+  if (typeof request.sink !== "string" || !/^[a-z][a-z0-9_.-]{0,127}$/.test(request.sink)) {
+    throw new TaintDeclassificationError("reason_required", "A valid sink is required.");
   }
-  if (typeof request.reason !== 'string' || request.reason.trim().length === 0) {
-    throw new TaintDeclassificationError('reason_required', 'A declassification reason is required.');
+  if (typeof request.reason !== "string" || request.reason.trim().length === 0) {
+    throw new TaintDeclassificationError(
+      "reason_required",
+      "A declassification reason is required.",
+    );
   }
   if (request.reason.length > MAX_REASON_LENGTH) {
     throw new TaintDeclassificationError(
-      'reason_required',
+      "reason_required",
       `The declassification reason exceeds ${MAX_REASON_LENGTH} characters.`,
     );
   }
@@ -261,8 +262,8 @@ export async function declassify<T>(
     await audit.append(record);
   } catch {
     throw new TaintDeclassificationError(
-      'audit_failed',
-      'Taint declassification was denied because its audit record could not be appended.',
+      "audit_failed",
+      "Taint declassification was denied because its audit record could not be appended.",
     );
   }
   return input.value;

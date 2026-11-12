@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
 import {
   AuthorizationService,
   InMemoryAuthorizationAuditStore,
@@ -10,143 +10,162 @@ import {
   StaticAccessPolicyStore,
   type AccessPolicy,
   type AuthorizationDecisionAudit,
-} from '@aios/founder';
+} from "@aios/founder";
 import {
   createTrustRoot,
   createTrustRootFromKeys,
   generateSigningKey,
   type TrustRoot,
-} from '../src/execution/artifact-signing.js';
-import { loadVerifierDecisionSigner } from '../src/execution/verifier-decision.js';
-import { PolicyProvenanceAuthority } from '../src/policy-provenance.js';
-import { assertSeparatePolicyAndVerifierKeys } from '../src/runtime.js';
-import { createPolicyAuthority } from './policy-provenance-fixture.js';
+} from "../src/execution/artifact-signing.js";
+import { loadVerifierDecisionSigner } from "../src/execution/verifier-decision.js";
+import { PolicyProvenanceAuthority } from "../src/policy-provenance.js";
+import { assertSeparatePolicyAndVerifierKeys } from "../src/runtime.js";
+import { createPolicyAuthority } from "./policy-provenance-fixture.js";
 
 function policy(): AccessPolicy {
   return {
     policy_id: randomUUID(),
     version: 1,
-    rules: [{
-      effect: 'allow',
-      subject_ids: ['human:founder'],
-      actions: ['execute'],
-      resource_ids: [randomUUID()],
-    }],
+    rules: [
+      {
+        effect: "allow",
+        subject_ids: ["human:founder"],
+        actions: ["execute"],
+        resource_ids: [randomUUID()],
+      },
+    ],
   };
 }
 
 function decision(): AuthorizationDecisionAudit {
   return {
     request_id: randomUUID(),
-    actor_id: 'human:founder',
-    action: 'execute',
+    actor_id: "human:founder",
+    action: "execute",
     resource_id: randomUUID(),
     policy_id: randomUUID(),
     policy_version: 1,
-    decision: 'allow',
-    reason: 'matching_allow',
+    decision: "allow",
+    reason: "matching_allow",
     matched_rule_index: 0,
-    matched_rule_effect: 'allow',
+    matched_rule_effect: "allow",
     timestamp: new Date().toISOString(),
   };
 }
 
 function requireProvenance(value: AccessPolicy) {
   const provenance = value.provenance;
-  if (!provenance) throw new Error('Test policy has no provenance fixture.');
+  if (!provenance) throw new Error("Test policy has no provenance fixture.");
   return provenance;
 }
 
 function requireResource(value: AccessPolicy): string {
   const resource = value.rules[0]?.resource_ids[0];
-  if (!resource) throw new Error('Test policy has no resource fixture.');
+  if (!resource) throw new Error("Test policy has no resource fixture.");
   return resource;
 }
 
 function firstRecord(audit: InMemoryAuthorizationAuditStore): AuthorizationDecisionAudit {
   const record = audit.list()[0];
-  if (!record) throw new Error('Expected one authorization audit record.');
+  if (!record) throw new Error("Expected one authorization audit record.");
   return record;
 }
 
 function rewriteRoot(path: string, change: (root: TrustRoot) => TrustRoot): void {
-  const root = JSON.parse(readFileSync(path, 'utf8')) as TrustRoot;
+  const root = JSON.parse(readFileSync(path, "utf8")) as TrustRoot;
   writeFileSync(path, `${JSON.stringify(change(root), null, 2)}\n`, { mode: 0o600 });
 }
 
-describe('policy bundle provenance', () => {
-  it('verifies a signed bundle and keeps the content digest independent of provenance', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-provenance-'));
+describe("policy bundle provenance", () => {
+  it("verifies a signed bundle and keeps the content digest independent of provenance", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-policy-provenance-"));
     const fixture = createPolicyAuthority(directory);
     const unsigned = policy();
     const signed = await fixture.authority.signPolicy(unsigned);
-    expect(signed.provenance?.subject).toBe('policy_bundle');
+    expect(signed.provenance?.subject).toBe("policy_bundle");
     expect(signed.provenance?.subject_id).toBe(unsigned.policy_id);
     expect(await fixture.authority.verifyPolicy(signed)).toEqual({ valid: true });
-    expect((await fixture.authority.verifyPolicy(unsigned)).reason).toBe('missing');
+    expect((await fixture.authority.verifyPolicy(unsigned)).reason).toBe("missing");
   });
 
-  it('fails a payload mutation after signing for the payload-mismatch reason', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-mutation-')));
+  it("fails a payload mutation after signing for the payload-mismatch reason", async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-mutation-")));
     const signed = await fixture.authority.signPolicy(policy());
     const tampered: AccessPolicy = {
       ...signed,
-      rules: signed.rules.map((rule) => ({ ...rule, effect: 'deny' as const })),
+      rules: signed.rules.map((rule) => ({ ...rule, effect: "deny" as const })),
     };
-    expect((await fixture.authority.verifyPolicy(tampered)).reason).toBe('payload_mismatch');
+    expect((await fixture.authority.verifyPolicy(tampered)).reason).toBe("payload_mismatch");
   });
 
-  it('rejects signature reuse across bundle ids', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-reuse-')));
+  it("rejects signature reuse across bundle ids", async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-reuse-")));
     const signed = await fixture.authority.signPolicy(policy());
     const moved: AccessPolicy = { ...signed, policy_id: randomUUID() };
-    expect((await fixture.authority.verifyPolicy(moved)).reason).toBe('bundle_id_mismatch');
+    expect((await fixture.authority.verifyPolicy(moved)).reason).toBe("bundle_id_mismatch");
   });
 
-  it('rejects schema-version confusion rather than reinterpreting the payload', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-schema-')));
+  it("rejects schema-version confusion rather than reinterpreting the payload", async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-schema-")));
     const signed = await fixture.authority.signPolicy(policy());
     const provenance = { ...requireProvenance(signed), schema_version: 2 };
-    expect((await fixture.authority.verifyPolicy({ ...signed, provenance })).reason)
-      .toBe('schema_unsupported');
+    expect((await fixture.authority.verifyPolicy({ ...signed, provenance })).reason).toBe(
+      "schema_unsupported",
+    );
   });
 
-  it('rejects cross-subject signature confusion between policy and decision envelopes', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-cross-subject-')));
+  it("rejects cross-subject signature confusion between policy and decision envelopes", async () => {
+    const fixture = createPolicyAuthority(
+      mkdtempSync(join(tmpdir(), "aios-policy-cross-subject-")),
+    );
     const signedPolicy = await fixture.authority.signPolicy(policy());
     const signedDecision = await fixture.authority.signDecision(decision());
     const policyProvenance = requireProvenance(signedPolicy);
     const decisionProvenance = signedDecision.provenance;
-    if (!decisionProvenance) throw new Error('Expected decision provenance.');
+    if (!decisionProvenance) throw new Error("Expected decision provenance.");
 
-    expect((await fixture.authority.verifyPolicy({
-      ...signedPolicy,
-      provenance: decisionProvenance,
-    })).reason).toBe('subject_mismatch');
-    expect((await fixture.authority.verifyDecision({
-      ...signedDecision,
-      provenance: policyProvenance,
-    })).reason).toBe('subject_mismatch');
+    expect(
+      (
+        await fixture.authority.verifyPolicy({
+          ...signedPolicy,
+          provenance: decisionProvenance,
+        })
+      ).reason,
+    ).toBe("subject_mismatch");
+    expect(
+      (
+        await fixture.authority.verifyDecision({
+          ...signedDecision,
+          provenance: policyProvenance,
+        })
+      ).reason,
+    ).toBe("subject_mismatch");
   });
 
-  it('rejects a verifier-decision envelope as policy or authorization-decision provenance', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-cross-verifier-'));
+  it("rejects a verifier-decision envelope as policy or authorization-decision provenance", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-cross-verifier-"));
     const policyFixture = createPolicyAuthority(directory);
     const signedPolicy = await policyFixture.authority.signPolicy(policy());
     const signedDecision = await policyFixture.authority.signDecision(decision());
 
-    const verifierDirectory = mkdtempSync(join(tmpdir(), 'aios-cross-verifier-key-'));
+    const verifierDirectory = mkdtempSync(join(tmpdir(), "aios-cross-verifier-key-"));
     const key = generateSigningKey();
-    const keyPath = join(verifierDirectory, 'verifier.pem');
-    const rootPath = join(verifierDirectory, 'verifier-root.json');
+    const keyPath = join(verifierDirectory, "verifier.pem");
+    const rootPath = join(verifierDirectory, "verifier-root.json");
     writeFileSync(keyPath, key.private_key_pem, { mode: 0o600 });
     const now = Date.now();
-    writeFileSync(rootPath, JSON.stringify(createTrustRoot({
-      key_id: key.key_id,
-      public_key_pem: key.public_key_pem,
-      not_before: new Date(now - 60_000).toISOString(),
-      not_after: new Date(now + 60 * 60 * 1000).toISOString(),
-    })), { mode: 0o600 });
+    writeFileSync(
+      rootPath,
+      JSON.stringify(
+        createTrustRoot({
+          key_id: key.key_id,
+          public_key_pem: key.public_key_pem,
+          not_before: new Date(now - 60_000).toISOString(),
+          not_after: new Date(now + 60 * 60 * 1000).toISOString(),
+        }),
+      ),
+      { mode: 0o600 },
+    );
     const signer = loadVerifierDecisionSigner({
       private_key_file: keyPath,
       trust_root_file: rootPath,
@@ -157,86 +176,104 @@ describe('policy bundle provenance', () => {
       task_id: randomUUID(),
       execution_id: randomUUID(),
       attempt: 1,
-      bound_result_sha256: 'a'.repeat(64),
+      bound_result_sha256: "a".repeat(64),
       verifier_id: randomUUID(),
       accepted: true,
-      reason: 'Verification command exited with the expected code 0.',
-      evidence: ['verifier:cross-envelope'],
+      reason: "Verification command exited with the expected code 0.",
+      evidence: ["verifier:cross-envelope"],
     });
 
-    expect((await policyFixture.authority.verifyPolicy({
-      ...signedPolicy,
-      provenance: verifierProvenance as unknown as AccessPolicy['provenance'],
-    })).reason).toBe('malformed');
-    expect((await policyFixture.authority.verifyDecision({
-      ...signedDecision,
-      provenance: verifierProvenance as unknown as AuthorizationDecisionAudit['provenance'],
-    })).reason).toBe('malformed');
+    expect(
+      (
+        await policyFixture.authority.verifyPolicy({
+          ...signedPolicy,
+          provenance: verifierProvenance as unknown as AccessPolicy["provenance"],
+        })
+      ).reason,
+    ).toBe("malformed");
+    expect(
+      (
+        await policyFixture.authority.verifyDecision({
+          ...signedDecision,
+          provenance: verifierProvenance as unknown as AuthorizationDecisionAudit["provenance"],
+        })
+      ).reason,
+    ).toBe("malformed");
   });
 
-  it('signs and verifies the detached audit head and rejects a changed head', () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-audit-head-')));
+  it("signs and verifies the detached audit head and rejects a changed head", () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-audit-head-")));
     const head = {
       schema_version: 1 as const,
       sequence: 2,
       record_count: 2,
-      head_hash: 'a'.repeat(64),
+      head_hash: "a".repeat(64),
     };
     const provenance = fixture.authority.signAuditHead(head);
     expect(fixture.authority.verifyAuditHead(provenance)).toEqual({ valid: true });
-    expect(fixture.authority.verifyAuditHead({ ...provenance, head_hash: 'b'.repeat(64) })).toEqual({
-      valid: false,
-      reason: 'payload_mismatch',
-    });
+    expect(fixture.authority.verifyAuditHead({ ...provenance, head_hash: "b".repeat(64) })).toEqual(
+      {
+        valid: false,
+        reason: "payload_mismatch",
+      },
+    );
   });
 
-  it('rejects key-id substitution and a valid signature from a different trust root', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-key-')));
+  it("rejects key-id substitution and a valid signature from a different trust root", async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-key-")));
     const signed = await fixture.authority.signPolicy(policy());
-    expect((await fixture.authority.verifyPolicy({
-      ...signed,
-      provenance: { ...requireProvenance(signed), key_id: '0'.repeat(64) },
-    })).reason).toBe('key_unknown');
+    expect(
+      (
+        await fixture.authority.verifyPolicy({
+          ...signed,
+          provenance: { ...requireProvenance(signed), key_id: "0".repeat(64) },
+        })
+      ).reason,
+    ).toBe("key_unknown");
 
-    const other = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-other-root-')));
-    expect((await other.authority.verifyPolicy(signed)).reason).toBe('key_unknown');
-    expect((await fixture.authority.verifyPolicy({
-      ...signed,
-      provenance: { ...requireProvenance(signed), signature: 'not-base64' },
-    })).reason).toBe('malformed');
+    const other = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-other-root-")));
+    expect((await other.authority.verifyPolicy(signed)).reason).toBe("key_unknown");
+    expect(
+      (
+        await fixture.authority.verifyPolicy({
+          ...signed,
+          provenance: { ...requireProvenance(signed), signature: "not-base64" },
+        })
+      ).reason,
+    ).toBe("malformed");
   });
 
-  it('rejects revoked and expired signing keys', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-lifecycle-'));
+  it("rejects revoked and expired signing keys", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-policy-lifecycle-"));
     const fixture = createPolicyAuthority(directory);
     const signed = await fixture.authority.signPolicy(policy());
 
     rewriteRoot(fixture.config.trust_root_file, (root) => ({
       ...root,
-      keys: root.keys.map((key) => ({ ...key, status: 'revoked' })),
+      keys: root.keys.map((key) => ({ ...key, status: "revoked" })),
     }));
     const revoked = PolicyProvenanceAuthority.verificationOnly({
       trust_root_file: fixture.config.trust_root_file,
     });
-    expect((await revoked.verifyPolicy(signed)).reason).toBe('key_revoked');
+    expect((await revoked.verifyPolicy(signed)).reason).toBe("key_revoked");
 
     rewriteRoot(fixture.config.trust_root_file, (root) => ({
       ...root,
       keys: root.keys.map((key) => ({
         ...key,
-        status: 'trusted',
+        status: "trusted",
         not_after: new Date(Date.now() - 60_000).toISOString(),
       })),
     }));
     const expired = PolicyProvenanceAuthority.verificationOnly({
       trust_root_file: fixture.config.trust_root_file,
     });
-    expect((await expired.verifyPolicy(signed)).reason).toBe('key_expired');
+    expect((await expired.verifyPolicy(signed)).reason).toBe("key_expired");
   });
 
-  it('rejects a policy after its signing key expires even when it was signed in-window', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-current-expiry-'));
-    const signedAt = new Date('2026-11-11T00:00:00.000Z');
+  it("rejects a policy after its signing key expires even when it was signed in-window", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-policy-current-expiry-"));
+    const signedAt = new Date("2026-11-11T00:00:00.000Z");
     const expiresAt = new Date(signedAt.getTime() + 60_000);
     const fixture = createPolicyAuthority(directory, {
       now: signedAt,
@@ -249,39 +286,47 @@ describe('policy bundle provenance', () => {
       trust_root_file: fixture.config.trust_root_file,
       now: () => new Date(expiresAt.getTime() + 1),
     });
-    expect((await afterExpiry.verifyPolicy(signed)).reason).toBe('key_expired');
+    expect((await afterExpiry.verifyPolicy(signed)).reason).toBe("key_expired");
   });
 
-  it('refuses to compose the policy key as a verifier key or in the verifier root', () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-role-')));
-    expect(() => assertSeparatePolicyAndVerifierKeys({
-      policy_provenance: fixture.config,
-      execution: {
-        verifier_key_id: fixture.config.key_id,
-        verifier_trust_root_file: fixture.config.trust_root_file,
-      },
-    } as never)).toThrow(/must not be the configured verifier/);
-    expect(() => assertSeparatePolicyAndVerifierKeys({
-      policy_provenance: fixture.config,
-      execution: {
-        verifier_key_id: '0'.repeat(64),
-        verifier_trust_root_file: fixture.config.trust_root_file,
-      },
-    } as never)).toThrow(/must not be present in the verifier trust root/);
+  it("refuses to compose the policy key as a verifier key or in the verifier root", () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-role-")));
+    expect(() =>
+      assertSeparatePolicyAndVerifierKeys({
+        policy_provenance: fixture.config,
+        execution: {
+          verifier_key_id: fixture.config.key_id,
+          verifier_trust_root_file: fixture.config.trust_root_file,
+        },
+      } as never),
+    ).toThrow(/must not be the configured verifier/);
+    expect(() =>
+      assertSeparatePolicyAndVerifierKeys({
+        policy_provenance: fixture.config,
+        execution: {
+          verifier_key_id: "0".repeat(64),
+          verifier_trust_root_file: fixture.config.trust_root_file,
+        },
+      } as never),
+    ).toThrow(/must not be present in the verifier trust root/);
   });
 
-  it('keeps old-key decisions verifiable after a replacement key is added', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-rotation-'));
+  it("keeps old-key decisions verifiable after a replacement key is added", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-policy-rotation-"));
     const first = createPolicyAuthority(directory);
     const firstDecision = await first.authority.signDecision(decision());
 
     const next = generateSigningKey();
-    const nextKeyPath = join(directory, 'next-policy-key.pem');
+    const nextKeyPath = join(directory, "next-policy-key.pem");
     writeFileSync(nextKeyPath, next.private_key_pem, { mode: 0o600 });
-    const root = JSON.parse(readFileSync(first.config.trust_root_file, 'utf8')) as TrustRoot;
+    const root = JSON.parse(readFileSync(first.config.trust_root_file, "utf8")) as TrustRoot;
     const combined = createTrustRootFromKeys([
       ...root.keys.map(({ key_id, public_key_pem, not_before, not_after, status }) => ({
-        key_id, public_key_pem, not_before, not_after, status,
+        key_id,
+        public_key_pem,
+        not_before,
+        not_after,
+        status,
       })),
       {
         key_id: next.key_id,
@@ -290,7 +335,9 @@ describe('policy bundle provenance', () => {
         not_after: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       },
     ]);
-    writeFileSync(first.config.trust_root_file, `${JSON.stringify(combined, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(first.config.trust_root_file, `${JSON.stringify(combined, null, 2)}\n`, {
+      mode: 0o600,
+    });
     const rotated = PolicyProvenanceAuthority.fromFiles({
       trust_root_file: first.config.trust_root_file,
       private_key_file: nextKeyPath,
@@ -303,9 +350,9 @@ describe('policy bundle provenance', () => {
   });
 });
 
-describe('signed authorization decisions', () => {
-  it('signs an allow decision and exposes the verified provenance in the audit record', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'aios-policy-decision-'));
+describe("signed authorization decisions", () => {
+  it("signs an allow decision and exposes the verified provenance in the audit record", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-policy-decision-"));
     const fixture = createPolicyAuthority(directory);
     const signedPolicy = await fixture.authority.signPolicy(policy());
     const audit = new InMemoryAuthorizationAuditStore();
@@ -316,22 +363,26 @@ describe('signed authorization decisions', () => {
       fixture.authority,
     );
     const request = {
-      actor_id: 'human:founder',
-      action: 'execute' as const,
+      actor_id: "human:founder",
+      action: "execute" as const,
       resource_id: requireResource(signedPolicy),
     };
     expect((await service.authorizeDecision(request)).allowed).toBe(true);
     const record = firstRecord(audit);
-    expect(record.provenance?.subject).toBe('authorization_decision');
+    expect(record.provenance?.subject).toBe("authorization_decision");
     expect(await fixture.authority.verifyDecision(record)).toEqual({ valid: true });
-    expect((await fixture.authority.verifyDecision({
-      ...record,
-      reason: 'explicit_deny',
-    })).reason).toBe('payload_mismatch');
+    expect(
+      (
+        await fixture.authority.verifyDecision({
+          ...record,
+          reason: "explicit_deny",
+        })
+      ).reason,
+    ).toBe("payload_mismatch");
   });
 
-  it('refuses unsigned and mutated policy content before rule evaluation', async () => {
-    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), 'aios-policy-enforce-')));
+  it("refuses unsigned and mutated policy content before rule evaluation", async () => {
+    const fixture = createPolicyAuthority(mkdtempSync(join(tmpdir(), "aios-policy-enforce-")));
     const unsigned = policy();
     const audit = new InMemoryAuthorizationAuditStore();
     const service = new AuthorizationService(
@@ -340,19 +391,21 @@ describe('signed authorization decisions', () => {
       audit,
       fixture.authority,
     );
-    await expect(service.authorizeDecision({
-      actor_id: 'human:founder',
-      action: 'execute',
-      resource_id: requireResource(unsigned),
-    })).rejects.toMatchObject({
-      name: 'PolicyProvenanceDeniedError',
-      reasonCode: 'policy_provenance_missing',
+    await expect(
+      service.authorizeDecision({
+        actor_id: "human:founder",
+        action: "execute",
+        resource_id: requireResource(unsigned),
+      }),
+    ).rejects.toMatchObject({
+      name: "PolicyProvenanceDeniedError",
+      reasonCode: "policy_provenance_missing",
     });
 
     const signed = await fixture.authority.signPolicy(policy());
     const tampered: AccessPolicy = {
       ...signed,
-      rules: signed.rules.map((rule) => ({ ...rule, effect: 'deny' as const })),
+      rules: signed.rules.map((rule) => ({ ...rule, effect: "deny" as const })),
     };
     const tamperedService = new AuthorizationService(
       new StaticAccessPolicyStore([tampered]),
@@ -360,10 +413,12 @@ describe('signed authorization decisions', () => {
       new InMemoryAuthorizationAuditStore(),
       fixture.authority,
     );
-    await expect(tamperedService.authorizeDecision({
-      actor_id: 'human:founder',
-      action: 'execute',
-      resource_id: requireResource(tampered),
-    })).rejects.toBeInstanceOf(PolicyProvenanceDeniedError);
+    await expect(
+      tamperedService.authorizeDecision({
+        actor_id: "human:founder",
+        action: "execute",
+        resource_id: requireResource(tampered),
+      }),
+    ).rejects.toBeInstanceOf(PolicyProvenanceDeniedError);
   });
 });

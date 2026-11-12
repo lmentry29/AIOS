@@ -1,10 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-  createTrustRoot,
-  generateSigningKey,
-} from '../src/execution/artifact-signing.js';
-import { PolicyProvenanceAuthority } from '../src/policy-provenance.js';
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createTrustRoot, generateSigningKey } from "../src/execution/artifact-signing.js";
+import { PolicyProvenanceAuthority } from "../src/policy-provenance.js";
 
 export interface PolicyAuthorityFixture {
   authority: PolicyProvenanceAuthority;
@@ -20,17 +17,19 @@ export function createPolicyAuthority(
   directory: string,
   options: {
     now?: Date;
-    status?: 'trusted' | 'revoked';
+    status?: "trusted" | "revoked";
     notBefore?: Date;
     notAfter?: Date;
   } = {},
 ): PolicyAuthorityFixture {
-  const trustRootPath = join(directory, 'policy-trust-root.json');
-  const privateKeyPath = join(directory, 'policy-signing-key.pem');
+  const trustRootPath = join(directory, "policy-trust-root.json");
+  const privateKeyPath = join(directory, "policy-signing-key.pem");
   if (existsSync(trustRootPath) && existsSync(privateKeyPath)) {
-    const trustRoot = JSON.parse(readFileSync(trustRootPath, 'utf8')) as { keys: Array<{ key_id: string }> };
+    const trustRoot = JSON.parse(readFileSync(trustRootPath, "utf8")) as {
+      keys: Array<{ key_id: string }>;
+    };
     const keyId = trustRoot.keys[0]?.key_id;
-    if (typeof keyId !== 'string') throw new Error('Existing policy trust root has no key.');
+    if (typeof keyId !== "string") throw new Error("Existing policy trust root has no key.");
     return {
       authority: PolicyProvenanceAuthority.fromFiles({
         trust_root_file: trustRootPath,

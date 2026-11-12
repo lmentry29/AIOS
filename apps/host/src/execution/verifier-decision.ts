@@ -413,8 +413,10 @@ export class VerifierDecisionSigner {
         "The signed verifier decision evidence does not match the record.",
       );
     }
-    if (expected.execution_id !== undefined
-      && payload.decision.execution_id !== expected.execution_id) {
+    if (
+      expected.execution_id !== undefined &&
+      payload.decision.execution_id !== expected.execution_id
+    ) {
       throw new VerifierDecisionError(
         "The signed verifier decision belongs to a different execution attempt.",
       );
@@ -424,8 +426,10 @@ export class VerifierDecisionSigner {
         "The signed verifier decision has a different attempt number.",
       );
     }
-    if (expected.bound_result_sha256 !== undefined
-      && payload.decision.bound_result_sha256 !== expected.bound_result_sha256) {
+    if (
+      expected.bound_result_sha256 !== undefined &&
+      payload.decision.bound_result_sha256 !== expected.bound_result_sha256
+    ) {
       throw new VerifierDecisionError(
         "The signed verifier decision is bound to a different execution result.",
       );
@@ -451,13 +455,13 @@ export class VerifierDecisionSigner {
     // The kernel supplies expected_* from the durable ledger at read time. Those fields take
     // precedence over the record's own copy, which an artifact writer could edit even though
     // it cannot mint a new signature.
-    const expectedExecutionId = "expected_execution_id" in record
-      ? record.expected_execution_id
-      : record.execution_id;
+    const expectedExecutionId =
+      "expected_execution_id" in record ? record.expected_execution_id : record.execution_id;
     if (expectedExecutionId !== undefined) {
-      expected.execution_id = expectedExecutionId === null
-        ? null
-        : requireString(expectedExecutionId, "evidence expected_execution_id", 200);
+      expected.execution_id =
+        expectedExecutionId === null
+          ? null
+          : requireString(expectedExecutionId, "evidence expected_execution_id", 200);
     }
     const expectedAttempt = "expected_attempt" in record ? record.expected_attempt : record.attempt;
     if (expectedAttempt !== undefined) {
@@ -469,26 +473,31 @@ export class VerifierDecisionSigner {
         throw new VerifierDecisionError("The evidence record has a malformed expected attempt.");
       }
     }
-    if (expected.execution_id !== undefined && record.execution_id !== undefined
-      && record.execution_id !== expected.execution_id) {
+    if (
+      expected.execution_id !== undefined &&
+      record.execution_id !== undefined &&
+      record.execution_id !== expected.execution_id
+    ) {
       throw new VerifierDecisionError(
         "The evidence record execution id does not match the durable attempt.",
       );
     }
-    if (expected.attempt !== undefined && record.attempt !== undefined
-      && record.attempt !== expected.attempt) {
+    if (
+      expected.attempt !== undefined &&
+      record.attempt !== undefined &&
+      record.attempt !== expected.attempt
+    ) {
       throw new VerifierDecisionError(
         "The evidence record attempt does not match the durable attempt.",
       );
     }
     if ("bound_result_sha256" in record) {
-      expected.bound_result_sha256 = record.bound_result_sha256 === null
-        ? null
-        : requireString(record.bound_result_sha256, "evidence bound_result_sha256", 64);
+      expected.bound_result_sha256 =
+        record.bound_result_sha256 === null
+          ? null
+          : requireString(record.bound_result_sha256, "evidence bound_result_sha256", 64);
       if (expected.bound_result_sha256 !== null && !SHA256_HEX.test(expected.bound_result_sha256)) {
-        throw new VerifierDecisionError(
-          "The evidence record has a malformed bound result digest.",
-        );
+        throw new VerifierDecisionError("The evidence record has a malformed bound result digest.");
       }
     }
     this.verify(provenance, expected);
