@@ -11,7 +11,7 @@ import type {
 /**
  * Entity fixtures for the conformance suite. Deliberately duplicated from
  * tests/integration/fixtures.ts rather than imported across a vitest project
- * boundary — each vitest project in vitest.workspace.ts owns its own fixtures,
+ * boundary — each vitest project in vitest.config.ts owns its own fixtures,
  * matching the established pattern.
  *
  * Every field is spelled out rather than defaulted, for the same reason the

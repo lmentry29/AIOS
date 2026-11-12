@@ -275,7 +275,8 @@ describe("canonical infrastructure records", () => {
       token: FOUNDER_TOKEN,
     });
     expect(policy.status).toBe(200);
-    expect((policy.body?.policy as { policy_id?: string }).policy_id).toMatch(/^[0-9a-f-]{36}$/);
+    const policyBody = policy.body?.policy as { policy_id?: string } | undefined;
+    expect(policyBody?.policy_id).toMatch(/^[0-9a-f-]{36}$/);
 
     // A duplicate entity id is rejected after the broker stores a candidate credential.
     // The route must remove that unreferenced entry instead of leaving an orphan secret.

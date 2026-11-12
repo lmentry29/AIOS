@@ -196,7 +196,7 @@ couldn't have found.
   `packages/core/src/schema/*.ts` produces. This is the enforcement mechanism for ADR-0009
   §1.10's single-source-of-truth decision, not something to duplicate with hand-written
   schema-drift tests.
-- **All test execution runs through the single Vitest workspace** (`vitest.workspace.ts`,
+- **All test execution runs through the single Vitest configuration** (`vitest.config.ts`,
   repo root) — per-package projects plus the two centralized `integration`/`conformance`
   projects, not separate tooling per tier.
 

@@ -415,15 +415,14 @@ describe("trusted host HTTP surface", () => {
     const list = await call(harness, "GET", "/v1/missions", { token: FOUNDER_TOKEN });
     expect(list.status).toBe(200);
     expect(list.body?.total).toBe(1);
-    expect((list.body?.missions as Array<{ entity_id: string }>)[0]?.entity_id).toBe(
-      mission.entity_id,
-    );
+    const missionList = list.body?.missions as Array<{ entity_id: string }> | undefined;
+    expect(missionList?.[0]?.entity_id).toBe(mission.entity_id);
 
     const read = await call(harness, "GET", `/v1/missions/${mission.entity_id}`, {
       token: FOUNDER_TOKEN,
     });
     expect(read.status).toBe(200);
-    expect((read.body?.mission as { purpose: string }).purpose).toBe(mission.purpose);
+    expect(read.body?.mission).toMatchObject({ purpose: mission.purpose });
 
     const denied = await call(harness, "GET", `/v1/missions/${mission.entity_id}`, {
       token: OPERATOR_TOKEN,
@@ -797,7 +796,8 @@ describe("trusted host HTTP surface", () => {
       body: { question: "trusted host slice" },
     });
     expect(founderQuery.status).toBe(200);
-    expect((founderQuery.body?.matching_entities as unknown[]).length).toBeGreaterThan(0);
+    const matchingEntities = founderQuery.body?.matching_entities as unknown[] | undefined;
+    expect(matchingEntities?.length ?? 0).toBeGreaterThan(0);
 
     // One append-only chain proves Founder and Orchestration share one evaluator: the same
     // audit read contains the verifier, the executor, dispatch, and the Founder evidence read.
@@ -1036,9 +1036,8 @@ describe("trusted host HTTP surface", () => {
     const founderTasks = await call(harness, "GET", "/v1/tasks", { token: FOUNDER_TOKEN });
     expect(founderTasks.status).toBe(200);
     expect(founderTasks.body).toMatchObject({ total: 1 });
-    expect((founderTasks.body?.tasks as Array<Record<string, unknown>>)[0]?.entity_id).toBe(
-      task.entity_id,
-    );
+    const founderTaskList = founderTasks.body?.tasks as Array<Record<string, unknown>> | undefined;
+    expect(founderTaskList?.[0]?.entity_id).toBe(task.entity_id);
 
     const agentTasks = await call(harness, "GET", "/v1/tasks", { token: AGENT_TOKEN });
     expect(agentTasks.status).toBe(200);
@@ -1132,9 +1131,8 @@ describe("trusted host HTTP surface", () => {
 
     const decisions = await call(harness, "GET", "/v1/founder/decisions", { token: FOUNDER_TOKEN });
     expect(decisions.status).toBe(200);
-    expect(
-      (decisions.body?.decisions as Array<Record<string, unknown>>).map((item) => item.entity_id),
-    ).toContain(decisionId);
+    const decisionList = decisions.body?.decisions as Array<Record<string, unknown>> | undefined;
+    expect(decisionList?.map((item) => item.entity_id) ?? []).toContain(decisionId);
 
     const spoofed = await call(harness, "POST", "/v1/founder/decisions", {
       token: FOUNDER_TOKEN,
@@ -1559,7 +1557,7 @@ describe("trusted host HTTP surface", () => {
 
     const read = await call(second, "GET", `/v1/tasks/${task.entity_id}`, { token: FOUNDER_TOKEN });
     expect(read.status).toBe(200);
-    expect((read.body?.task as Record<string, unknown>).lifecycle_state).toBe("suspended");
+    expect(read.body?.task).toMatchObject({ lifecycle_state: "suspended" });
 
     const health = await call(second, "GET", "/health");
     expect(health.body?.storage).toBe("durable");

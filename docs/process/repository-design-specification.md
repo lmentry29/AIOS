@@ -26,7 +26,7 @@ aios/
 ├── turbo.json
 ├── tsconfig.base.json
 ├── biome.json
-├── vitest.workspace.ts
+├── vitest.config.ts
 ├── .nvmrc
 ├── .gitignore
 ├── .gitattributes
@@ -276,7 +276,7 @@ Mechanical, ordered, no architectural decisions left open for whoever executes i
 
 1. **Confirm target location.** Get the real local path for the new repo root from the founder (not assumed — see `CLAUDE-CODE-HANDOFF.md` §1).
 2. **Initialize git + GitHub.** `git init`, create the private GitHub repo, set `origin`.
-3. **Root tooling files first**, before any content: `package.json` (private, workspaces), `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`, `biome.json`, `vitest.workspace.ts`, `.nvmrc`, `.gitignore`, `.gitattributes`, `.env.example`, `.github/CODEOWNERS`.
+3. **Root tooling files first**, before any content: `package.json` (private, workspaces), `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`, `biome.json`, `vitest.config.ts`, `.nvmrc`, `.gitignore`, `.gitattributes`, `.env.example`, `.github/CODEOWNERS`.
 4. **Install tooling.** `corepack enable`, `pnpm install` (establishes the lockfile against an otherwise-empty workspace).
 5. **Create `docs/` tree** and migrate every file per the Migration Plan (§2) — copy from the outputs folder path, rename per the table, do not alter content during the move except the explicitly-flagged supersession notices (row 19).
 6. **Draft and add ADR-0007, ADR-0008, ADR-0009** (§2 rows 8–10) — these are new but not new *decisions*; they formalize decisions already made in this conversation.
