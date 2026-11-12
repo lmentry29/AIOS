@@ -40,6 +40,20 @@ export function containsSecretMaterial(value: string): boolean {
   );
 }
 
+/**
+ * Canonical base fields such as relationships and lifecycle substates carry open-vocabulary
+ * strings. Checking only the infrastructure-specific fields would leave those as a smuggling
+ * path into the journal and HTTP response.
+ */
+function containsSecretMaterialDeep(value: unknown): boolean {
+  if (typeof value === "string") return containsSecretMaterial(value);
+  if (Array.isArray(value)) return value.some(containsSecretMaterialDeep);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some(containsSecretMaterialDeep);
+  }
+  return false;
+}
+
 const SafeText = z
   .string()
   .min(1)
@@ -88,7 +102,9 @@ const InfrastructureEntityWithoutParent = InfrastructureEntityShape.refine(
     message:
       "Infrastructure is not a Work Hierarchy level and must not carry work_hierarchy_parent (ADR-0018)",
   },
-);
+).refine((entity) => !containsSecretMaterialDeep(entity), {
+  message: "Infrastructure records must not contain secret-shaped material (ADR-0018)",
+});
 
 export const InfrastructureEntity = withCanonicalObjectLifecycle(InfrastructureEntityWithoutParent);
 export type InfrastructureEntity = z.infer<typeof InfrastructureEntity>;

@@ -32,6 +32,8 @@ export interface SecretBrokerPort {
   /** Host-side resolution. This method is never exposed by an HTTP route. */
   resolve(entryId: string): string;
   has(entryId: string): boolean;
+  /** Removes an unreferenced entry after a partially completed create. */
+  remove(entryId: string): void;
 }
 
 export class SecretBrokerUnavailableError extends HostUnavailableError {
@@ -66,6 +68,10 @@ export class UnavailableSecretBroker implements SecretBrokerPort {
 
   has(): boolean {
     return false;
+  }
+
+  remove(): void {
+    throw new SecretBrokerUnavailableError();
   }
 }
 
@@ -216,8 +222,14 @@ export class EncryptedFileSecretBroker implements SecretBrokerPort {
 
   create(secret: string): string {
     const entryId = randomUUID();
-    this.entries[entryId] = this.encrypt(entryId, this.validateSecret(secret));
-    this.persist();
+    const encrypted = this.encrypt(entryId, this.validateSecret(secret));
+    this.entries[entryId] = encrypted;
+    try {
+      this.persist();
+    } catch (error) {
+      delete this.entries[entryId];
+      throw error;
+    }
     return entryId;
   }
 
@@ -225,8 +237,28 @@ export class EncryptedFileSecretBroker implements SecretBrokerPort {
     if (!this.has(entryId)) {
       throw new SecretBrokerError("Secret broker entry was not found.");
     }
-    this.entries[entryId] = this.encrypt(entryId, this.validateSecret(secret));
-    this.persist();
+    const encrypted = this.encrypt(entryId, this.validateSecret(secret));
+    const previous = this.entries[entryId];
+    this.entries[entryId] = encrypted;
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) this.entries[entryId] = previous;
+      else delete this.entries[entryId];
+      throw error;
+    }
+  }
+
+  remove(entryId: string): void {
+    if (!this.has(entryId)) return;
+    const previous = this.entries[entryId];
+    delete this.entries[entryId];
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) this.entries[entryId] = previous;
+      throw error;
+    }
   }
 
   resolve(entryId: string): string {

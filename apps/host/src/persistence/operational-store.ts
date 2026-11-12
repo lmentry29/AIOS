@@ -232,7 +232,38 @@ export class DurableInfrastructureRepository extends DurableCollection<Infrastru
     entityId: string,
     patch: EntityPatch<InfrastructureEntity>,
   ): InfrastructureEntity {
+    if (Object.hasOwn(patch as object, "secret_ref")) {
+      throw new Error("Infrastructure broker references are host-assigned and immutable.");
+    }
     return this.update(entityId, patch);
+  }
+
+  /**
+   * Journal replay may advance a record, but it must never retarget its credential to an
+   * older or different broker entry. The reference is assigned by the host at create time
+   * and rotation replaces the value behind that reference, not the reference itself.
+   */
+  override restore(entity: unknown): void {
+    let parsed: InfrastructureEntity;
+    try {
+      parsed = InfrastructureSchema.parse(entity);
+    } catch {
+      throw new JournalError(
+        "Operational journal contains an invalid infrastructure record during replay.",
+      );
+    }
+    const current = this.get(parsed.entity_id);
+    if (
+      current &&
+      (parsed.created_by !== current.created_by ||
+        parsed.owner_id !== current.owner_id ||
+        JSON.stringify(parsed.secret_ref ?? null) !== JSON.stringify(current.secret_ref ?? null))
+    ) {
+      throw new JournalError(
+        "Operational journal attempted to change an immutable infrastructure identity or credential reference.",
+      );
+    }
+    super.restore(parsed);
   }
 }
 

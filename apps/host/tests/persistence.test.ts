@@ -100,6 +100,40 @@ describe("durable operational state", () => {
     expect(() => new DurableOperationalStore({ directory })).toThrow(JournalError);
   });
 
+  it("rejects reordered or duplicated journal segments instead of replaying them", () => {
+    const makeJournal = (): { directory: string; journalPath: string } => {
+      const directory = stateDirectory();
+      const task = makeTask();
+      const store = new DurableOperationalStore({ directory });
+      store.tasks.createTask(task);
+      store.tasks.transitionTaskLifecycle(task.entity_id, "validated", FOUNDER);
+      store.tasks.updateTask(task.entity_id, { name: "Journal replay test" });
+      store.close();
+      return { directory, journalPath: join(directory, "operational.jsonl") };
+    };
+
+    const reordered = makeJournal();
+    const reorderedLines = readFileSync(reordered.journalPath, "utf8").trimEnd().split("\n");
+    expect(reorderedLines.length).toBeGreaterThanOrEqual(3);
+    writeFileSync(
+      reordered.journalPath,
+      `${[reorderedLines[1], reorderedLines[0], ...reorderedLines.slice(2)].join("\n")}\n`,
+    );
+    expect(() => new DurableOperationalStore({ directory: reordered.directory })).toThrow(
+      JournalError,
+    );
+
+    const duplicated = makeJournal();
+    const duplicatedLines = readFileSync(duplicated.journalPath, "utf8").trimEnd().split("\n");
+    writeFileSync(
+      duplicated.journalPath,
+      `${[...duplicatedLines, duplicatedLines[0]].join("\n")}\n`,
+    );
+    expect(() => new DurableOperationalStore({ directory: duplicated.directory })).toThrow(
+      JournalError,
+    );
+  });
+
   it("discards only an interrupted tail write and keeps every committed record", () => {
     const directory = stateDirectory();
     const task = makeTask();

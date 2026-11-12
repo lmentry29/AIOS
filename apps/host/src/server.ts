@@ -108,6 +108,15 @@ function requireStringField(
   return value;
 }
 
+function isSecretInput(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= 2048 &&
+    !value.includes("\u0000")
+  );
+}
+
 function uuidParam(value: string | undefined, name: string): string {
   if (typeof value !== "string" || !UUID.test(value)) {
     throw new HostHttpError(400, "invalid_identifier", `Path parameter "${name}" must be a UUID.`);
@@ -938,25 +947,22 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           );
         }
         const secret = requestBody.secret;
-        if (
-          secret !== undefined &&
-          (typeof secret !== "string" || secret.length === 0 || secret.length > 2048)
-        ) {
+        if (secret !== undefined && !isSecretInput(secret)) {
           throw new HostHttpError(
             400,
             "invalid_field",
-            'Field "secret" must be a non-empty string of at most 2048 characters.',
+            'Field "secret" must be non-empty UTF-8 text of at most 2048 bytes without NUL characters.',
           );
         }
         await requireAllowed(host, session, "intake", entity.entity_id);
-        const secretRef =
-          secret === undefined
-            ? undefined
-            : {
-                entry_id: host.secretBroker.create(secret as string),
-                broker: "host_encrypted_file" as const,
-              };
+        let secretRef: { entry_id: string; broker: "host_encrypted_file" } | undefined;
         try {
+          if (secret !== undefined) {
+            secretRef = {
+              entry_id: host.secretBroker.create(secret),
+              broker: "host_encrypted_file",
+            };
+          }
           const created = host.infrastructure.createInfrastructure({
             ...entity,
             ...(secretRef === undefined ? {} : { secret_ref: secretRef }),
@@ -970,6 +976,15 @@ function buildRoutes(runtime: HostRuntime): Route[] {
             },
           };
         } catch (error) {
+          if (secretRef) {
+            // The record was not committed. Do not leave an unreferenced credential in the
+            // broker after a duplicate-id, journal-capacity, or other partial-create failure.
+            try {
+              host.secretBroker.remove(secretRef.entry_id);
+            } catch {
+              /* preserve the original failure; the host broker is still the only holder. */
+            }
+          }
           if (error instanceof EntityIdConflictError) {
             throw new HostHttpError(409, "entity_conflict", error.message);
           }
@@ -1039,11 +1054,11 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           }
         }
         const secret = body.secret;
-        if (typeof secret !== "string" || secret.length === 0 || secret.length > 2048) {
+        if (!isSecretInput(secret)) {
           throw new HostHttpError(
             400,
             "invalid_field",
-            'Field "secret" must be a non-empty string of at most 2048 characters.',
+            'Field "secret" must be non-empty UTF-8 text of at most 2048 bytes without NUL characters.',
           );
         }
         host.secretBroker.rotate(entity.secret_ref.entry_id, secret);

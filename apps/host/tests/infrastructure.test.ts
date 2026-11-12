@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { FilePolicyRegistry, PolicyAdministrationService } from "@aios/founder";
 import { InfrastructureEntity as InfrastructureSchema } from "@aios/core";
 import type { InfrastructureEntity } from "@aios/core";
 import { loadHostConfig } from "../src/config.js";
+import { DurableOperationalStore } from "../src/persistence/operational-store.js";
 import { createHostRuntime, type HostRuntime } from "../src/runtime.js";
 import { createHostServer, type HostHttpServer } from "../src/server.js";
 import {
@@ -230,6 +231,21 @@ describe("canonical infrastructure records", () => {
     expect(InfrastructureSchema.safeParse({ ...entity, endpoint: "127.0.0.1:8443" }).success).toBe(
       true,
     );
+    // Canonical base fields are open-vocabulary strings; a secret pasted into one must not
+    // bypass the infrastructure-specific SafeText fields.
+    expect(
+      InfrastructureSchema.safeParse({
+        ...entity,
+        relationships: [
+          {
+            target_entity_id: randomUUID(),
+            target_entity_type: "canonical_object",
+            relationship_type: "token=smuggled-through-relationship",
+            direction: "outbound",
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   it("stores only a broker reference, redacts secrets on disk and responses, and survives restart", async () => {
@@ -260,6 +276,29 @@ describe("canonical infrastructure records", () => {
     });
     expect(policy.status).toBe(200);
     expect((policy.body?.policy as { policy_id?: string }).policy_id).toMatch(/^[0-9a-f-]{36}$/);
+
+    // A duplicate entity id is rejected after the broker stores a candidate credential.
+    // The route must remove that unreferenced entry instead of leaving an orphan secret.
+    const duplicate = await call(first, "POST", "/v1/infrastructure", {
+      token: FOUNDER_TOKEN,
+      body: { entity, secret: "duplicate-create-secret-3c4e5f6a" },
+    });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.text).not.toContain("duplicate-create-secret-3c4e5f6a");
+    const brokerState = JSON.parse(
+      readFileSync(join(first.directory, "secrets.enc.json"), "utf8"),
+    ) as { entries: Record<string, unknown> };
+    expect(Object.keys(brokerState.entries)).toHaveLength(1);
+    expect(statSync(join(first.directory, "secrets.enc.json")).mode & 0o077).toBe(0);
+    expect(statSync(first.directory).mode & 0o077).toBe(0);
+
+    // A caller cannot retarget a record to another credential reference, including through
+    // a replay/update path. The reference is assigned once by the host.
+    expect(() =>
+      first.runtime.infrastructure.updateInfrastructure(entity.entity_id, {
+        secret_ref: { entry_id: randomUUID(), broker: "host_encrypted_file" },
+      }),
+    ).toThrow(/host-assigned and immutable/);
 
     const agentCreate = await call(first, "POST", "/v1/infrastructure", {
       token: AGENT_TOKEN,
@@ -310,6 +349,46 @@ describe("canonical infrastructure records", () => {
     expect(rotated.text).not.toContain(secondSecret);
     expect(second.secretBroker.resolve(secretRef?.entry_id ?? "")).toBe(secondSecret);
     expect(persistedText(first.directory)).not.toContain(secondSecret);
+
+    const archive = join(first.directory, "operational", "infrastructure-archive.json");
+    second.operational.compact(archive);
+    expect(second.infrastructure.getInfrastructure(entity.entity_id)?.secret_ref).toEqual(
+      secretRef,
+    );
+    expect(
+      readFileSync(join(first.directory, "operational", "operational.jsonl"), "utf8"),
+    ).not.toContain(firstSecret);
+    expect(
+      readFileSync(join(first.directory, "operational", "operational.jsonl"), "utf8"),
+    ).not.toContain(secondSecret);
+    expect(readFileSync(archive, "utf8")).not.toContain(firstSecret);
+    expect(readFileSync(archive, "utf8")).not.toContain(secondSecret);
+  });
+
+  it("rejects replayed infrastructure records that retarget their broker reference", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-infrastructure-replay-"));
+    const entity = makeInfrastructure({
+      secret_ref: { entry_id: randomUUID(), broker: "host_encrypted_file" },
+    });
+    const store = new DurableOperationalStore({ directory });
+    store.infrastructure.createInfrastructure(entity);
+    store.close();
+
+    const reopened = new DurableOperationalStore({ directory });
+    const current = reopened.infrastructure.getInfrastructure(entity.entity_id);
+    if (!current) throw new Error("infrastructure record missing");
+    const retargeted = {
+      ...current,
+      secret_ref: { entry_id: randomUUID(), broker: "host_encrypted_file" as const },
+      version: current.version + 1,
+      modified_at: new Date().toISOString(),
+    };
+    reopened.journal.append("entity", { collection: "infrastructure", entity: retargeted });
+    reopened.close();
+
+    expect(() => new DurableOperationalStore({ directory })).toThrow(
+      /immutable infrastructure identity or credential reference/,
+    );
   });
 
   it("fails closed when no broker is configured and rejects a caller-supplied broker reference", async () => {

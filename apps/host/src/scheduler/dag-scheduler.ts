@@ -79,6 +79,16 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** Legal persisted state transitions between two appended graph revisions. */
+const NODE_STATE_TRANSITIONS: Record<DagNodeState, readonly DagNodeState[]> = {
+  pending: ["pending", "running"],
+  awaiting_approval: ["awaiting_approval", "pending"],
+  running: ["running", "completed", "failed", "interrupted", "pending"],
+  interrupted: ["interrupted", "pending", "awaiting_approval"],
+  completed: ["completed"],
+  failed: ["failed"],
+};
+
 function validateGraph(value: unknown): DagGraph {
   if (
     !isRecord(value) ||
@@ -108,11 +118,13 @@ function validateGraph(value: unknown): DagGraph {
       !isUuid(raw.node_id) ||
       !isUuid(raw.task_id) ||
       !Array.isArray(raw.depends_on) ||
+      raw.depends_on.length > MAX_DAG_NODES ||
       raw.depends_on.some((dependency) => !isUuid(dependency)) ||
       !Number.isSafeInteger(raw.approval_quorum) ||
       (raw.approval_quorum as number) < 0 ||
       (raw.approval_quorum as number) > 5 ||
       !Array.isArray(raw.approvals) ||
+      raw.approvals.length > 5 ||
       raw.approvals.some((actor) => typeof actor !== "string" || !HUMAN_ACTOR.test(actor)) ||
       (raw.state !== "pending" &&
         raw.state !== "awaiting_approval" &&
@@ -123,17 +135,36 @@ function validateGraph(value: unknown): DagGraph {
     ) {
       throw new JournalError("Operational journal contains an invalid DAG scheduler node.");
     }
-    if (nodeIds.has(raw.node_id) || taskIds.has(raw.task_id)) {
+    const nodeId = raw.node_id.toLowerCase();
+    const taskId = raw.task_id.toLowerCase();
+    const dependsOn = (raw.depends_on as string[]).map((dependency) => dependency.toLowerCase());
+    const approvals = raw.approvals as string[];
+    const quorum = raw.approval_quorum as number;
+    if (
+      new Set(dependsOn).size !== dependsOn.length ||
+      new Set(approvals).size !== approvals.length ||
+      approvals.length > quorum
+    ) {
+      throw new JournalError("Operational journal DAG contains duplicate edges or approvals.");
+    }
+    if (raw.state === "awaiting_approval") {
+      if (quorum === 0 || approvals.length >= quorum) {
+        throw new JournalError("Operational journal DAG has an inconsistent approval state.");
+      }
+    } else if (quorum > 0 && approvals.length < quorum) {
+      throw new JournalError("Operational journal DAG released a gated node without quorum.");
+    }
+    if (nodeIds.has(nodeId) || taskIds.has(taskId)) {
       throw new JournalError("Operational journal DAG contains duplicate nodes.");
     }
-    nodeIds.add(raw.node_id);
-    taskIds.add(raw.task_id);
+    nodeIds.add(nodeId);
+    taskIds.add(taskId);
     nodes.push({
-      node_id: raw.node_id,
-      task_id: raw.task_id,
-      depends_on: [...raw.depends_on],
-      approval_quorum: raw.approval_quorum as number,
-      approvals: [...raw.approvals],
+      node_id: nodeId,
+      task_id: taskId,
+      depends_on: dependsOn,
+      approval_quorum: quorum,
+      approvals,
       state: raw.state,
     });
   }
@@ -150,8 +181,8 @@ function validateGraph(value: unknown): DagGraph {
     throw new JournalError("Operational journal DAG contains a dependency cycle.");
   }
   return {
-    graph_id: value.graph_id,
-    mission_id: value.mission_id,
+    graph_id: value.graph_id.toLowerCase(),
+    mission_id: value.mission_id.toLowerCase(),
     nodes,
     max_parallelism: value.max_parallelism as number,
     auto_resume: value.auto_resume,
@@ -217,6 +248,7 @@ function isReady(node: DagNode, byId: Map<string, DagNode>): boolean {
 export class DurableDagScheduler {
   private readonly graphs = new Map<string, DagGraph>();
   private readonly maxParallelism: number;
+  private used = false;
 
   constructor(
     private readonly journal: AppendOnlyJournal,
@@ -233,9 +265,11 @@ export class DurableDagScheduler {
   }
 
   create(input: DagGraphInput, now: Date = new Date()): DagGraph {
+    this.used = true;
     if (!isRecord(input as unknown) || !isUuid(input.mission_id)) {
       throw new DagSchedulerError("A DAG requires a Mission UUID.");
     }
+    const missionId = input.mission_id.toLowerCase();
     if (
       !Array.isArray(input.nodes) ||
       input.nodes.length === 0 ||
@@ -261,17 +295,24 @@ export class DurableDagScheduler {
       if (!isRecord(raw as unknown) || !isUuid(raw.task_id)) {
         throw new DagSchedulerError("Every DAG node requires a Task UUID.");
       }
-      if (taskIds.has(raw.task_id)) {
+      // UUID comparison is case-insensitive. Canonicalizing here prevents the same Task
+      // being supplied twice with different hex casing, and makes dependency resolution
+      // agree with the node identity used by the execution ledger.
+      const taskId = raw.task_id.toLowerCase();
+      if (taskIds.has(taskId)) {
         throw new DagSchedulerError("A DAG must not contain the same Task twice.");
       }
-      taskIds.add(raw.task_id);
-      const dependsOn = raw.depends_on ?? [];
+      taskIds.add(taskId);
+      const rawDependsOn = raw.depends_on ?? [];
       if (
-        !Array.isArray(dependsOn) ||
-        dependsOn.length > MAX_DAG_NODES ||
-        dependsOn.some((dependency) => !isUuid(dependency)) ||
-        new Set(dependsOn).size !== dependsOn.length
+        !Array.isArray(rawDependsOn) ||
+        rawDependsOn.length > MAX_DAG_NODES ||
+        rawDependsOn.some((dependency) => !isUuid(dependency))
       ) {
+        throw new DagSchedulerError("DAG dependencies must be distinct Task UUIDs.");
+      }
+      const dependsOn = rawDependsOn.map((dependency) => dependency.toLowerCase());
+      if (new Set(dependsOn).size !== dependsOn.length) {
         throw new DagSchedulerError("DAG dependencies must be distinct Task UUIDs.");
       }
       const quorum = raw.approval_quorum ?? 0;
@@ -280,8 +321,8 @@ export class DurableDagScheduler {
       }
       nodes.push({
         node_id: randomUUID(),
-        task_id: raw.task_id,
-        depends_on: [...dependsOn],
+        task_id: taskId,
+        depends_on: dependsOn,
         approval_quorum: quorum,
         approvals: [],
         state: quorum === 0 ? "pending" : "awaiting_approval",
@@ -306,7 +347,7 @@ export class DurableDagScheduler {
     const nowIso = now.toISOString();
     const graph: DagGraph = {
       graph_id: randomUUID(),
-      mission_id: input.mission_id,
+      mission_id: missionId,
       nodes: ordered,
       max_parallelism: requestedParallelism,
       auto_resume: input.auto_resume ?? false,
@@ -329,6 +370,7 @@ export class DurableDagScheduler {
 
   /** Adds one independent human approval and releases the node when quorum is met. */
   approve(graphId: string, nodeId: string, actorId: string, now: Date = new Date()): DagGraph {
+    this.used = true;
     if (!HUMAN_ACTOR.test(actorId)) {
       throw new DagSchedulerError("DAG approval requires a human principal.");
     }
@@ -359,6 +401,7 @@ export class DurableDagScheduler {
    * still execute through the Orchestration Kernel and must hold the Task's execute grant.
    */
   claim(now: Date = new Date(), limit = this.maxParallelism): DagClaim[] {
+    this.used = true;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.maxParallelism) {
       throw new DagSchedulerError("DAG claim limit is outside the supported range.");
     }
@@ -412,6 +455,7 @@ export class DurableDagScheduler {
 
   /** Records the terminal state of a claimed node. */
   complete(graphId: string, nodeId: string, success: boolean, now: Date = new Date()): DagGraph {
+    this.used = true;
     const graph = this.requireGraph(graphId);
     const node = graph.nodes.find((candidate) => candidate.node_id === nodeId);
     if (!node) throw new DagSchedulerError("DAG node was not found.");
@@ -430,6 +474,10 @@ export class DurableDagScheduler {
    * require an explicit resume decision.
    */
   recover(now: Date = new Date()): string[] {
+    if (this.used) {
+      throw new DagSchedulerError("DAG recovery is a startup-only operation.");
+    }
+    this.used = true;
     const recovered: string[] = [];
     for (const graph of this.graphs.values()) {
       let changed = false;
@@ -449,6 +497,7 @@ export class DurableDagScheduler {
 
   /** Explicitly returns an interrupted graph to pending; never implied by a read. */
   resume(graphId: string, now: Date = new Date()): DagGraph {
+    this.used = true;
     const graph = this.requireGraph(graphId);
     let changed = false;
     for (const node of graph.nodes) {
@@ -473,8 +522,46 @@ export class DurableDagScheduler {
   restore(value: unknown): void {
     const graph = validateGraph(value);
     const current = this.graphs.get(graph.graph_id);
-    if (current && graph.revision <= current.revision) {
-      throw new JournalError("Operational journal contains a non-monotonic scheduler graph.");
+    if (current) {
+      if (graph.revision !== current.revision + 1) {
+        throw new JournalError("Operational journal contains a non-monotonic scheduler graph.");
+      }
+      if (
+        graph.mission_id !== current.mission_id ||
+        graph.max_parallelism !== current.max_parallelism ||
+        graph.auto_resume !== current.auto_resume ||
+        graph.created_at !== current.created_at ||
+        graph.nodes.length !== current.nodes.length ||
+        Date.parse(graph.updated_at) < Date.parse(current.updated_at) ||
+        (current.last_started_at !== undefined &&
+          (graph.last_started_at === undefined ||
+            Date.parse(graph.last_started_at) < Date.parse(current.last_started_at)))
+      ) {
+        throw new JournalError("Operational journal mutated immutable scheduler graph fields.");
+      }
+      for (let index = 0; index < current.nodes.length; index += 1) {
+        const previous = current.nodes[index];
+        const next = graph.nodes[index];
+        if (
+          !previous ||
+          !next ||
+          previous.node_id !== next.node_id ||
+          previous.task_id !== next.task_id ||
+          previous.approval_quorum !== next.approval_quorum ||
+          previous.depends_on.join("\u0000") !== next.depends_on.join("\u0000") ||
+          !NODE_STATE_TRANSITIONS[previous.state].includes(next.state) ||
+          // A running node may return directly to pending only through the opt-in
+          // auto-resume path. A non-opted graph must pass through interrupted and an
+          // explicit resume.
+          (previous.state === "running" && next.state === "pending" && !graph.auto_resume) ||
+          next.approvals.length < previous.approvals.length ||
+          previous.approvals.some((actor, approvalIndex) => next.approvals[approvalIndex] !== actor)
+        ) {
+          throw new JournalError(
+            "Operational journal contains an illegal DAG scheduler state transition.",
+          );
+        }
+      }
     }
     this.graphs.set(graph.graph_id, graph);
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -49,7 +49,180 @@ describe("durable dependency-DAG scheduler", () => {
         nodes: [{ task_id: a as string }, { task_id: a as string }],
       }),
     ).toThrow(/same Task twice/);
+    // UUID hex casing is not a second identity. Both duplicate task aliases and a
+    // self-dependency written with different casing must be rejected.
+    expect(() =>
+      store.scheduler.create({
+        mission_id: mission,
+        nodes: [
+          { task_id: a as string },
+          { task_id: (a as string).toUpperCase(), depends_on: [a as string] },
+        ],
+      }),
+    ).toThrow(/same Task twice/);
+    expect(() =>
+      store.scheduler.create({
+        mission_id: mission,
+        nodes: [{ task_id: a as string, depends_on: [(a as string).toUpperCase()] }],
+      }),
+    ).toThrow(/cycle/);
     store.close();
+  });
+
+  it("rejects journal replay that duplicates approvals or releases a gated node early", () => {
+    const directory = stateDirectory();
+    const store = new DurableOperationalStore({ directory });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID(), approval_quorum: 2 }],
+    });
+    const duplicateApprovals = store.scheduler.get(graph.graph_id);
+    if (!duplicateApprovals) throw new Error("graph missing");
+    duplicateApprovals.revision = 2;
+    duplicateApprovals.nodes[0] = {
+      ...duplicateApprovals.nodes[0],
+      state: "pending",
+      approvals: ["human:one", "human:one"],
+    };
+    store.journal.append("scheduler_graph", duplicateApprovals);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory })).toThrow(
+      /duplicate edges or approvals/,
+    );
+  });
+
+  it("rejects a journal that releases a gated node without distinct quorum or skips a revision", () => {
+    const directory = stateDirectory();
+    let store = new DurableOperationalStore({ directory });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID(), approval_quorum: 2 }],
+    });
+    const early = store.scheduler.get(graph.graph_id);
+    if (!early) throw new Error("graph missing");
+    early.revision = 2;
+    early.nodes[0] = {
+      ...early.nodes[0],
+      state: "running",
+      approvals: ["human:one"],
+    };
+    store.journal.append("scheduler_graph", early);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory })).toThrow(/without quorum/);
+
+    const gapDirectory = stateDirectory();
+    store = new DurableOperationalStore({ directory: gapDirectory });
+    const clean = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }],
+    });
+    const skipped = store.scheduler.get(clean.graph_id);
+    if (!skipped) throw new Error("graph missing");
+    skipped.revision = 3;
+    store.journal.append("scheduler_graph", skipped);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory: gapDirectory })).toThrow(
+      /non-monotonic scheduler graph/,
+    );
+  });
+
+  it("rejects journal replay that mutates immutable graph fields or regresses a completed node", () => {
+    const directory = stateDirectory();
+    let store = new DurableOperationalStore({ directory });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }, { task_id: randomUUID() }],
+    });
+    const mutated = store.scheduler.get(graph.graph_id);
+    if (!mutated) throw new Error("graph missing");
+    mutated.revision = 2;
+    mutated.mission_id = randomUUID();
+    store.journal.append("scheduler_graph", mutated);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory })).toThrow(/immutable scheduler graph/);
+
+    const cleanDirectory = stateDirectory();
+    store = new DurableOperationalStore({ directory: cleanDirectory });
+    const clean = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }],
+    });
+    const claim = store.scheduler.claim()[0];
+    if (!claim) throw new Error("claim missing");
+    store.scheduler.complete(clean.graph_id, claim.node_id, true);
+    const regressed = store.scheduler.get(clean.graph_id);
+    if (!regressed) throw new Error("graph missing");
+    regressed.revision += 1;
+    regressed.nodes[0] = { ...regressed.nodes[0], state: "pending" };
+    store.journal.append("scheduler_graph", regressed);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory: cleanDirectory })).toThrow(
+      /illegal DAG scheduler state transition/,
+    );
+  });
+
+  it("rejects a replay that auto-resumes a graph that did not opt in", () => {
+    const directory = stateDirectory();
+    const store = new DurableOperationalStore({ directory });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }],
+      auto_resume: false,
+    });
+    expect(store.scheduler.claim()).toHaveLength(1);
+    const replayed = store.scheduler.get(graph.graph_id);
+    if (!replayed) throw new Error("graph missing");
+    replayed.revision += 1;
+    replayed.nodes[0] = { ...replayed.nodes[0], state: "pending" };
+    store.journal.append("scheduler_graph", replayed);
+    store.close();
+    expect(() => new DurableOperationalStore({ directory })).toThrow(
+      /illegal DAG scheduler state transition/,
+    );
+  });
+
+  it("refuses mid-run recovery so a live claim cannot be duplicated", () => {
+    const store = new DurableOperationalStore({ directory: stateDirectory() });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }],
+    });
+    const claim = store.scheduler.claim()[0];
+    expect(claim).toBeDefined();
+    expect(() => store.scheduler.recover()).toThrow(/startup-only/);
+    expect(store.scheduler.get(graph.graph_id)?.nodes[0]?.state).toBe("running");
+    store.scheduler.complete(graph.graph_id, claim?.node_id ?? "", true);
+    store.close();
+  });
+
+  it("does not turn a truncated completion record into a completed node", () => {
+    const directory = stateDirectory();
+    const store = new DurableOperationalStore({ directory });
+    const graph = store.scheduler.create({
+      mission_id: randomUUID(),
+      nodes: [{ task_id: randomUUID() }],
+    });
+    const claim = store.scheduler.claim()[0];
+    if (!claim) throw new Error("claim missing");
+    store.scheduler.complete(graph.graph_id, claim.node_id, true);
+    store.close();
+
+    const journalPath = join(directory, "operational.jsonl");
+    const lines = readFileSync(journalPath, "utf8").trimEnd().split("\n");
+    writeFileSync(journalPath, `${lines.slice(0, -1).join("\n")}\n`, { mode: 0o600 });
+
+    const recovered = new DurableOperationalStore({ directory });
+    expect(recovered.scheduler.get(graph.graph_id)?.nodes[0]?.state).toBe("running");
+    recovered.scheduler.recover();
+    expect(recovered.scheduler.get(graph.graph_id)?.nodes[0]?.state).toBe("interrupted");
+    expect(() =>
+      recovered.scheduler.complete(
+        graph.graph_id,
+        recovered.scheduler.get(graph.graph_id)?.nodes[0]?.node_id ?? "",
+        true,
+      ),
+    ).toThrow(/Only a running/);
+    recovered.close();
   });
 
   it("topologically orders nodes and enforces dependency readiness", () => {
@@ -152,6 +325,14 @@ describe("durable dependency-DAG scheduler", () => {
     expect(store.scheduler.get(manual.graph_id)?.nodes[0]?.state).toBe("interrupted");
     expect(store.scheduler.get(autoGraph.graph_id)?.nodes[0]?.state).toBe("pending");
     expect(() => store.scheduler.resume(autoGraph.graph_id)).toThrow(/no interrupted/);
+    // Interrupted is not completed: a late completion call cannot silently close it.
+    expect(() =>
+      store.scheduler.complete(
+        manual.graph_id,
+        store.scheduler.get(manual.graph_id)?.nodes[0]?.node_id ?? "",
+        true,
+      ),
+    ).toThrow(/Only a running/);
     store.scheduler.resume(manual.graph_id);
     expect(store.scheduler.get(manual.graph_id)?.nodes[0]?.state).toBe("pending");
 
