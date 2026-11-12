@@ -237,8 +237,9 @@ Policy bundles and decisions now carry local detached provenance (ADR-0034).
   `name`, `purpose`, lifecycle state/history and `owner_id`; additive migration. The schema,
   durable operational collection, exact-grant HTTP create/read routes and tests are implemented.
 - ADR-0018 — **Accepted (2026-11-12)**: infrastructure records as canonical objects with
-  secret references only, plus a host-owned secret broker. No infrastructure store or broker
-  is implemented yet.
+  secret references only, plus a host-owned secret broker. The strict schema, durable
+  collection, exact-grant routes and local AES-GCM broker are implemented; production
+  HSM/KMS custody remains CL-007.
 - ADR-0035 — **Accepted (2026-11-12)**: purpose-bound v2 trust roots, HSM/KMS production
   custody, external audit witness, and Sigstore/SLSA build provenance without a runtime
   attestation claim. v2 purpose checks are implemented; operator resources remain pending.
@@ -429,12 +430,16 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    It does not protect against a compromised host process; remote attestation, production
    key custody, and external audit custody remain open.
 3. **Execution re-drive quality.** Resume/retry are deliberate, authorized, append-only
-   operations (ADR-0022), and the cap still rejects rather than queues. There is no automatic
-   retry, backoff loop, scheduler, or capacity queue. Multi-generation resume, duplicate
-   suppression, and cancellation across generations are proven only against the labelled
-   `stub-container` double, not a real Docker/bubblewrap/Seatbelt provider.
-4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are proposed; no Mission store,
-   infrastructure inventory, or secret broker exists.
+   operations (ADR-0022). A durable DAG scheduling substrate now exists, but the kernel's
+   dispatch path still rejects above its execution cap rather than dequeuing through that
+   scheduler. There is no automatic retry, backoff loop, or wired capacity queue, and no
+   scheduler path auto-executes a Task. Multi-generation resume, duplicate suppression, and
+   cancellation across generations are proven only against the labelled `stub-container`
+   double, not a real Docker/bubblewrap/Seatbelt provider.
+4. **Mission/infrastructure models.** ADR-0017 and ADR-0018 are accepted. Mission has a
+   schema, durable store and exact-grant routes. Infrastructure has a strict canonical
+   schema, durable collection, exact-grant routes and a local encrypted broker; HSM/KMS
+   production custody remains CL-007.
 5. **Identity/policy lifecycle.** Bearer sessions, a durable policy registry, exact-granted
    runtime publication and retirement, signed policy bundles/decisions, and a durable
    hash-chained decision audit with a signed local high-water mark exist. There is no
@@ -452,8 +457,9 @@ doubles where a real isolation provider is unavailable; they do not claim contai
 7. **Live connectors.** Gmail/Notion/Obsidian++ need OAuth/token lifecycle, scopes, health,
    pagination, rate limits, retries, and live integration tests.
 8. **UI.** No UI exists. The host rejects all browser origins by design (ADR-0016).
-9. **Orchestration depth.** No dependencies, scheduler, parallelism, approval gates, or
-   automatic resume of suspended work.
+9. **Orchestration depth.** The durable DAG scheduler supports dependencies, fair claims,
+   bounded parallelism, human approval quorum and opt-in recovery, but it is not wired into
+   kernel dispatch as a capacity queue and does not auto-resume suspended Workflows.
 10. **Operations.** No journal compaction/migrations, automated backup/restore drill,
     metrics/tracing/alerting, threat model, incident runbook, or SLOs.
 11. **Release.** No installer, signed update channel, or supported npm install path.

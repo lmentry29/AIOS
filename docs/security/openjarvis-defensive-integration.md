@@ -26,12 +26,12 @@ point, not at a test-only factory or an exported helper. No control is library-o
 
 | Control | Production call site | Status |
 | --- | --- | --- |
-| SSRF boundary | `apps/host/src/server.ts:1285` (`/v1/founder/gmail/search`) and `apps/host/src/server.ts:1300` (`/v1/founder/notion/applications`) → `apps/host/src/runtime.ts:364` (`AuthorizedLocalConnectorEvidenceReader`) → `packages/founder/src/local-connectors.ts:137` (default `createLoopbackFetcher`). The vault path is `apps/host/src/server.ts:1270` → `apps/host/src/runtime.ts:353` → `packages/founder/src/obsidian-evidence.ts:278`. Enforcement: `packages/founder/src/security/ssrf.ts:521`. | Wired |
-| Taint tracking | `apps/host/src/server.ts:1270`, `:1285` and `:1300` return Founder evidence records; `packages/founder/src/index.ts:278`, `:297` and `:307` pass them through the `host_response` sink (policy at `:121`). | Wired |
-| Sensitive-path protection | `apps/host/src/server.ts:1270` → `apps/host/src/runtime.ts:353` → `packages/founder/src/obsidian-evidence.ts:135` (`assertNotSensitivePath`). Signed build artifacts use `apps/host/src/execution/build-provenance.ts:249-250`. | Wired |
-| Capability inventory | `apps/host/src/server.ts:446` (and the other `requireAllowed` routes) → `apps/host/src/server.ts:461` → `apps/host/src/authorization.ts:22` → `packages/founder/src/security/capability-inventory.ts:111` (`isAccessAction`). Policy construction validates the same inventory at `packages/founder/src/authorization.ts:389`. | Wired |
-| No-follow bounded reads | `apps/host/src/runtime.ts:255` (`PolicyProvenanceAuthority.fromFiles`) → `apps/host/src/policy-provenance.ts:285` → `apps/host/src/security/file-integrity.ts:28`, with `O_NOFOLLOW` at `:44`. Signed artifacts use `apps/host/src/execution/artifact-signing.ts:295`. | Wired |
-| Directory fsync | `apps/host/src/runtime.ts:265` constructs `DurableAuthorizationAuditStore`; `apps/host/src/persistence/authorization-audit-store.ts:442` fsyncs the directory after the signed audit head is renamed. Journal compaction uses `apps/host/src/persistence/journal.ts:511`; implementation: `apps/host/src/persistence/fsync-directory.ts:16`. | Wired |
+| SSRF boundary | `apps/host/src/server.ts:1485` (`/v1/founder/gmail/search`) and `apps/host/src/server.ts:1500` (`/v1/founder/notion/applications`) → `apps/host/src/runtime.ts:389` (`AuthorizedLocalConnectorEvidenceReader`) → `packages/founder/src/local-connectors.ts:137` (default `createLoopbackFetcher`). The vault path is `apps/host/src/server.ts:1470` → `apps/host/src/runtime.ts:378` → `packages/founder/src/obsidian-evidence.ts:278`. Enforcement: `packages/founder/src/security/ssrf.ts:521`. | Wired |
+| Taint tracking | `apps/host/src/server.ts:1470`, `:1485` and `:1500` return Founder evidence records; `packages/founder/src/index.ts:278`, `:297` and `:307` pass them through the `host_response` sink (policy at `:121`). | Wired |
+| Sensitive-path protection | `apps/host/src/server.ts:1470` → `apps/host/src/runtime.ts:378` → `packages/founder/src/obsidian-evidence.ts:135` (`assertNotSensitivePath`). Signed build artifacts use `apps/host/src/execution/build-provenance.ts:249-250`. | Wired |
+| Capability inventory | `apps/host/src/server.ts:453` (and the other `requireAllowed` routes) → `apps/host/src/server.ts:469` → `apps/host/src/authorization.ts:22` → `packages/founder/src/security/capability-inventory.ts:111` (`isAccessAction`). Policy construction validates the same inventory at `packages/founder/src/authorization.ts:389`. | Wired |
+| No-follow bounded reads | `apps/host/src/runtime.ts:274` (`PolicyProvenanceAuthority.fromFiles`) → `apps/host/src/policy-provenance.ts:285` → `apps/host/src/security/file-integrity.ts:28`, with `O_NOFOLLOW` at `:44`. Signed artifacts use `apps/host/src/execution/artifact-signing.ts:295`. | Wired |
+| Directory fsync | `apps/host/src/runtime.ts:284` constructs `DurableAuthorizationAuditStore`; `apps/host/src/persistence/authorization-audit-store.ts:442` fsyncs the directory after the signed audit head is renamed. Journal compaction uses `apps/host/src/persistence/journal.ts:511`; implementation: `apps/host/src/persistence/fsync-directory.ts:16`. | Wired |
 
 ## SSRF contract
 
@@ -143,19 +143,27 @@ Full uncached gate:
 Result: **46/46 tasks successful, 0 cached, exit status 0**. Test totals:
 
 - `@aios/founder`: 95 passed across 10 files.
-- `@aios/host`: 298 passed, 17 skipped across 30 passed files and 3 skipped files. The
+- `@aios/host`: 308 passed, 17 skipped across 32 passed files and 3 skipped files. The
   skips are live gVisor/Docker/rootfs probes that require a host environment; they are not
-  counted as passing evidence. Mission, signed-archive and lifecycle tests are included.
+  counted as passing evidence. Mission, signed-archive, infrastructure, DAG-scheduler and
+  lifecycle tests are included.
 - conformance: 107 passed; integration: 43 passed; orchestration: 31 passed. The remaining
   packages' configured tasks, including `--passWithNoTests` where applicable, succeeded.
-  Full workspace total: **757 passed / 17 skipped**.
+  Full workspace total: **767 passed / 17 skipped**.
+
+Infrastructure records and the local encrypted broker are covered by 3 host tests; the
+broker rejects unknown fields, human-only mutation, restart, and plaintext leakage into the
+journal, ciphertext store, HTTP responses and authorization audit. The durable DAG scheduler
+is covered by 6 host tests: cycle/self/duplicate/unknown dependency rejection, topological
+ordering, readiness, quorum, fairness, per-graph and host-wide bounds, restart recovery,
+opt-in auto-resume and compaction replay.
 
 The VM exposed pnpm only through `npx`, so the gate used a temporary workspace-local pnpm
 binary and a workspace-local Turbo cache. No lockfile or dependency was changed for that
 workaround.
 
 `pnpm format:check` is now green after the owner-approved repository-wide migration:
-the current gate checks **203 files with 0 findings**, and `biome format --write .` fixed
+the current gate checks **208 files with 0 findings**, and `biome format --write .` fixed
 **149 files**. This replaced the historical baseline rather than cherry-picking the added
 files. The previous line-number citations in the production-reachability table were
 re-anchored in the same migration commit. The migration changed formatting only; the full

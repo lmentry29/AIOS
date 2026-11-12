@@ -98,6 +98,35 @@ provider; none of these boundaries may be silently substituted for another.
 - A macOS runner or Apple silicon operator host and a cgroup v2-capable Linux host are required
   for the corresponding live evidence.
 
+## Scheduler implementation amendment (2026-11-12)
+
+CL-014's durable scheduling substrate is implemented in
+`apps/host/src/scheduler/dag-scheduler.ts` and composed into `DurableOperationalStore`:
+
+- Graphs carry a Mission, topologically ordered nodes, task dependencies, per-graph
+  parallelism, an opt-in `auto_resume` flag, timestamps, and a monotonic revision. Every
+  mutation is journalled as `scheduler_graph`; compaction snapshots carry `scheduler_graphs`.
+- Creation rejects duplicate Tasks, unknown/dangling dependencies, self-dependencies and
+  cycles, then stores a stable topological order. A node is eligible only when every
+  dependency is `completed`.
+- Claims are fair across missions (fewest starts in the current round, then least-recently
+  started graph), respect both per-graph and host-wide parallelism, and leave excess eligible
+  work pending rather than failing it.
+- A gated node starts in `awaiting_approval` and cannot be claimed until distinct human
+  approvals meet its 1-5 quorum. No approval is implied by a role or ownership.
+- Startup recovery marks running nodes interrupted. Only graphs with `auto_resume: true`
+  return them to pending; all others require an explicit resume call. A resumed gated node
+  with insufficient approvals returns to `awaiting_approval`.
+
+Scheduling state is not execution authority: a claim names a Task, and execution still goes
+through the Orchestration Kernel's exact `execute` grant and independent verifier. No
+scheduler path auto-executes a Task. The host-wide execution cap and the existing kernel
+capacity behavior remain unchanged.
+
+Tests: `apps/host/tests/dag-scheduler.test.ts` (cycle/self/duplicate/unknown dependency
+rejection, topological ordering, readiness, quorum, fairness, per-graph and host-wide
+bounds, restart recovery, opt-in auto-resume, explicit resume, compaction).
+
 ## Tests required
 
 - Cross-origin, DNS-rebinding, missing-CSRF, wrong-cookie, expired-session, and rate-limit
