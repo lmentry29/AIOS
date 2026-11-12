@@ -45,6 +45,26 @@ host operator is the person running the trusted host and holding its secrets.
 | CL-023 | Security workflow must execute and pass for the working branch, not only for PRs and `main`. | `done` | Security maintainer | Branch push trigger added without changing PR/main gating, permissions or jobs. Security run `43241705811` (https://github.com/lmentry29/AIOS/actions/runs/43241705811) passed on implementation head `31f477f0c4f21e59eae11543fc4d9a662b3de39f`; earlier run `43236848625` passed on `650d336b43a6d33f7a409405472053518917684e`, and `43136322627` passed for `d232c91f8f439091649b83b79c8e691e47ffd1a3`. |
 | CL-024 | Detect complete-line suffix truncation or rollback of the operational journal without an independent anchor. | `blocked-on-live-credentials` | Host operator | Reordered/duplicated segments, torn tails, scheduler revision gaps, immutable-field mutation, illegal state regression, duplicate approvals, early gated release and non-opted auto-resume are rejected by the local code and regression tests. A complete-line prefix is indistinguishable from a legitimate shorter journal without an external WORM/checkpoint anchor (CL-006/CL-021). Broker values are outside the journal and `secret_ref` is immutable across replay; recovery never treats a truncated completion as completed. |
 
+## Delivery record
+
+The audited integration was merged to the default branch through PR #4 on 2026-11-12. The
+merge commit is `e57ad25ddb4ccbcabbfaa27d12e0c1aa7e77d5f2`, with parents
+`767f30e2ac50d12072cde829712b6719956ee040` (the previous `main`) and
+`ff6fc0d1a658949a8b2667dd2120d150307b5282` (the delivery head). The audited head
+`d57a09551f971973772acf87a9ab6801d2ecfb0d` is an ancestor; `ff6fc0d` adds only the CI
+task-ordering fix that makes package tests wait for their own build output.
+
+Post-merge checks passed on `e57ad25`: `ci` run
+[`43259301056`](https://github.com/lmentry29/AIOS/actions/runs/43259301056), and Security run
+[`43259301297`](https://github.com/lmentry29/AIOS/actions/runs/43259301297) with both the
+`Live sandbox boundary` and `Dependency and secret scan` jobs successful. No evidence beyond
+these recorded runs is claimed.
+
+The integration scope is closed on the default branch. `CL-008`, `CL-013`, `CL-019` and
+`CL-020` remain `accepted-implementation-pending` as separate owner-gated capabilities whose
+published decisions require implementation or live verification; they are not relabeled
+`done` by this delivery.
+
 A row is not moved to `done` because a test passes in a different row's environment or because
 a residual risk was accepted. The red-team record and this table are both updated whenever a
 blocked owner supplies the missing infrastructure or decision.
