@@ -3,7 +3,9 @@ name: Security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - security/openjarvis-defensive-integration
 
 permissions:
   contents: read
