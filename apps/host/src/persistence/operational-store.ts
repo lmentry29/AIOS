@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ArtifactEntity,
   CanonicalEntity,
+  InfrastructureEntity,
   LifecycleState,
   MissionEntity,
   TaskEntity,
@@ -10,6 +11,7 @@ import type {
 import type { HostSessionEntry } from "../config.js";
 import {
   ArtifactEntity as ArtifactSchema,
+  InfrastructureEntity as InfrastructureSchema,
   MissionEntity as MissionSchema,
   TaskEntity as TaskSchema,
   WorkflowEntity as WorkflowSchema,
@@ -18,6 +20,7 @@ import { ObjectStore, type EntityPatch } from "@aios/objects";
 import type { TaskRepositoryPort } from "@aios/orchestration";
 import { ExecutionLedger } from "./execution-ledger.js";
 import { AppendOnlyJournal, JournalError } from "./journal.js";
+import { DurableDagScheduler, MAX_DAG_PARALLELISM } from "../scheduler/dag-scheduler.js";
 import { DurableSessionStore, type SessionSnapshot } from "./session-store.js";
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,200}$/;
@@ -114,7 +117,12 @@ export class DurableCollection<T extends CanonicalEntity> {
 
   constructor(
     private readonly journal: AppendOnlyJournal,
-    private readonly collection: "tasks" | "workflows" | "artifacts" | "missions",
+    private readonly collection:
+      | "tasks"
+      | "workflows"
+      | "artifacts"
+      | "missions"
+      | "infrastructure",
     schema: { parse(data: unknown): T },
   ) {
     this.schema = schema;
@@ -199,6 +207,32 @@ export class DurableMissionRepository extends DurableCollection<MissionEntity> {
     actor: string,
   ): MissionEntity {
     return this.transitionLifecycle(missionId, state, actor);
+  }
+}
+
+/** Durable infrastructure inventory; records carry broker references only. */
+export class DurableInfrastructureRepository extends DurableCollection<InfrastructureEntity> {
+  constructor(journal: AppendOnlyJournal) {
+    super(journal, "infrastructure", InfrastructureSchema);
+  }
+
+  createInfrastructure(entity: InfrastructureEntity): InfrastructureEntity {
+    return this.create(entity);
+  }
+
+  getInfrastructure(entityId: string): InfrastructureEntity | undefined {
+    return this.get(entityId);
+  }
+
+  listInfrastructure(): InfrastructureEntity[] {
+    return this.list({ entityType: "canonical_object" });
+  }
+
+  updateInfrastructure(
+    entityId: string,
+    patch: EntityPatch<InfrastructureEntity>,
+  ): InfrastructureEntity {
+    return this.update(entityId, patch);
   }
 }
 
@@ -474,6 +508,10 @@ export interface OperationalSnapshot {
   artifacts: unknown[];
   /** Optional for pre-Mission snapshots; a missing list replays as no missions. */
   missions?: unknown[];
+  /** Optional for snapshots written before the infrastructure inventory existed. */
+  infrastructure?: unknown[];
+  /** Optional for snapshots written before the durable DAG scheduler existed. */
+  scheduler_graphs?: unknown[];
   runs: unknown[];
   executions: unknown[];
   /** Added after F-013; old snapshots remain readable and leave configured sessions intact. */
@@ -495,9 +533,12 @@ export class DurableOperationalStore {
   readonly journal: AppendOnlyJournal;
   readonly tasks: DurableTaskRepository;
   readonly missions: DurableMissionRepository;
+  readonly infrastructure: DurableInfrastructureRepository;
   readonly workflows: DurableCollection<WorkflowEntity>;
   readonly artifacts: DurableCollection<ArtifactEntity>;
   readonly runs: DurableRunCoordinator;
+  /** Durable dependency-DAG scheduling records; execution remains in the kernel. */
+  readonly scheduler: DurableDagScheduler;
   /** Per-Task sandbox execution lifecycle, used for cancellation and crash reconciliation. */
   readonly executions: ExecutionLedger;
   /** Durable session generations, revocation, expiry, and scope authority. */
@@ -518,6 +559,7 @@ export class DurableOperationalStore {
     const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
     this.tasks = new DurableTaskRepository(this.journal);
     this.missions = new DurableMissionRepository(this.journal);
+    this.infrastructure = new DurableInfrastructureRepository(this.journal);
     this.workflows = new DurableCollection<WorkflowEntity>(
       this.journal,
       "workflows",
@@ -529,6 +571,7 @@ export class DurableOperationalStore {
       ArtifactSchema,
     );
     this.runs = new DurableRunCoordinator(this.journal, leaseMs);
+    this.scheduler = new DurableDagScheduler(this.journal, MAX_DAG_PARALLELISM);
     this.executions = new ExecutionLedger(this.journal);
     this.sessions = new DurableSessionStore(this.journal, options.sessions ?? []);
 
@@ -539,17 +582,22 @@ export class DurableOperationalStore {
           (record.payload.collection !== "tasks" &&
             record.payload.collection !== "workflows" &&
             record.payload.collection !== "artifacts" &&
-            record.payload.collection !== "missions")
+            record.payload.collection !== "missions" &&
+            record.payload.collection !== "infrastructure")
         ) {
           throw new JournalError("Operational journal contains an unknown entity collection.");
         }
         const collection = record.payload.collection;
         if (collection === "tasks") this.tasks.restore(record.payload.entity);
         else if (collection === "missions") this.missions.restore(record.payload.entity);
+        else if (collection === "infrastructure")
+          this.infrastructure.restore(record.payload.entity);
         else if (collection === "workflows") this.workflows.restore(record.payload.entity);
         else this.artifacts.restore(record.payload.entity);
       } else if (record.kind === "run") {
         this.runs.restore(record.payload);
+      } else if (record.kind === "scheduler_graph") {
+        this.scheduler.restore(record.payload);
       } else if (record.kind === "execution") {
         this.executions.restore(record.payload);
       } else if (record.kind === "session_rotated") {
@@ -573,9 +621,23 @@ export class DurableOperationalStore {
             "Operational journal contains a compaction snapshot with a malformed Mission collection.",
           );
         }
+        if (snapshot.infrastructure !== undefined && !Array.isArray(snapshot.infrastructure)) {
+          throw new JournalError(
+            "Operational journal contains a compaction snapshot with a malformed infrastructure collection.",
+          );
+        }
+        if (snapshot.scheduler_graphs !== undefined && !Array.isArray(snapshot.scheduler_graphs)) {
+          throw new JournalError(
+            "Operational journal contains a compaction snapshot with a malformed scheduler collection.",
+          );
+        }
         for (const entity of snapshot.tasks as unknown[]) this.tasks.restore(entity);
         for (const entity of (snapshot.missions as unknown[] | undefined) ?? [])
           this.missions.restore(entity);
+        for (const entity of (snapshot.infrastructure as unknown[] | undefined) ?? [])
+          this.infrastructure.restore(entity);
+        for (const graph of (snapshot.scheduler_graphs as unknown[] | undefined) ?? [])
+          this.scheduler.restore(graph);
         for (const entity of snapshot.workflows as unknown[]) this.workflows.restore(entity);
         for (const entity of snapshot.artifacts as unknown[]) this.artifacts.restore(entity);
         for (const run of snapshot.runs as unknown[]) this.runs.restore(run);
@@ -602,6 +664,8 @@ export class DurableOperationalStore {
     const snapshot: OperationalSnapshot = {
       tasks: this.tasks.list(),
       missions: this.missions.listMissions(),
+      infrastructure: this.infrastructure.listInfrastructure(),
+      scheduler_graphs: this.scheduler.snapshot(),
       workflows: this.workflows.list(),
       artifacts: this.artifacts.list(),
       runs: this.runs.list(),

@@ -8,7 +8,10 @@ import {
   PolicyPublicationError,
   PolicyRevocationError,
 } from "@aios/founder";
-import { MissionEntity as MissionSchema } from "@aios/core";
+import {
+  InfrastructureEntity as InfrastructureSchema,
+  MissionEntity as MissionSchema,
+} from "@aios/core";
 import { EntityIdConflictError } from "@aios/objects";
 import {
   ExecutionAttemptConflictError,
@@ -31,6 +34,7 @@ import {
 import { parseRuntimePolicyPublication, parseRuntimePolicyRevocation } from "./policy-admin.js";
 import { ExecutionConflictError } from "./persistence/execution-ledger.js";
 import { JournalError } from "./persistence/journal.js";
+import { SecretBrokerError } from "./security/secret-broker.js";
 import { DispatchConflictError, type StartedRun } from "./persistence/operational-store.js";
 import { withRequestId } from "./request-context.js";
 import type { HostRuntime } from "./runtime.js";
@@ -201,6 +205,9 @@ function mapError(error: unknown): {
   }
   if (error instanceof HostExecutionError) {
     return { status: 422, code: "execution_failed", message: error.message };
+  }
+  if (error instanceof SecretBrokerError) {
+    return { status: 409, code: "secret_broker_error", message: error.message };
   }
   if (error instanceof PolicyProvenanceDeniedError) {
     return {
@@ -450,6 +457,7 @@ async function requireAllowed(
     | "read_status"
     | "read_evidence"
     | "intake"
+    | "execute"
     | "cancel"
     | "resume"
     | "retry"
@@ -596,10 +604,13 @@ function buildRoutes(runtime: HostRuntime): Route[] {
           capabilities: {
             dispatch: dispatchEnabled,
             evidence: runtime.evidenceConfigured,
+            secret_broker: runtime.secretBroker.available,
+            scheduler: true,
           },
           storage: "durable",
           recovered_workflows: runtime.recoveredWorkflows.length,
           recovered_executions: runtime.recoveredExecutions.length,
+          recovered_scheduler_graphs: runtime.recoveredSchedulerGraphs.length,
           max_concurrent_tasks: runtime.config.execution?.max_concurrent_tasks ?? 1,
         },
       }),
@@ -855,6 +866,195 @@ function buildRoutes(runtime: HostRuntime): Route[] {
         const mission = host.missionStore.getMission(missionId);
         if (!mission) throw new HostHttpError(404, "not_found", "Mission was not found.");
         return { status: 200, body: { mission } };
+      },
+    },
+    {
+      pattern: /^\/v1\/infrastructure$/,
+      allow: ["GET", "POST"],
+      handle: async ({ runtime: host, session, req, readJson }) => {
+        if (req.method === "GET") {
+          const infrastructures = [];
+          for (const record of host.infrastructure.listInfrastructure()) {
+            if (
+              await host.authorization.authorize({
+                actor_id: session.principal_id,
+                action: "read_status",
+                resource_id: record.entity_id,
+              })
+            ) {
+              infrastructures.push(record);
+            }
+          }
+          return {
+            status: 200,
+            body: { infrastructure: infrastructures, total: infrastructures.length },
+          };
+        }
+
+        // Infrastructure mutation is human/host-owned (ADR-0018). An agent session can
+        // read only when a resource policy grants it; it can never create or rotate.
+        requireHuman(session);
+        const requestBody = jsonBody(await readJson());
+        for (const key of Object.keys(requestBody)) {
+          if (key !== "entity" && key !== "secret") {
+            throw new HostHttpError(
+              400,
+              "invalid_body",
+              `Infrastructure creation does not accept the field "${key}".`,
+            );
+          }
+        }
+        const parsed = InfrastructureSchema.safeParse(requestBody.entity);
+        if (!parsed.success) {
+          throw new HostHttpError(
+            400,
+            "invalid_entity",
+            "Infrastructure entity is schema-invalid.",
+          );
+        }
+        const entity = parsed.data;
+        if (
+          entity.created_by !== session.principal_id ||
+          entity.owner_id !== session.principal_id
+        ) {
+          throw new HostHttpError(
+            403,
+            "actor_mismatch",
+            "Infrastructure provenance and ownership must match the authenticated principal.",
+          );
+        }
+        if (entity.lifecycle_state !== "created" || entity.lifecycle_history.length > 0) {
+          throw new HostHttpError(
+            400,
+            "invalid_initial_state",
+            "A new infrastructure record must start in created state with empty history.",
+          );
+        }
+        if (entity.secret_ref !== undefined) {
+          throw new HostHttpError(
+            400,
+            "broker_reference_reserved",
+            "The host assigns the broker reference; it cannot be supplied by the caller.",
+          );
+        }
+        const secret = requestBody.secret;
+        if (
+          secret !== undefined &&
+          (typeof secret !== "string" || secret.length === 0 || secret.length > 2048)
+        ) {
+          throw new HostHttpError(
+            400,
+            "invalid_field",
+            'Field "secret" must be a non-empty string of at most 2048 characters.',
+          );
+        }
+        await requireAllowed(host, session, "intake", entity.entity_id);
+        const secretRef =
+          secret === undefined
+            ? undefined
+            : {
+                entry_id: host.secretBroker.create(secret as string),
+                broker: "host_encrypted_file" as const,
+              };
+        try {
+          const created = host.infrastructure.createInfrastructure({
+            ...entity,
+            ...(secretRef === undefined ? {} : { secret_ref: secretRef }),
+          });
+          return {
+            status: 201,
+            body: {
+              entity_id: created.entity_id,
+              secret_ref: created.secret_ref,
+              health: created.health,
+            },
+          };
+        } catch (error) {
+          if (error instanceof EntityIdConflictError) {
+            throw new HostHttpError(409, "entity_conflict", error.message);
+          }
+          throw error;
+        }
+      },
+    },
+    {
+      pattern: /^\/v1\/infrastructure\/([^/]+)$/,
+      allow: ["GET"],
+      handle: async ({ runtime: host, session }, params) => {
+        const infrastructureId = uuidParam(params[1], "infrastructureId");
+        await requireAllowed(host, session, "read_status", infrastructureId);
+        const entity = host.infrastructure.getInfrastructure(infrastructureId);
+        if (!entity)
+          throw new HostHttpError(404, "not_found", "Infrastructure record was not found.");
+        return { status: 200, body: { infrastructure: entity } };
+      },
+    },
+    {
+      pattern: /^\/v1\/infrastructure\/([^/]+)\/policy$/,
+      allow: ["GET"],
+      handle: async ({ runtime: host, session }, params) => {
+        const infrastructureId = uuidParam(params[1], "infrastructureId");
+        await requireAllowed(host, session, "read_status", infrastructureId);
+        const entity = host.infrastructure.getInfrastructure(infrastructureId);
+        if (!entity)
+          throw new HostHttpError(404, "not_found", "Infrastructure record was not found.");
+        const policyId = await host.policies.resolve(infrastructureId);
+        if (!policyId) return { status: 200, body: { policy: null } };
+        const policy = await host.policies.get(policyId);
+        return {
+          status: 200,
+          body: {
+            policy: policy ? { policy_id: policy.policy_id, version: policy.version } : null,
+          },
+        };
+      },
+    },
+    {
+      pattern: /^\/v1\/infrastructure\/([^/]+)\/rotate$/,
+      allow: ["POST"],
+      handle: async ({ runtime: host, session, readJson }, params) => {
+        const infrastructureId = uuidParam(params[1], "infrastructureId");
+        requireHuman(session);
+        // Rotate is an execution-surface mutation on the exact record. The human check is
+        // independent of the policy grant: an agent with execute cannot rotate credentials.
+        await requireAllowed(host, session, "execute", infrastructureId);
+        const entity = host.infrastructure.getInfrastructure(infrastructureId);
+        if (!entity)
+          throw new HostHttpError(404, "not_found", "Infrastructure record was not found.");
+        if (!entity.secret_ref) {
+          throw new HostHttpError(
+            409,
+            "broker_reference_missing",
+            "This infrastructure record has no broker-managed credential.",
+          );
+        }
+        const body = jsonBody(await readJson());
+        for (const key of Object.keys(body)) {
+          if (key !== "secret") {
+            throw new HostHttpError(
+              400,
+              "invalid_body",
+              `Credential rotation does not accept the field "${key}".`,
+            );
+          }
+        }
+        const secret = body.secret;
+        if (typeof secret !== "string" || secret.length === 0 || secret.length > 2048) {
+          throw new HostHttpError(
+            400,
+            "invalid_field",
+            'Field "secret" must be a non-empty string of at most 2048 characters.',
+          );
+        }
+        host.secretBroker.rotate(entity.secret_ref.entry_id, secret);
+        return {
+          status: 200,
+          body: {
+            entity_id: entity.entity_id,
+            secret_ref: entity.secret_ref,
+            rotated: true,
+          },
+        };
       },
     },
     {

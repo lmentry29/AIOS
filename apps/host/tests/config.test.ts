@@ -231,6 +231,26 @@ describe("host configuration", () => {
     ).not.toThrow();
   });
 
+  it("parses broker custody paths and rejects relative or aliased paths", () => {
+    const secretBroker = {
+      store_file: join(tmpdir(), "aios-secrets.enc.json"),
+      key_file: join(tmpdir(), "aios-broker.key"),
+    };
+    expect(parseHostConfig(validConfig({ secret_broker: secretBroker })).secret_broker).toEqual(
+      secretBroker,
+    );
+    expect(() =>
+      parseHostConfig(
+        validConfig({ secret_broker: { ...secretBroker, key_file: "relative/key" } }),
+      ),
+    ).toThrow(/absolute/);
+    expect(() =>
+      parseHostConfig(
+        validConfig({ secret_broker: { ...secretBroker, key_file: secretBroker.store_file } }),
+      ),
+    ).toThrow(/must differ/);
+  });
+
   it("refuses to bind anything other than a literal loopback address", () => {
     expect(() => parseHostConfig(validConfig({ bind: { host: "0.0.0.0", port: 4780 } }))).toThrow(
       /loopback/,

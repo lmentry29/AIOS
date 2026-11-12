@@ -436,7 +436,12 @@ describe("trusted host HTTP surface", () => {
     const health = await call(harness, "GET", "/health");
     expect(health.status).toBe(200);
     expect(health.body?.status).toBe("ok");
-    expect(health.body?.capabilities).toEqual({ dispatch: false, evidence: false });
+    expect(health.body?.capabilities).toEqual({
+      dispatch: false,
+      evidence: false,
+      secret_broker: false,
+      scheduler: true,
+    });
     const serialized = JSON.stringify(health.body);
     expect(serialized).not.toContain(harness.policyPath);
     expect(serialized).not.toContain(harness.configPath);

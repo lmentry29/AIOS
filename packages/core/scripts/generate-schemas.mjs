@@ -88,6 +88,10 @@ const lifecycleContracts = {
     substateModule: "canonical-object",
     substateEnum: "CanonicalObjectSubstate",
   },
+  "infrastructure.InfrastructureEntity": {
+    substateModule: "canonical-object",
+    substateEnum: "CanonicalObjectSubstate",
+  },
 };
 
 const applyLifecycleContract = (moduleName, exportName, schema, mod, sharedModules) => {

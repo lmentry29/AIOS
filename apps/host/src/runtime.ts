@@ -30,12 +30,19 @@ import type { ExecutionLedger } from "./persistence/execution-ledger.js";
 import { DurableAuthorizationAuditStore } from "./persistence/authorization-audit-store.js";
 import { DurableLearningStore } from "./persistence/learning-store.js";
 import {
+  EncryptedFileSecretBroker,
+  UnavailableSecretBroker,
+  type SecretBrokerPort,
+} from "./security/secret-broker.js";
+import {
   DurableOperationalStore,
   type DurableCollection,
+  type DurableInfrastructureRepository,
   type DurableMissionRepository,
   type DurableRunCoordinator,
   type DurableTaskRepository,
 } from "./persistence/operational-store.js";
+import type { DurableDagScheduler } from "./scheduler/dag-scheduler.js";
 
 const UNCONFIGURED_VERIFIER_ID = "00000000-0000-4000-8000-000000000000";
 
@@ -117,12 +124,19 @@ export interface HostRuntime {
   runs: DurableRunCoordinator;
   taskStore: DurableTaskRepository;
   missionStore: DurableMissionRepository;
+  infrastructure: DurableInfrastructureRepository;
+  /** Host-owned credential resolution; unavailable unless the operator configures custody. */
+  secretBroker: SecretBrokerPort;
+  /** Durable dependency-DAG scheduling records; execution stays in the kernel. */
+  scheduler: DurableDagScheduler;
   workflowStore: DurableCollection<WorkflowEntity>;
   artifactStore: DurableCollection<ArtifactEntity>;
   /** Workflows whose interrupted dispatch/execution was recovered at startup. */
   recoveredWorkflows: string[];
   /** Task executions interrupted by a previous process and reconciled at startup. */
   recoveredExecutions: string[];
+  /** Scheduler graphs whose running nodes were reconciled at startup. */
+  recoveredSchedulerGraphs: string[];
   /** Per-Task execution lifecycle journal. */
   executions: ExecutionLedger;
   /** Host-owned cancellation handle; it carries no authorization itself. */
@@ -146,9 +160,13 @@ export interface HostRuntime {
 function reconcileInterruptedWork(store: DurableOperationalStore): {
   workflows: string[];
   executions: string[];
+  schedulerGraphs: string[];
 } {
   const affected = new Set(store.runs.recover());
   const interruptedExecutions = store.executions.reconcile();
+  // A running node whose process is gone cannot still be executing. Auto-resume is opt-in
+  // inside the scheduler; every other graph stays interrupted for an explicit decision.
+  const recoveredSchedulerGraphs = store.scheduler.recover();
   const directTasks = new Set<string>();
   for (const execution of interruptedExecutions) {
     if (execution.workflow_id) {
@@ -183,6 +201,7 @@ function reconcileInterruptedWork(store: DurableOperationalStore): {
   return {
     workflows: [...affected],
     executions: interruptedExecutions.map((record) => record.execution_id),
+    schedulerGraphs: recoveredSchedulerGraphs,
   };
 }
 
@@ -288,8 +307,14 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     const recovered = reconcileInterruptedWork(operational);
     const recoveredWorkflows = recovered.workflows;
     const recoveredExecutions = recovered.executions;
+    const recoveredSchedulerGraphs = recovered.schedulerGraphs;
     const taskStore = operational.tasks;
     const missionStore = operational.missions;
+    const infrastructure = operational.infrastructure;
+    const scheduler = operational.scheduler;
+    const secretBroker: SecretBrokerPort = config.secret_broker
+      ? new EncryptedFileSecretBroker(config.secret_broker)
+      : new UnavailableSecretBroker();
     const workflowStore = operational.workflows;
     const artifactStore = operational.artifacts;
     const objectStore = new ObjectStore<CanonicalEntity>(CanonicalEntitySchema);
@@ -390,10 +415,14 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       runs: operational.runs,
       taskStore,
       missionStore,
+      infrastructure,
+      secretBroker,
+      scheduler,
       workflowStore,
       artifactStore,
       recoveredWorkflows,
       recoveredExecutions,
+      recoveredSchedulerGraphs,
       executions: operational.executions,
       executionControl: execution,
       executionConfigured: options.execution !== undefined,

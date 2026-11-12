@@ -9,3 +9,4 @@ export * from "./artifact.js";
 export * from "./objective.js";
 export * from "./project.js";
 export * from "./mission.js";
+export * from "./infrastructure.js";

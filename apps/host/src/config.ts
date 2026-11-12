@@ -78,6 +78,14 @@ export interface HostConfig {
   sessions: HostSessionEntry[];
   request_body_limit_bytes: number;
   /**
+   * Optional host-owned encrypted secret broker. The key file is operator custody, never a
+   * value in this configuration; when absent, credential routes fail closed with 503.
+   */
+  secret_broker?: {
+    store_file: string;
+    key_file: string;
+  };
+  /**
    * Optional fixed local-command execution (ADR-0019). When absent, dispatch is
    * disabled and `/health` reports it as unavailable. Presence does not guarantee
    * dispatch: the configured isolation provider must also pass its runtime checks.
@@ -157,6 +165,7 @@ const TOP_LEVEL_KEYS = new Set([
   "bootstrap_principal_id",
   "sessions",
   "request_body_limit_bytes",
+  "secret_broker",
   "execution",
 ]);
 
@@ -399,6 +408,20 @@ function parseExecution(raw: unknown): HostExecutionConfig | undefined {
   };
 }
 
+function parseSecretBroker(raw: unknown): HostConfig["secret_broker"] {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) fail("secret_broker", "must be an object");
+  assertKnownKeys(raw, new Set(["store_file", "key_file"]), "secret_broker");
+  const storeFile = requireString(raw.store_file, "secret_broker.store_file", 4096);
+  if (!isAbsolute(storeFile)) fail("secret_broker.store_file", "must be an absolute path");
+  const keyFile = requireString(raw.key_file, "secret_broker.key_file", 4096);
+  if (!isAbsolute(keyFile)) fail("secret_broker.key_file", "must be an absolute path");
+  if (resolve(storeFile) === resolve(keyFile)) {
+    fail("secret_broker.store_file", "must differ from secret_broker.key_file");
+  }
+  return { store_file: resolve(storeFile), key_file: resolve(keyFile) };
+}
+
 function parsePolicyProvenance(raw: unknown): HostConfig["policy_provenance"] {
   if (!isRecord(raw)) fail("policy_provenance", "must be an object");
   assertKnownKeys(
@@ -561,6 +584,7 @@ export function parseHostConfig(raw: unknown, now: number = Date.now()): HostCon
   }
 
   const obsidian = parseObsidian(raw.obsidian);
+  const secretBroker = parseSecretBroker(raw.secret_broker);
   const execution = parseExecution(raw.execution);
 
   if (!isHumanPrincipal(raw.bootstrap_principal_id)) {
@@ -603,6 +627,7 @@ export function parseHostConfig(raw: unknown, now: number = Date.now()): HostCon
     bootstrap_principal_id: bootstrapPrincipalId,
     sessions,
     request_body_limit_bytes: bodyLimit,
+    ...(secretBroker === undefined ? {} : { secret_broker: secretBroker }),
     ...(execution === undefined ? {} : { execution }),
   };
 }
