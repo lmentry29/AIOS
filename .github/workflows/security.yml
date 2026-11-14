@@ -29,7 +29,7 @@ jobs:
       # The suite is skipped without a real binary, so install it and point the test at it.
       # `attr` provides getfattr, which the rootfs manifest uses to attest extended
       # attributes; the build step requires it so the omission cannot go unnoticed.
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap attr
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap attr coreutils
       # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor; bwrap needs one.
       - name: Allow unprivileged user namespaces for this job
         run: |

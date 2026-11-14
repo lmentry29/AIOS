@@ -564,9 +564,12 @@ function assertNotRead(result, secret, label) {
   }
   assert.ok(!mount.stdout.toString("utf8").includes("mount-survived"), "mount syscall returned");
 
-  assert.ok(existsSync("/usr/sbin/chroot"), "drill host has no chroot binary to test against");
+  const chrootPath = ["/usr/sbin/chroot", "/usr/bin/chroot"].find((candidate) =>
+    existsSync(candidate),
+  );
+  assert.ok(chrootPath, "drill host has no chroot binary to test against");
   const chroot = await provider.run({
-    argv: ["/usr/sbin/chroot", "/", "/bin/true"],
+    argv: [chrootPath, "/", "/bin/true"],
     workspaceDirectory: workspace(),
     timeoutMs: 5_000,
     maxOutputBytes: 4096,
