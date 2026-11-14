@@ -1417,3 +1417,60 @@ provisioned and are not claimed.
   --check`: exit 0.
 - No push, merge, tag, publish or deploy was performed. The branch remains
   `security/openjarvis-defensive-integration`; PR #1 remains open/draft/unmerged.
+
+## 2026-11-14 — repository-closure dependency and full-gate audit
+
+Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. Candidate branch
+`chore/final-audit-closure`, based on dependency-maintenance head
+`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. The only non-documentation change in this
+candidate is the Security workflow's full-tree audit step. The new final-audit file is
+tracked, so the secret-scan count includes it.
+
+Commands actually run, in this order:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm turbo lint typecheck test build --force
+pnpm format:check
+pnpm exec vitest run --project integration
+pnpm exec vitest run --project conformance
+pnpm --filter @aios/core run generate:schemas
+git diff --exit-code schemas/generated
+node tools/security/scan-secrets.mjs
+pnpm audit --audit-level=high
+pnpm audit --json
+node tools/security/audit-policy.mjs
+git diff --check
+```
+
+Observed results:
+
+- Frozen install exit 0. The forced workspace gate passed **46/46 tasks, 0 cached**:
+  **777 tests passed / 17 skipped**. The 17 skips are the live host suites that require a
+  supported provider; they are not counted as passing locally.
+- Formatter: **209 files checked, 0 findings**. Integration: **43/43**. Conformance:
+  **107/107**. Schema generation: **12 files / 46 schemas**; the generated-schema diff is
+  empty. Secret scan: **358 tracked files, 0 findings**. `git diff --check`: exit 0.
+- Full dependency audit: **160 dependencies** (1 production, 159 development, 88 optional),
+  **0 advisories** at info/low/moderate/high/critical. `pnpm audit --audit-level=high`:
+  exit 0. Production `audit-policy`: **0 untriaged high/critical** advisories.
+- Host suite inside the gate: **318 passed / 17 skipped**. The hosted Security job executes
+  the skipped live suites and the bubblewrap, Docker, gVisor, provenance and session-operator
+  drills; the local run does not claim those as locally verified.
+- Hosted closure checks on final head `37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2`:
+  `CI` run `43640791568` succeeded; `Security` run `43640791561` succeeded, with
+  `Dependency and secret scan` pass and `Live sandbox boundary` pass in 2m13s. The live job
+  executed the bubblewrap, Docker, gVisor, provenance and session-operator steps.
+- `Conformance` and `Schema Check` did not trigger because this PR changed only docs and
+  `tools/security/`; their path filters exclude those paths. The equivalent local projects
+  passed **107/107** and generated **12 files / 46 schemas** with no diff.
+- The first two closure Security runs failed before the live matrices completed: run
+  `43640440411` on `d61a71d` could not find `/usr/sbin/chroot` on the current runner, and run
+  `43640626465` on `2646296` passed a host path that did not exist inside Docker. The final
+  drill resolves either chroot path inside the provider and fails closed if neither exists;
+  `coreutils` is explicit in the workflow. No authorization, sandbox-provider, provenance or
+  journal behavior changed; only the drill's host lookup was made provider-relative.
+- No release, tag, npm publication, signed installer or deployment was created.
+- Not verified here: macOS Seatbelt, Apple Containerization, rootless Docker, live external
+  connectors, production key/HSM custody, external WORM audit, Sigstore/SLSA identity and the
+  UI authentication path. These remain owner-gated residuals and are not relabeled complete.
