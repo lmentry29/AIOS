@@ -582,7 +582,8 @@ CI on the exact pushed head `15bc7f8`: `ci` run `42933005083` — success; `conf
 `42933005064` — success; `schema-check` run `42933005025` — success; `security` run
 `42933005020` — success (both live-boundary and supply-chain jobs); `release` run
 `42933109086` — success (`workflow_dispatch` on the branch head, since the workflow has no
-push trigger). PR #1 remained open, draft, and unmerged; `main` stayed at `767f30e`.
+push trigger). At that historical checkpoint PR #1 was open/draft and `main` stayed at
+`767f30e`; PR #1 has since been merged as part of the integration delivery.
 
 ## 2026-11-11 — CI guard for operator session administration (`550d0e5`)
 
@@ -870,8 +871,9 @@ The production Docker provider, its custom seccomp profile, the CI image, the 21
 drill, and the provider-selection/unavailable/misconfiguration regressions are present. ADR-0031
 records the selection and threat-model delta; F-006 is fixed for the measured CI path. The
 remaining Docker work is rootless-mode measurement, image signing/pinning, and a run on an
-operator-controlled daemon. `main` must remain untouched, PR #1 must remain draft/unmerged,
-and only `community/open-source-foundation` may be pushed.
+operator-controlled daemon. At that historical checkpoint `main` was untouched, PR #1 was
+draft/unmerged, and only `community/open-source-foundation` was pushable; the integration
+has since been merged.
 
 ## 2026-11-11 — gVisor provider and measured Docker engine (`54344f1`)
 
@@ -1415,16 +1417,17 @@ provisioned and are not claimed.
   `turbo run lint typecheck build test --force --cache-dir="$PWD/.turbo/cache"` -> **46/46
   successful, 0 cached**, exit 0. Secret scan: clean across 335 tracked files. `git diff
   --check`: exit 0.
-- No push, merge, tag, publish or deploy was performed. The branch remains
-  `security/openjarvis-defensive-integration`; PR #1 remains open/draft/unmerged.
+- No push, merge, tag, publish or deploy was performed at that historical head. The work
+  remained on `security/openjarvis-defensive-integration`; PR #1 was still open/draft then
+  and has since been merged as part of the integration delivery.
 
-## 2026-11-14 — repository-closure dependency and full-gate audit
+## 2026-11-14 — post-merge repository-closure audit
 
-Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. Candidate branch
-`chore/final-audit-closure`, based on dependency-maintenance head
-`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. The only non-documentation change in this
-candidate is the Security workflow's full-tree audit step. The new final-audit file is
-tracked, so the secret-scan count includes it.
+Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. The audit was run on merged
+`main` at `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc`, the merge of PR #11. This is the
+closed-state commit; the documentation addendum that carries this ledger entry is docs-only
+and does not change the audited code. The final-audit file is tracked, so the secret-scan
+count includes it.
 
 Commands actually run, in this order:
 
@@ -1443,7 +1446,7 @@ node tools/security/audit-policy.mjs
 git diff --check
 ```
 
-Observed results:
+Observed results on `d0b3fb9`:
 
 - Frozen install exit 0. The forced workspace gate passed **46/46 tasks, 0 cached**:
   **777 tests passed / 17 skipped**. The 17 skips are the live host suites that require a
@@ -1451,25 +1454,24 @@ Observed results:
 - Formatter: **209 files checked, 0 findings**. Integration: **43/43**. Conformance:
   **107/107**. Schema generation: **12 files / 46 schemas**; the generated-schema diff is
   empty. Secret scan: **358 tracked files, 0 findings**. `git diff --check`: exit 0.
-- Full dependency audit: **160 dependencies** (1 production, 159 development, 88 optional),
-  **0 advisories** at info/low/moderate/high/critical. `pnpm audit --audit-level=high`:
-  exit 0. Production `audit-policy`: **0 untriaged high/critical** advisories.
+- Full dependency audit: **160 dependencies** (1 production, 159 development; 88 optional
+  packages are included in that total), **0 advisories** at info/low/moderate/high/critical.
+  `pnpm audit --audit-level=high`: exit 0. Production `audit-policy`: **0 untriaged
+  high/critical** advisories.
 - Host suite inside the gate: **318 passed / 17 skipped**. The hosted Security job executes
   the skipped live suites and the bubblewrap, Docker, gVisor, provenance and session-operator
   drills; the local run does not claim those as locally verified.
-- Hosted closure checks on final head `37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2`:
-  `CI` run `43640791568` succeeded; `Security` run `43640791561` succeeded, with
-  `Dependency and secret scan` pass and `Live sandbox boundary` pass in 2m13s. The live job
-  executed the bubblewrap, Docker, gVisor, provenance and session-operator steps.
-- `Conformance` and `Schema Check` did not trigger because this PR changed only docs and
-  `tools/security/`; their path filters exclude those paths. The equivalent local projects
-  passed **107/107** and generated **12 files / 46 schemas** with no diff.
-- The first two closure Security runs failed before the live matrices completed: run
-  `43640440411` on `d61a71d` could not find `/usr/sbin/chroot` on the current runner, and run
-  `43640626465` on `2646296` passed a host path that did not exist inside Docker. The final
-  drill resolves either chroot path inside the provider and fails closed if neither exists;
-  `coreutils` is explicit in the workflow. No authorization, sandbox-provider, provenance or
-  journal behavior changed; only the drill's host lookup was made provider-relative.
+- Hosted on the same merged commit: `CI` run `43641406777` succeeded. `Security` run
+  `43641406757` succeeded; both jobs, `Dependency and secret scan` and `Live sandbox boundary`,
+  are recorded as successful. The live job executed the bubblewrap, Docker and gVisor
+  adversarial paths plus the provenance and session-operator steps.
+- `Conformance` and `Schema Check` are path-filtered and did not run for this docs/tooling
+  closure. Their equivalent local projects passed **107/107** and generated **12 files / 46
+  schemas** with no diff. No hosted result is claimed for those two workflows.
+- During closure the live drill's chroot lookup was made provider-relative after the current
+  runner stopped exposing `/usr/sbin/chroot`; `coreutils` is explicit in the workflow. No
+  authorization, sandbox-provider, provenance or journal behavior changed; only the drill's
+  host lookup was made provider-relative, and the merged-main live job passed.
 - No release, tag, npm publication, signed installer or deployment was created.
 - Not verified here: macOS Seatbelt, Apple Containerization, rootless Docker, live external
   connectors, production key/HSM custody, external WORM audit, Sigstore/SLSA identity and the

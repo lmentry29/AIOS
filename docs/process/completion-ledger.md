@@ -69,19 +69,24 @@ published decisions require implementation or live verification; they are not re
 ## Repository closure and final audit (2026-11-14)
 
 The remaining maintenance queue is complete. PR #3 was closed as obsolete; PRs #5, #6, #7,
-#9 and #10 were merged. PR #9 repaired the TypeScript 7, Vitest 5, Biome 2, Changesets 3
-and Turbo 2.11 upgrade with Node typings, Biome 2 configuration and the Vitest project
+#9, #10 and #11 were merged. PR #9 repaired the TypeScript 7, Vitest 5, Biome 2, Changesets
+3 and Turbo 2.11 upgrade with Node typings, Biome 2 configuration and the Vitest project
 configuration. PR #10 added pnpm workspace overrides for the patched PostCSS, nanoid and
-source-map-js releases; the full audit moved from five dev advisories to zero.
+source-map-js releases; the full audit moved from five dev advisories to zero. PR #11 added
+the full-tree dependency audit and merged the closure record.
 
-The final dependency-maintenance head verified before this documentation record is
-`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. The closure audit reran the full local gate
-(**46/46** tasks, **777 passed / 17 skipped**), formatter (**209 files**, 0 findings),
-integration (**43/43**), conformance (**107/107**), schema generation (**12 files / 46
-schemas**, no drift), secret scan (**358 tracked files**, 0 findings) and full dependency
-audit (**0 advisories**, 160 dependencies). Hosted `CI` and `Security` passed on that head,
-including the live bubblewrap, Docker, gVisor, provenance and session-operator jobs. The
-Security workflow now also runs `pnpm audit --audit-level=high` over the full tree.
+The closed state is merge commit
+`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11). The final audit was observed on that
+merged `main`: the local gate produced **46/46** tasks and **777 passed / 17 skipped**,
+formatter **209 files** with 0 findings, integration **43/43**, conformance **107/107**,
+schema generation **12 files / 46 schemas** with no drift, secret scan **358 tracked files**
+with 0 findings, and full dependency audit **0 advisories** across 160 dependencies. Hosted
+`CI` run
+[`43641406777`](https://github.com/lmentry29/AIOS/actions/runs/43641406777) and `Security`
+run [`43641406757`](https://github.com/lmentry29/AIOS/actions/runs/43641406757) passed on
+`d0b3fb9`; both the live sandbox and dependency/secret jobs succeeded. Conformance and
+Schema Check are path-filtered and ran locally only for this docs/tooling closure. The
+Security workflow also runs `pnpm audit --audit-level=high` over the full tree.
 
 No release, tag, npm publication or signed distribution artifact was created; ADR-0020
 keeps `@aios/*` private. `CL-006`, `CL-007`, `CL-008`, `CL-009`, `CL-010`, `CL-013`,
