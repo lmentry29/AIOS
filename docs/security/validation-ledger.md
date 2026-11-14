@@ -1457,11 +1457,20 @@ Observed results:
 - Host suite inside the gate: **318 passed / 17 skipped**. The hosted Security job executes
   the skipped live suites and the bubblewrap, Docker, gVisor, provenance and session-operator
   drills; the local run does not claim those as locally verified.
-- Hosted closure checks: the closure pull request's `CI`, `Conformance`, `Schema Check` and
-  `Security` workflows. Exact run IDs are recorded on that pull request; post-merge `main`
-  runs are reported in the closing summary.
-- No release, tag, npm publication, signed installer or deployment was created. No source
-  authorization, sandbox, provenance or journal behavior changed in this pass.
+- Hosted closure checks on final head `37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2`:
+  `CI` run `43640791568` succeeded; `Security` run `43640791561` succeeded, with
+  `Dependency and secret scan` pass and `Live sandbox boundary` pass in 2m13s. The live job
+  executed the bubblewrap, Docker, gVisor, provenance and session-operator steps.
+- `Conformance` and `Schema Check` did not trigger because this PR changed only docs and
+  `tools/security/`; their path filters exclude those paths. The equivalent local projects
+  passed **107/107** and generated **12 files / 46 schemas** with no diff.
+- The first two closure Security runs failed before the live matrices completed: run
+  `43640440411` on `d61a71d` could not find `/usr/sbin/chroot` on the current runner, and run
+  `43640626465` on `2646296` passed a host path that did not exist inside Docker. The final
+  drill resolves either chroot path inside the provider and fails closed if neither exists;
+  `coreutils` is explicit in the workflow. No authorization, sandbox-provider, provenance or
+  journal behavior changed; only the drill's host lookup was made provider-relative.
+- No release, tag, npm publication, signed installer or deployment was created.
 - Not verified here: macOS Seatbelt, Apple Containerization, rootless Docker, live external
   connectors, production key/HSM custody, external WORM audit, Sigstore/SLSA identity and the
   UI authentication path. These remain owner-gated residuals and are not relabeled complete.

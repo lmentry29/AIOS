@@ -71,15 +71,29 @@ Containerization evidence remains unavailable and is recorded as a blocker.
 
 ## Hosted verification
 
-The closure pull request runs the normal `CI`, `Conformance`, `Schema Check` and `Security`
-workflows. Security includes the dependency/secret scan plus the full live sandbox job
-described above. The post-merge `main` runs are reported in the closing summary and are
-visible in the repository's Actions history.
+The closure pull request's path filters ran `CI` and `Security`; `Conformance` and
+`Schema Check` are filtered to package/schema changes, so they were run locally
+(**107/107** and **12 files / 46 schemas**, respectively). Security includes the
+dependency/secret scan plus the full live sandbox job described above. Final closure head
+`37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2` passed `CI` in run
+[`43640791568`](https://github.com/lmentry29/AIOS/actions/runs/43640791568) and `Security` in
+run [`43640791561`](https://github.com/lmentry29/AIOS/actions/runs/43640791561); the live
+job completed in 2m13s. The post-merge `main` runs are reported in the closing summary and
+are visible in the repository's Actions history.
 
-One earlier Security run on `b87eb43` failed because the hosted Docker daemon was
+The first two Security attempts on this closure found a real portability defect in the
+live drill, not in the sandbox: the current `ubuntu-latest` image no longer exposed
+`/usr/sbin/chroot`, and passing the host path into Docker then failed because the container
+exposes it at a different location. The drill now resolves `/usr/sbin/chroot` or
+`/usr/bin/chroot` inside the provider and fails closed if neither exists; `coreutils` is
+installed explicitly. Runs [`43640440411`](https://github.com/lmentry29/AIOS/actions/runs/43640440411)
+and [`43640626465`](https://github.com/lmentry29/AIOS/actions/runs/43640626465) failed before
+that fix, and the final run above passed. This did not change any authorization or sandbox
+provider behavior.
+
+One earlier main Security run on `b87eb43` failed because the hosted Docker daemon was
 unreachable during the live drill. The same workflow passed on the final dependency
-maintenance head `941ce01` and on the pull requests that followed; no code or policy change
-was made to bypass the drill.
+maintenance head `941ce01`; no code or policy change was made to bypass the drill.
 
 ## Residuals
 
