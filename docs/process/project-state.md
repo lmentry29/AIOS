@@ -1,21 +1,22 @@
 # AIOS — Live Project State
 
 Last verified: 2026-11-14 on `main` at
-`dc73d189d554a2ff0993ccfa5bc278b6e393d79c` (PR #12). The closed-state code audit remains
-`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); its final audit is in
+`de12349258b7a5157ead14cca5db81891020ade1` (PR #14). Post-merge `CI` run
+`43653953495`, `Security` run `43653953494` (both jobs), and the PR head's `conformance`
+(`43653556258`) and `schema-check` (`43653556244`) runs passed. The closed-state code audit
+remains `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); its final audit is in
 [`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md), with
-hosted `CI` run `43641406777` and `Security` run `43641406757`. ADR-0039 now adds bounded
-local execution plans; that change is delivered through a feature branch and does not
-alter the audited `d0b3fb9` evidence. Historical heads below are retained as evidence; they
-are not current state.
+hosted `CI` run `43641406777` and `Security` run `43641406757`. ADR-0039 adds bounded local
+execution plans on top of that audited base; the audit itself was not re-performed.
+Historical heads below are retained as evidence; they are not current state.
 
 ## Repository and active change
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `feat/bounded-agent-execution-plan` (ADR-0039).
-- Active pull request: pending for the bounded Agent execution plan slice. PRs #1–#12 are
-  merged except #3, which was closed as obsolete.
+- Active implementation branch: `main`.
+- Active pull request: none. PR #14 (ADR-0039 bounded execution plans) is merged; PRs #1–#14
+  are merged except #3, which was closed as obsolete.
 - Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
   post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
@@ -24,6 +25,35 @@ are not current state.
 - Historical integration branch: `security/openjarvis-defensive-integration` is merged; its
   detailed security evidence remains in the security ledgers.
 - Do not push directly to `main`; all changes go through a pull request.
+
+## Bounded Agent execution plans (2026-11-14)
+
+- ADR-0039 adds a `local_plan` Task execution intent: one to eight fixed `local.exec` steps,
+  each still argv-only, sandboxed, environment-filtered and bounded. A plan is one durable
+  execution attempt in one per-Task workspace under one total deadline. Steps run
+  sequentially through the existing provider, quota, cancellation and evidence path; no
+  second sandbox or ledger exists.
+- An Action-backed plan must bind exactly one unique step to each declared Action. The Task
+  schema enforces the binding at intake, and the executor re-checks that every Action is
+  pending and names the executing Agent. Terminal, missing, duplicate, orphan or
+  wrong-principal Action bindings are rejected before the first command runs.
+- Any failed step aborts the plan. The executor returns no `completed_actions`; the managed
+  attempt is failed or cancelled, and the independent verifier rejects because no completed
+  attempt exists. The Orchestration Kernel remains the only component that applies Actions
+  and completion, and only after verifier acceptance.
+- Evidence adds `plan_evidence_version:1`, step count, plan deadline, an Action-ID digest and
+  one bounded line per step with argv/cwd/stdout/stderr hashes plus filter, limit and
+  boundary claims. Raw output is never copied. Verification still runs its own command in a
+  fresh invocation and binds acceptance to the durable attempt/result digest.
+- Local evidence: 46/46 turbo tasks, 324 host tests passed (18 live-only skipped), 43/43
+  integration, 107/107 conformance, 358-file secret scan clean. Hosted Security ran the live
+  bubblewrap two-step plan test and the existing adversarial drills successfully. The live
+  plan test skips locally when `AIOS_BWRAP_DIR` is absent rather than passing without a
+  boundary.
+- Still absent: model-driven planning, dynamic tool selection, provider selection, multi-Agent
+  coordination and aggregate cross-step resource accounting. `AgentRunner` remains a
+  lifecycle/conformance harness; `LocalCommandExecutor` is the fixed-grant production
+  adapter.
 
 ## Security hardening (2026-11-10)
 
