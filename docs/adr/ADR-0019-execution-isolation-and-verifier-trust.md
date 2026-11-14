@@ -107,6 +107,17 @@ verifier is skipped when cancellation is observed before verification starts. Th
 sandbox providers remain unverified on this host; the test-only process provider and sandbox
 stub are explicitly non-isolating.
 
+## Amendment (2026-11-14) — bounded plans
+
+ADR-0039 extends the fixed grant to a requester-authored `local_plan` of one to eight
+sequential `local.exec` steps. The plan is one durable attempt in one workspace under one
+overall deadline; every step still uses this ADR's sandbox provider, argv-only execution,
+environment allowlist, evidence hashing and fail-closed boundary checks. An Action-backed plan
+must bind exactly one unique step to each pending Action owned by the executing Agent. Any
+failed step aborts the plan and returns no completed Actions, and the independent verifier is
+unchanged. ADR-0039 does not authorize an Agent to choose commands, a model, a provider or a
+plugin, and does not make `AgentRunner` a tool-executing runtime.
+
 ## Tests / evidence
 
 `apps/host/tests/execution.test.ts` covers argv/no-shell, environment filtering, hashed

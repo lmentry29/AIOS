@@ -39,6 +39,8 @@ export const TaskEnvironment = z
   })
   .describe(TASK_ENV_DESCRIPTION);
 
+const CommandArgumentVector = z.array(z.string().min(1).max(4096)).min(1).max(64);
+
 /**
  * Execution intent for a Task.
  *
@@ -51,14 +53,51 @@ export const TaskEnvironment = z
  * the run workspace. Environment values are restricted to a host allowlist; they are
  * never a channel for provider credentials.
  */
-export const TaskExecutionSpec = z.object({
+export const LocalCommandExecutionSpec = z.object({
   kind: z.literal("local_command"),
-  argv: z.array(z.string().min(1).max(4096)).min(1).max(64),
+  argv: CommandArgumentVector,
   cwd: z.string().max(1024).optional(),
   timeout_ms: z.number().int().min(100).max(300_000).optional(),
   max_output_bytes: z.number().int().min(1024).max(1_048_576).optional(),
   env: TaskEnvironment.optional(),
 });
+export type LocalCommandExecutionSpec = z.infer<typeof LocalCommandExecutionSpec>;
+
+/**
+ * One bounded step in a multi-command execution plan (ADR-0039). A step is still the
+ * fixed `local.exec` capability, not a new tool selector. When the Task declares
+ * Actions, every Action has exactly one step and the step names it by `action_id`.
+ * The Agent cannot add, reorder or silently omit steps at dispatch time.
+ */
+export const TaskExecutionPlanStep = z.object({
+  action_id: z.string().uuid().optional(),
+  argv: CommandArgumentVector,
+  cwd: z.string().max(1024).optional(),
+  timeout_ms: z.number().int().min(100).max(300_000).optional(),
+  max_output_bytes: z.number().int().min(1024).max(1_048_576).optional(),
+  env: TaskEnvironment.optional(),
+});
+export type TaskExecutionPlanStep = z.infer<typeof TaskExecutionPlanStep>;
+
+/**
+ * A bounded sequence of fixed `local.exec` steps in one per-Task workspace.
+ *
+ * `timeout_ms` bounds the whole plan, not each step; a step may set a smaller
+ * timeout. Plans are capped at eight steps so one dispatch cannot become an
+ * unbounded command loop. This is a fixed-plan grant: planning is not delegated to
+ * a model or provider, and there is no dynamic tool discovery.
+ */
+export const TaskExecutionPlan = z.object({
+  kind: z.literal("local_plan"),
+  timeout_ms: z.number().int().min(100).max(300_000).optional(),
+  steps: z.array(TaskExecutionPlanStep).min(1).max(8),
+});
+export type TaskExecutionPlan = z.infer<typeof TaskExecutionPlan>;
+
+export const TaskExecutionSpec = z.discriminatedUnion("kind", [
+  LocalCommandExecutionSpec,
+  TaskExecutionPlan,
+]);
 export type TaskExecutionSpec = z.infer<typeof TaskExecutionSpec>;
 
 /**
@@ -89,6 +128,29 @@ const TaskEntityShape = CanonicalEntity.extend({
   verification: TaskVerificationSpec.optional(),
 });
 
+/**
+ * A plan and a Task's declared Actions must describe the same unit of work. An
+ * Action-backed plan therefore has exactly one uniquely named step per Action and no
+ * orphan steps. Plans over a Task with no Actions must not name Actions they do not
+ * have. This is an intake invariant; the executor re-checks it because persisted or
+ * caller-constructed objects may bypass the Zod parser.
+ */
+function planMatchesActions(task: z.infer<typeof TaskEntityShape>): boolean {
+  const execution = task.execution;
+  if (execution?.kind !== "local_plan") return true;
+  if (task.actions.length === 0) {
+    return execution.steps.every((step) => step.action_id === undefined);
+  }
+  if (execution.steps.length !== task.actions.length) return false;
+  const actionIds = new Set(task.actions.map((action) => action.action_id));
+  if (actionIds.size !== task.actions.length) return false;
+  const stepIds = execution.steps.map((step) => step.action_id);
+  if (stepIds.some((id) => id === undefined) || new Set(stepIds).size !== actionIds.size) {
+    return false;
+  }
+  return stepIds.every((id) => id !== undefined && actionIds.has(id));
+}
+
 export const TaskEntity = TaskEntityShape.refine(
   (task: z.infer<typeof TaskEntityShape>) => task.lifecycle_substate === undefined,
   {
@@ -96,13 +158,19 @@ export const TaskEntity = TaskEntityShape.refine(
       "Task has no ratified lifecycle_substate vocabulary; substates are not accepted for Task entities (COM §4.2)",
     path: ["lifecycle_substate"],
   },
-).refine(
-  (task: z.infer<typeof TaskEntityShape>) =>
-    task.lifecycle_history.every((entry) => entry.substate === undefined),
-  {
+)
+  .refine(planMatchesActions, {
     message:
-      "Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (COM §4.2)",
-    path: ["lifecycle_history"],
-  },
-);
+      "A local_plan must contain exactly one uniquely named step per declared Action, and no orphan action_id when the Task has no Actions (ADR-0039)",
+    path: ["execution"],
+  })
+  .refine(
+    (task: z.infer<typeof TaskEntityShape>) =>
+      task.lifecycle_history.every((entry) => entry.substate === undefined),
+    {
+      message:
+        "Task lifecycle history entries cannot contain substates because Task has no ratified substate vocabulary (COM §4.2)",
+      path: ["lifecycle_history"],
+    },
+  );
 export type TaskEntity = z.infer<typeof TaskEntity>;

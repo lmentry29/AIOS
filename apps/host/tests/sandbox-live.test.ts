@@ -1,8 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { LocalCommandExecutor } from "../src/execution/command-executor.js";
+import { LocalCommandVerifier } from "../src/execution/command-verifier.js";
+import { ManagedExecutionPort } from "../src/execution/managed-execution.js";
 import { createSandboxProvider, type SandboxProvider } from "../src/execution/sandbox.js";
+import { RunWorkspaceManager } from "../src/execution/workspace.js";
+import { DurableOperationalStore } from "../src/persistence/operational-store.js";
+import { AGENT_ID, makeTask } from "./fixtures.js";
+import { makeExecutionConfig } from "./sandbox-fixture.js";
 
 /**
  * Live adversarial validation of the real kernel-namespace boundary.
@@ -174,6 +182,78 @@ describe.skipIf(!enabled || process.platform !== "linux")("live bubblewrap bound
     expect(result.exitCode).not.toBe(0);
     expect(result.timedOut).toBe(false);
     expect(result.stderr.toString("utf8")).toMatch(/Out of memory/i);
+  });
+
+  it("executes an Action-bound plan under the measured boundary and independently verifies it", async () => {
+    const config = makeExecutionConfig(undefined, { provider: "bubblewrap" });
+    const workspaces = new RunWorkspaceManager(config.workspace_directory);
+    const store = new DurableOperationalStore({
+      directory: mkdtempSync(join(tmpdir(), "aios-live-plan-ledger-")),
+    });
+    const managed = new ManagedExecutionPort(
+      new LocalCommandExecutor(config, provider, workspaces),
+      store.executions,
+      1,
+    );
+    const verifier = new LocalCommandVerifier(config, provider, workspaces, {
+      current: store.executions,
+    });
+    const first = randomUUID();
+    const second = randomUUID();
+    const task = makeTask({
+      actions: [
+        { action_id: first, status: "pending", executed_by: AGENT_ID },
+        { action_id: second, status: "pending", executed_by: AGENT_ID },
+      ],
+      execution: {
+        kind: "local_plan",
+        timeout_ms: 15_000,
+        steps: [
+          {
+            action_id: first,
+            argv: ["/bin/sh", "-c", "printf verified-work > artifact.txt"],
+          },
+          {
+            action_id: second,
+            argv: [
+              "/bin/sh",
+              "-c",
+              "grep -qx verified-work artifact.txt && printf step-two > step-two.txt",
+            ],
+          },
+        ],
+      },
+      verification: {
+        kind: "local_command",
+        argv: [
+          "/bin/sh",
+          "-c",
+          "grep -qx verified-work artifact.txt && grep -qx step-two step-two.txt",
+        ],
+      },
+    });
+
+    const result = await managed.executeTask(AGENT_ID, task);
+    const decision = await verifier.verify({
+      task,
+      agent_ids: [AGENT_ID],
+      execution_result: result,
+    });
+
+    expect(result.evidence).toEqual(
+      expect.arrayContaining([
+        "plan_evidence_version:1",
+        "plan_step_count:2",
+        expect.stringMatching(/^plan_step_1:.*filter_applied=true;filter_sha256=[a-f0-9]{64}/),
+        expect.stringMatching(/^plan_step_2:.*filter_applied=true;filter_sha256=[a-f0-9]{64}/),
+      ]),
+    );
+    expect(result.completed_actions?.map((action) => action.status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(decision.accepted).toBe(true);
+    expect(decision.evidence).toContain(`verifier:${config.verifier_id}`);
   });
 
   it("kills a background workload when the boundary is killed", async () => {
