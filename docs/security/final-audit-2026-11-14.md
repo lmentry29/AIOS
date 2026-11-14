@@ -74,7 +74,7 @@ Containerization evidence remains unavailable and is recorded as a blocker.
 The closure pull request's path filters ran `CI` and `Security`; `Conformance` and
 `Schema Check` are filtered to package/schema changes, so they were run locally
 (**107/107** and **12 files / 46 schemas**, respectively). Security includes the
-dependency/secret scan plus the full live sandbox job described above. Final closure head
+dependency/secret scan plus the full live sandbox job described above. Verified code head
 `37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2` passed `CI` in run
 [`43640791568`](https://github.com/lmentry29/AIOS/actions/runs/43640791568) and `Security` in
 run [`43640791561`](https://github.com/lmentry29/AIOS/actions/runs/43640791561); the live
@@ -88,7 +88,7 @@ exposes it at a different location. The drill now resolves `/usr/sbin/chroot` or
 `/usr/bin/chroot` inside the provider and fails closed if neither exists; `coreutils` is
 installed explicitly. Runs [`43640440411`](https://github.com/lmentry29/AIOS/actions/runs/43640440411)
 and [`43640626465`](https://github.com/lmentry29/AIOS/actions/runs/43640626465) failed before
-that fix, and the final run above passed. This did not change any authorization or sandbox
+that fix, and the run above passed. This did not change any authorization or sandbox
 provider behavior.
 
 One earlier main Security run on `b87eb43` failed because the hosted Docker daemon was
