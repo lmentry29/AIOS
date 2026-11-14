@@ -1417,3 +1417,51 @@ provisioned and are not claimed.
   --check`: exit 0.
 - No push, merge, tag, publish or deploy was performed. The branch remains
   `security/openjarvis-defensive-integration`; PR #1 remains open/draft/unmerged.
+
+## 2026-11-14 — repository-closure dependency and full-gate audit
+
+Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. Candidate branch
+`chore/final-audit-closure`, based on dependency-maintenance head
+`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. The only non-documentation change in this
+candidate is the Security workflow's full-tree audit step. The new final-audit file is
+tracked, so the secret-scan count includes it.
+
+Commands actually run, in this order:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm turbo lint typecheck test build --force
+pnpm format:check
+pnpm exec vitest run --project integration
+pnpm exec vitest run --project conformance
+pnpm --filter @aios/core run generate:schemas
+git diff --exit-code schemas/generated
+node tools/security/scan-secrets.mjs
+pnpm audit --audit-level=high
+pnpm audit --json
+node tools/security/audit-policy.mjs
+git diff --check
+```
+
+Observed results:
+
+- Frozen install exit 0. The forced workspace gate passed **46/46 tasks, 0 cached**:
+  **777 tests passed / 17 skipped**. The 17 skips are the live host suites that require a
+  supported provider; they are not counted as passing locally.
+- Formatter: **209 files checked, 0 findings**. Integration: **43/43**. Conformance:
+  **107/107**. Schema generation: **12 files / 46 schemas**; the generated-schema diff is
+  empty. Secret scan: **358 tracked files, 0 findings**. `git diff --check`: exit 0.
+- Full dependency audit: **160 dependencies** (1 production, 159 development, 88 optional),
+  **0 advisories** at info/low/moderate/high/critical. `pnpm audit --audit-level=high`:
+  exit 0. Production `audit-policy`: **0 untriaged high/critical** advisories.
+- Host suite inside the gate: **318 passed / 17 skipped**. The hosted Security job executes
+  the skipped live suites and the bubblewrap, Docker, gVisor, provenance and session-operator
+  drills; the local run does not claim those as locally verified.
+- Hosted closure checks: the closure pull request's `CI`, `Conformance`, `Schema Check` and
+  `Security` workflows. Exact run IDs are recorded on that pull request; post-merge `main`
+  runs are reported in the closing summary.
+- No release, tag, npm publication, signed installer or deployment was created. No source
+  authorization, sandbox, provenance or journal behavior changed in this pass.
+- Not verified here: macOS Seatbelt, Apple Containerization, rootless Docker, live external
+  connectors, production key/HSM custody, external WORM audit, Sigstore/SLSA identity and the
+  UI authentication path. These remain owner-gated residuals and are not relabeled complete.

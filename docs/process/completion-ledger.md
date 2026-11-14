@@ -1,8 +1,9 @@
 # AIOS Completion Ledger
 
-Status as of 2026-11-12, after the owner-approved completion decisions on
-`security/openjarvis-defensive-integration`. This ledger classifies the outstanding work
-instead of relabeling blocked work as complete. Status values are exactly:
+Status as of 2026-11-14, after the repository-closure audit. The classification began with
+the owner-approved completion decisions on `security/openjarvis-defensive-integration`;
+that branch is now merged. This ledger classifies the outstanding work instead of
+relabeling blocked work as complete. Status values are exactly:
 
 - `done` — implemented and covered by a passing check in this repository.
 - `blocked-on-operator-hardware` — needs a host or platform this environment does not have.
@@ -64,6 +65,29 @@ The integration scope is closed on the default branch. `CL-008`, `CL-013`, `CL-0
 `CL-020` remain `accepted-implementation-pending` as separate owner-gated capabilities whose
 published decisions require implementation or live verification; they are not relabeled
 `done` by this delivery.
+
+## Repository closure and final audit (2026-11-14)
+
+The remaining maintenance queue is complete. PR #3 was closed as obsolete; PRs #5, #6, #7,
+#9 and #10 were merged. PR #9 repaired the TypeScript 7, Vitest 5, Biome 2, Changesets 3
+and Turbo 2.11 upgrade with Node typings, Biome 2 configuration and the Vitest project
+configuration. PR #10 added pnpm workspace overrides for the patched PostCSS, nanoid and
+source-map-js releases; the full audit moved from five dev advisories to zero.
+
+The final dependency-maintenance head verified before this documentation record is
+`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. The closure audit reran the full local gate
+(**46/46** tasks, **777 passed / 17 skipped**), formatter (**209 files**, 0 findings),
+integration (**43/43**), conformance (**107/107**), schema generation (**12 files / 46
+schemas**, no drift), secret scan (**358 tracked files**, 0 findings) and full dependency
+audit (**0 advisories**, 160 dependencies). Hosted `CI` and `Security` passed on that head,
+including the live bubblewrap, Docker, gVisor, provenance and session-operator jobs. The
+Security workflow now also runs `pnpm audit --audit-level=high` over the full tree.
+
+No release, tag, npm publication or signed distribution artifact was created; ADR-0020
+keeps `@aios/*` private. `CL-006`, `CL-007`, `CL-008`, `CL-009`, `CL-010`, `CL-013`,
+`CL-015`, `CL-018`, `CL-019`, `CL-020`, `CL-021` and `CL-024` keep their existing blocked or
+accepted-pending statuses. The detailed audit, evidence and remaining limitations are in
+[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md).
 
 A row is not moved to `done` because a test passes in a different row's environment or because
 a residual risk was accepted. The red-team record and this table are both updated whenever a

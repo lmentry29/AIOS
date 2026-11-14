@@ -1,41 +1,26 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-11 in the Freebuff cloud worktree. This snapshot distinguishes local
-evidence from observed CI. Prior security branch base: `3c87a4d` (whole-provenance fixes); the audit-head boundary pass is the current branch tip;
-the whole-provenance red-team pass is recorded at the end of this file. The historical heads below
-remain the last explicitly recorded CI evidence in this file; re-check the pushed head
-instead of reusing them. Code head `4422229` (authorized runtime policy retirement) sits above
-the previously verified merge head `8c950e6`, which merged `upstream/main` at `767f30e` and
-passed the `ci` (run `42887224979`), `conformance` (run `42887225101`), and `schema-check`
-(run `42887224921`) workflows with PR #1 mergeable/clean. The docs-only CI-record commit
-`c1dfa71` also passed; the security-hardening commits are newer and are recorded in
-`docs/security/validation-ledger.md`.
+Last verified: 2026-11-14 on `main` at
+`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. All open PRs are merged or closed, no issues
+are open, and no release/tag exists. The final audit is in
+[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md);
+dependency and delivery evidence is in the completion ledger and validation ledger.
+Historical heads below are retained as evidence; they are not the current branch state.
 
 ## Repository and active change
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `security/openjarvis-defensive-integration`
-- Active pull request: [#1 — Prepare AIOS for responsible community adoption](https://github.com/lmentry29/AIOS/pull/1)
-- PR status: open, draft, **not merged**. Do not merge while implementation and audit work remain.
-- Prior security branch base: `3c87a4d` (`fix(security): bind the whole provenance chain at its seams`); the audit-head boundary pass is recorded at the end of this file, and the branch tip is the final audit-head commit.
-- Prior security code head: `ef02f27` (`feat(security): verify gVisor runtime and rootfs provenance`; repository pin, archive/binary/rootfs verification, deterministic CI rootfs manifest, fail-closed tamper/missing-pin probes, and provenance evidence).
-- Pinned-input code commit: `103b521` (`feat(security): pin gVisor rootfs build inputs`; base digest, Debian snapshot, exact packages, input guard, independent image build, and drift regressions).
-- Prior security code head: `54344f1` (`feat(security): add explicit gVisor provider and measured sandbox matrix`; gVisor provider, OCI bundle, rootfs validation, fail-closed isolation errors, drill/CI integration, and Docker engine metadata).
-- Prior security code head: `40438a5` (`fix(security): use Docker-valid bind mount syntax`; measured Docker provider work landed in `dbee5c7`, with the CLI repair in `75f7371`).
-- Prior security code head: `29eb496` (`ci(security): remove temporary adversarial drill probe`; the drill landed in `8093095`)
-- Prior security code head: `550d0e5` (`ci(security): remove the temporary operator drill probe`; the guard itself landed in `fb7090a`)
-- Prior security code head: `27ab654` (`feat(host): add human-only operator session administration`)
-- Prior security code head: `b067501` (`feat(host): add durable session rotation and revocation`)
-- Documentation checkpoint for the current pass: the branch tip after `db2f5b3`; the
-  lifecycle/provenance evidence is recorded at the end of this file.
-- Historical policy pass: `4422229` with docs commit `aa86a4e`.
-- Merge head with `upstream/main` (`767f30e`): `8c950e6`; CI was green there and PR #1 was
-  mergeable/clean.
-- `4422229` and docs commit `aa86a4e` sit above that merge head. Both workflow sets
-  succeeded on `aa86a4e`; see Validation evidence for run ids.
-- Do not push `main`. The implementation branch may be pushed to
-  `upstream community/open-source-foundation`.
+- Active implementation branch: `main`
+- Active pull request: none. PRs #1–#10 are merged except #3, which was closed as obsolete.
+- Dependency-maintenance code head: `941ce01b457f26cff3f8b58a89d860b434c9ce9e`; the
+  repository-closure record is a follow-up documentation change.
+- Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
+  remains private under ADR-0020; the release workflow produces only an unsigned review
+  archive.
+- Historical integration branch: `security/openjarvis-defensive-integration` is merged; its
+  detailed security evidence remains in the security ledgers.
+- Do not push directly to `main`; all changes go through a pull request.
 
 ## Security hardening (2026-11-10)
 
@@ -477,9 +462,11 @@ doubles where a real isolation provider is unavailable; they do not claim contai
    remote attestation, production key custody, and external audit custody remain open.
 4. Exercise multi-generation resume/retry against real sandbox providers, including repeated
    crashes, cancelling generation 2, and workspace reuse across generations.
-5. Source/review the Mission field model before adding any Mission API/schema.
-6. Build a secret broker before any provider credential is introduced.
-7. Keep PR #1 draft; do not merge or push `main`.
+5. Mission and Infrastructure models are implemented under ADR-0017/ADR-0018; no new field
+   model is required for this closure. Production HSM/KMS custody remains CL-007.
+6. The local secret broker exists under ADR-0018; do not introduce live provider credentials
+   until an operator provisions and reviews them.
+7. No open PRs remain. Keep every change behind a PR and do not push directly to `main`.
 8. Operate the ADR-0034 policy-key rotation/revocation ceremony with production custody and
    external audit retention. Local signatures, rotation verification and a local signed
    authorization-audit head are implemented; production key custody, external audit custody,
