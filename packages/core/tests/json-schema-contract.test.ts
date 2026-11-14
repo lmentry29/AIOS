@@ -129,32 +129,62 @@ describe("generated JSON Schema lifecycle contracts", () => {
     expect(arrayCount).toBeGreaterThan(0);
   });
 
-  it("publishes the bounded Task environment contract", () => {
+  it("publishes the bounded Task environment contract on every execution branch", () => {
     const spec = generatedSchema("task", "TaskExecutionSpec") as {
-      properties?: Record<string, Record<string, unknown>>;
+      oneOf?: Array<{
+        properties?: Record<string, Record<string, unknown>>;
+      }>;
     };
-    expect(spec.properties?.env).toMatchObject({
-      additionalProperties: { maxLength: 256, type: "string" },
-      maxProperties: 64,
-      propertyNames: { maxLength: 64, type: "string" },
-      type: "object",
-    });
+    expect(spec.oneOf).toHaveLength(2);
+    const command = spec.oneOf?.find(
+      (branch) => branch.properties?.kind?.const === "local_command",
+    );
+    const plan = spec.oneOf?.find((branch) => branch.properties?.kind?.const === "local_plan");
+    const step = plan?.properties?.steps?.items as
+      | { properties?: Record<string, Record<string, unknown>> }
+      | undefined;
+    for (const env of [command?.properties?.env, step?.properties?.env]) {
+      expect(env).toMatchObject({
+        additionalProperties: { maxLength: 256, type: "string" },
+        maxProperties: 64,
+        propertyNames: { maxLength: 64, type: "string" },
+        type: "object",
+      });
+    }
   });
 
-  it("keeps the executable Task contract strict and bounded", () => {
+  it("keeps both executable Task branches strict and bounded", () => {
     const entity = generatedSchema("task", "TaskEntity") as {
       properties?: Record<
         string,
         {
-          additionalProperties?: unknown;
-          properties?: Record<string, Record<string, unknown>>;
+          oneOf?: Array<{
+            additionalProperties?: unknown;
+            properties?: Record<string, Record<string, unknown>>;
+          }>;
         }
       >;
     };
-    const execution = entity.properties?.execution;
-    expect(execution?.additionalProperties).toBe(false);
-    expect(execution?.properties?.argv).toMatchObject({ minItems: 1, maxItems: 64 });
-    expect(execution?.properties?.env?.additionalProperties).toEqual({
+    const branches = entity.properties?.execution?.oneOf ?? [];
+    expect(branches).toHaveLength(2);
+    const command = branches.find((branch) => branch.properties?.kind?.const === "local_command");
+    const plan = branches.find((branch) => branch.properties?.kind?.const === "local_plan");
+    expect(command).toBeDefined();
+    expect(plan).toBeDefined();
+    for (const branch of branches) expect(branch.additionalProperties).toBe(false);
+    expect(command?.properties?.argv).toMatchObject({ minItems: 1, maxItems: 64 });
+    expect(command?.properties?.env?.additionalProperties).toEqual({
+      maxLength: 256,
+      type: "string",
+    });
+    expect(command?.properties?.timeout_ms).toMatchObject({ minimum: 100, maximum: 300000 });
+    expect(plan?.properties?.steps).toMatchObject({ minItems: 1, maxItems: 8, type: "array" });
+    const step = plan?.properties?.steps?.items as
+      | { additionalProperties?: unknown; properties?: Record<string, Record<string, unknown>> }
+      | undefined;
+    expect(step?.additionalProperties).toBe(false);
+    expect(step?.properties?.argv).toMatchObject({ minItems: 1, maxItems: 64 });
+    expect(step?.properties?.env?.additionalProperties).toEqual({
       maxLength: 256,
       type: "string",
     });

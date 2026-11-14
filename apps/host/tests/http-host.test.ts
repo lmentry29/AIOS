@@ -1026,6 +1026,69 @@ describe("trusted host HTTP surface", () => {
     expect(stored?.audit_trail_ref).toBeTruthy();
   });
 
+  it("dispatches a bounded plan, verifies it, and records every Action as complete", async () => {
+    const first = randomUUID();
+    const second = randomUUID();
+    const task = makeTask({
+      actions: [
+        { action_id: first, status: "pending", executed_by: AGENT_ID },
+        { action_id: second, status: "pending", executed_by: AGENT_ID },
+      ],
+      execution: {
+        kind: "local_plan",
+        timeout_ms: 5_000,
+        steps: [
+          { action_id: first, argv: ["/bin/echo", "first step"] },
+          { action_id: second, argv: ["/bin/echo", "second step"] },
+        ],
+      },
+      verification: { kind: "local_command", argv: ["/bin/true"] },
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const harness = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withLocalAdapters: true,
+    });
+
+    expect((await intake(harness, "task", task)).status).toBe(201);
+    expect((await intake(harness, "workflow", workflow)).status).toBe(201);
+    const dispatched = await dispatch(harness, workflow.entity_id);
+
+    expect(dispatched.status).toBe(200);
+    expect(dispatched.body?.lifecycle_state).toBe("completed");
+    expect(harness.sandbox?.calls.map((entry) => entry.argv)).toEqual([
+      ["/bin/echo", "first step"],
+      ["/bin/echo", "second step"],
+      ["/bin/true"],
+    ]);
+    const stored = harness.runtime.taskStore.getTask(task.entity_id);
+    expect(stored?.lifecycle_state).toBe("completed");
+    expect(stored?.actions).toEqual([
+      expect.objectContaining({ action_id: first, status: "completed", executed_by: AGENT_ID }),
+      expect.objectContaining({ action_id: second, status: "completed", executed_by: AGENT_ID }),
+    ]);
+    expect(stored?.audit_trail_ref).toBeTruthy();
+
+    const read = await call(
+      harness,
+      "GET",
+      `/v1/tasks/${task.entity_id}/evidence/${stored?.audit_trail_ref}`,
+      { token: FOUNDER_TOKEN },
+    );
+    expect(read.status).toBe(200);
+    const artifact = read.body?.evidence as Record<string, unknown>;
+    const description = JSON.parse(String(artifact.description)) as Record<string, unknown>;
+    expect(description.verifier_accepted).toBe(true);
+    expect(description.evidence).toEqual(
+      expect.arrayContaining([
+        "plan_evidence_version:1",
+        "plan_step_count:2",
+        expect.stringMatching(/^plan_step_1:/),
+        expect.stringMatching(/^plan_step_2:/),
+      ]),
+    );
+  });
+
   it("lists only the Tasks and Workflows the authenticated principal may read", async () => {
     const task = makeTask();
     const workflow = makeWorkflow([task.entity_id]);

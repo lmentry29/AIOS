@@ -41,6 +41,57 @@
       ],
       "type": "string"
     },
+    "LocalCommandExecutionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        },
+        "cwd": {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "description": "AIOS task environment: at most 64 string entries",
+          "maxProperties": 64,
+          "propertyNames": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "kind": {
+          "const": "local_command",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "maximum": 1048576,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "maximum": 300000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "argv"
+      ],
+      "type": "object"
+    },
     "TaskEntity": {
       "additionalProperties": false,
       "allOf": [
@@ -145,55 +196,134 @@
           "type": "string"
         },
         "execution": {
-          "additionalProperties": false,
-          "properties": {
-            "argv": {
-              "items": {
-                "maxLength": 4096,
-                "minLength": 1,
-                "type": "string"
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "argv": {
+                  "items": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "maxItems": 64,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "cwd": {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                "env": {
+                  "additionalProperties": {
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "description": "AIOS task environment: at most 64 string entries",
+                  "maxProperties": 64,
+                  "propertyNames": {
+                    "maxLength": 64,
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "local_command",
+                  "type": "string"
+                },
+                "max_output_bytes": {
+                  "maximum": 1048576,
+                  "minimum": 1024,
+                  "type": "integer"
+                },
+                "timeout_ms": {
+                  "maximum": 300000,
+                  "minimum": 100,
+                  "type": "integer"
+                }
               },
-              "maxItems": 64,
-              "minItems": 1,
-              "type": "array"
-            },
-            "cwd": {
-              "maxLength": 1024,
-              "type": "string"
-            },
-            "env": {
-              "additionalProperties": {
-                "maxLength": 256,
-                "type": "string"
-              },
-              "description": "AIOS task environment: at most 64 string entries",
-              "maxProperties": 64,
-              "propertyNames": {
-                "maxLength": 64,
-                "type": "string"
-              },
+              "required": [
+                "kind",
+                "argv"
+              ],
               "type": "object"
             },
-            "kind": {
-              "const": "local_command",
-              "type": "string"
-            },
-            "max_output_bytes": {
-              "maximum": 1048576,
-              "minimum": 1024,
-              "type": "integer"
-            },
-            "timeout_ms": {
-              "maximum": 300000,
-              "minimum": 100,
-              "type": "integer"
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "local_plan",
+                  "type": "string"
+                },
+                "steps": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action_id": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "argv": {
+                        "items": {
+                          "maxLength": 4096,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "type": "array"
+                      },
+                      "cwd": {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      "env": {
+                        "additionalProperties": {
+                          "maxLength": 256,
+                          "type": "string"
+                        },
+                        "description": "AIOS task environment: at most 64 string entries",
+                        "maxProperties": 64,
+                        "propertyNames": {
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "type": "object"
+                      },
+                      "max_output_bytes": {
+                        "maximum": 1048576,
+                        "minimum": 1024,
+                        "type": "integer"
+                      },
+                      "timeout_ms": {
+                        "maximum": 300000,
+                        "minimum": 100,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "argv"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 8,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "timeout_ms": {
+                  "maximum": 300000,
+                  "minimum": 100,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "kind",
+                "steps"
+              ],
+              "type": "object"
             }
-          },
-          "required": [
-            "kind",
-            "argv"
-          ],
-          "type": "object"
+          ]
         },
         "lifecycle_history": {
           "items": {
@@ -435,9 +565,89 @@
       },
       "type": "object"
     },
-    "TaskExecutionSpec": {
+    "TaskExecutionPlan": {
       "additionalProperties": false,
       "properties": {
+        "kind": {
+          "const": "local_plan",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action_id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "argv": {
+                "items": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array"
+              },
+              "cwd": {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              "env": {
+                "additionalProperties": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "description": "AIOS task environment: at most 64 string entries",
+                "maxProperties": 64,
+                "propertyNames": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "max_output_bytes": {
+                "maximum": 1048576,
+                "minimum": 1024,
+                "type": "integer"
+              },
+              "timeout_ms": {
+                "maximum": 300000,
+                "minimum": 100,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "argv"
+            ],
+            "type": "object"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "timeout_ms": {
+          "maximum": 300000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "TaskExecutionPlanStep": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "type": "string"
+        },
         "argv": {
           "items": {
             "maxLength": 4096,
@@ -465,10 +675,6 @@
           },
           "type": "object"
         },
-        "kind": {
-          "const": "local_command",
-          "type": "string"
-        },
         "max_output_bytes": {
           "maximum": 1048576,
           "minimum": 1024,
@@ -481,10 +687,139 @@
         }
       },
       "required": [
-        "kind",
         "argv"
       ],
       "type": "object"
+    },
+    "TaskExecutionSpec": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "items": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "cwd": {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "maxLength": 256,
+                "type": "string"
+              },
+              "description": "AIOS task environment: at most 64 string entries",
+              "maxProperties": 64,
+              "propertyNames": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "local_command",
+              "type": "string"
+            },
+            "max_output_bytes": {
+              "maximum": 1048576,
+              "minimum": 1024,
+              "type": "integer"
+            },
+            "timeout_ms": {
+              "maximum": 300000,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "argv"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "local_plan",
+              "type": "string"
+            },
+            "steps": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "action_id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "argv": {
+                    "items": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "cwd": {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  "env": {
+                    "additionalProperties": {
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "description": "AIOS task environment: at most 64 string entries",
+                    "maxProperties": 64,
+                    "propertyNames": {
+                      "maxLength": 64,
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "max_output_bytes": {
+                    "maximum": 1048576,
+                    "minimum": 1024,
+                    "type": "integer"
+                  },
+                  "timeout_ms": {
+                    "maximum": 300000,
+                    "minimum": 100,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "argv"
+                ],
+                "type": "object"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "timeout_ms": {
+              "maximum": 300000,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "TaskVerificationSpec": {
       "additionalProperties": false,

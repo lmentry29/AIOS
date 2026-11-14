@@ -1,19 +1,21 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-14 on merged `main` at
-`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11). All open PRs are merged or closed,
-no issues are open, and no release/tag/publication exists. The final audit is in
-[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md); local
-evidence was observed on that commit, with hosted `CI` run `43641406777` and `Security` run
-`43641406757`. The post-merge documentation addendum does not change the audited code
-state. Historical heads below are retained as evidence; they are not current state.
+Last verified: 2026-11-14 on `main` at
+`dc73d189d554a2ff0993ccfa5bc278b6e393d79c` (PR #12). The closed-state code audit remains
+`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); its final audit is in
+[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md), with
+hosted `CI` run `43641406777` and `Security` run `43641406757`. ADR-0039 now adds bounded
+local execution plans; that change is delivered through a feature branch and does not
+alter the audited `d0b3fb9` evidence. Historical heads below are retained as evidence; they
+are not current state.
 
 ## Repository and active change
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `main`
-- Active pull request: none. PRs #1–#11 are merged except #3, which was closed as obsolete.
+- Active implementation branch: `feat/bounded-agent-execution-plan` (ADR-0039).
+- Active pull request: pending for the bounded Agent execution plan slice. PRs #1–#12 are
+  merged except #3, which was closed as obsolete.
 - Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
   post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
@@ -189,7 +191,7 @@ Nine workspace packages contain domain implementations at different maturity lev
 
 | Component | Current state |
 |---|---|
-| `@aios/core` | Established Zod schemas and generated JSON Schema, including the fixed `local_command` Task execution/verification specs |
+| `@aios/core` | Established Zod schemas and generated JSON Schema, including the fixed `local_command` Task execution/verification specs and the bounded `local_plan` execution spec (ADR-0039) |
 | `@aios/objects` | In-memory object store with lifecycle, relationship, immutability, mutation guards, and recovery-only `restore()` |
 | `@aios/work-hierarchy` | Task and Objective stores; Mission remains a typed reference with no backing record |
 | `@aios/containers` | Project store only; eight container concepts remain unpromoted by ADR-0011 |
@@ -198,7 +200,7 @@ Nine workspace packages contain domain implementations at different maturity lev
 | `@aios/learning` | Knowledge records and evolution stages; permanent stages require a recorded human approval; in-memory default with a durable host journal |
 | `@aios/founder` | Authorization-gated reads, human-only decision capture/review, default-deny policy with exact grant binding including human-only `administer_policy`/`revoke_policy`, atomic runtime replacement and retirement with per-resource fallback history, read-only vault/Gmail/Notion evidence adapters; live integrations unverified |
 | `@aios/orchestration` | Authorized ordered dispatch, verifier identity/permission checks with verifier-attributed evidence binding, evidence artifacts, status/evidence reads, cancellation preflight/checks, authorized resume/retry orchestration, and read-only Task/Workflow attempt-chain inspection with all-or-nothing step authorization; execution is injected |
-| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable v2 policy registry/audit, exact-granted human-only runtime policy publication and retirement, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
+| `apps/host` | Loopback-only trusted host: owner-only config, bearer sessions, one policy evaluator, durable v2 policy registry/audit, exact-granted human-only runtime policy publication and retirement, durable journal, idempotent leased dispatch, fixed sandboxed `local.exec`, bounded Action-bound `local_plan` execution, independent verifier, per-Task execution ledger with append-only attempts, authorized cancellation and resume/retry, all-or-nothing read-only attempt-history routes, verifier-bound evidence reads, approval-gated durable learning journal, durable allow/deny authorization audit with request correlation, strict concurrency cap, and recovery-to-suspended |
 
 Not production-ready. There is no UI, no general capability/provider runtime, no secret
 broker, no remote-attested verifier provenance, no production custody for the local policy
@@ -235,6 +237,13 @@ Policy bundles and decisions now carry local detached provenance (ADR-0034).
   same-origin passkey UI authentication, durable scheduling, and cgroup v2/Landlock limits.
 - ADR-0038 — **Accepted (2026-11-12)**: read-only live integrations and signed application
   distribution with no auto-update.
+- ADR-0039 — **Accepted (2026-11-14)**: a Task may declare a bounded one-to-eight-step
+  `local_plan` using the same fixed `local.exec` command shape. An Action-backed plan binds
+  exactly one unique step to each pending Action owned by the executing Agent; steps run
+  sequentially in the existing sandbox/workspace under one deadline; any failure aborts the
+  plan without completed Actions; the existing ledger, cancellation, retry and independent
+  verifier remain authoritative. No model planning, provider selection or general tool
+  discovery is added, and `AgentRunner` remains a lifecycle harness.
 - ADR-0019 — **Accepted (2026-11-10)**: fixed `local.exec`, fail-closed sandbox providers
   (Docker/bubblewrap/Seatbelt), bounded/hashed evidence, and an independently executed
   verifier command. Verification decisions name their verifier, the identity is persisted in

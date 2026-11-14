@@ -12,6 +12,7 @@ import {
   MemoryObjectEntity,
   TaskEntity,
   TaskEnvironment,
+  TaskExecutionSpec,
   WorkHierarchyParent,
 } from "../src/index.js";
 
@@ -126,6 +127,52 @@ describe("TaskEntity (COM §4.2)", () => {
     );
     expect(TaskEnvironment.safeParse(permitted).success).toBe(true);
     expect(TaskEnvironment.safeParse({ ...permitted, overflow: "value" }).success).toBe(false);
+  });
+
+  it("accepts an Action-bound local_plan only when every Action has one step", () => {
+    const actionId = crypto.randomUUID();
+    const action = {
+      action_id: actionId,
+      status: "pending" as const,
+      executed_by: crypto.randomUUID(),
+    };
+    const valid = task({
+      actions: [action],
+      execution: {
+        kind: "local_plan",
+        steps: [{ action_id: actionId, argv: ["/bin/true"] }],
+      },
+    });
+    expect(TaskEntity.safeParse(valid).success).toBe(true);
+    expect(
+      TaskEntity.safeParse({
+        ...valid,
+        actions: [action, { ...action, action_id: crypto.randomUUID() }],
+      }).success,
+    ).toBe(false);
+    expect(
+      TaskEntity.safeParse({
+        ...valid,
+        execution: {
+          kind: "local_plan",
+          steps: [{ argv: ["/bin/true"] }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      TaskEntity.safeParse({
+        ...valid,
+        actions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("bounds a local_plan to eight steps", () => {
+    const steps = Array.from({ length: 9 }, () => ({ argv: ["/bin/true"] }));
+    expect(TaskExecutionSpec.safeParse({ kind: "local_plan", steps }).success).toBe(false);
+    expect(
+      TaskExecutionSpec.safeParse({ kind: "local_plan", steps: steps.slice(0, 8) }).success,
+    ).toBe(true);
   });
 
   it("never conflates work_hierarchy_parent with organizational_containers (AGENTS.md rule 4)", () => {

@@ -61,11 +61,12 @@ passing build.
 7. **General plugin/adapter execution remains deferred; fixed local execution is not.**
    ADR-0012 is Proposed and establishes capability mediation as the intended
    requester-facing principle, but its replacement runtime contract and Capability
-   Registry schema are follow-on work. ADR-0019 accepts one narrow implemented exception:
-   the fixed `local.exec` command contract in `apps/host/src/execution/`. That exception
-   does not authorize provider selection, model invocation, plugin discovery, or arbitrary
-   host execution. Do not generalize it without the required architecture decision and
-   sandbox/secret design.
+   Registry schema are follow-on work.    ADR-0019 accepts one narrow implemented exception:
+   the fixed `local.exec` command contract in `apps/host/src/execution/`. ADR-0039 extends
+   that same exception to a requester-authored, Action-bound `local_plan` of one to eight
+   sequential commands. Neither ADR authorizes provider selection, model invocation, plugin
+   discovery, dynamic tool choice, or arbitrary host execution. Do not generalize them
+   without the required architecture decision and sandbox/secret design.
 8. **`schemas/generated/**` is generated, never hand-edited.** Edit
    `packages/core/src/schema/*.ts` (Zod) instead and regenerate.
 9. **Commit convention:** Conventional Commits, plus an AI-attribution trailer on
@@ -73,9 +74,12 @@ passing build.
    per `docs/process/ai-development-plan.md`.
 10. **Founder governance is human-only.** Agents may read only through explicit resource policy, but they cannot publish policies, record Founder decisions, or operate the human review queue. Decision artifacts must remain scoped to their protected collection.
 11. **A completed lifecycle state is not proof of completed work.** The current
-    `AgentRunner` is a lifecycle/conformance harness, not a tool-executing agent. The
-    Orchestration Kernel may mark a Task complete only after an independent verifier
-    accepts the result and evidence. Never allow an executor to self-attest.
+    `AgentRunner` remains a lifecycle/conformance harness, not a tool-executing agent. The
+    production executor for the fixed `local_command`/`local_plan` grant is the host's
+    `LocalCommandExecutor` behind `AgentExecutionPort`; it executes only Task-declared
+    commands through the sandbox. The Orchestration Kernel may mark a Task complete only
+    after an independent verifier accepts the result and evidence. Never allow an executor
+    to self-attest.
 12. **Founder Intelligence persists in the Obsidian vault.** ADR-0014 is Accepted: do not add a separate Founder Intelligence database. AIOS validates managed records against canonical schemas. Vault integration is read-and-propose by default; permanent Memory writes require explicit human review and authorization. Do not hydrate, migrate, rename, rewrite, or normalize existing notes without a reviewed proposal and a separate human-approved write action.
 13. **Know which stores are durable and which are not.** Task, Workflow, Artifact/evidence,
     and dispatch-run state are durable through the hash-chained operational journal

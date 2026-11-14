@@ -194,6 +194,241 @@ describe("local command execution", () => {
   });
 });
 
+describe("bounded local execution plans", () => {
+  function planTask(
+    actionIds: string[],
+    steps: Array<{
+      action_id?: string;
+      argv: string[];
+      cwd?: string;
+      timeout_ms?: number;
+      max_output_bytes?: number;
+      env?: Record<string, string>;
+    }>,
+    overrides: Record<string, unknown> = {},
+  ): TaskEntity {
+    return executableTask({
+      actions: actionIds.map((actionId) => ({
+        action_id: actionId,
+        status: "pending" as const,
+        executed_by: AGENT_ID,
+      })),
+      execution: {
+        kind: "local_plan",
+        timeout_ms: 5_000,
+        steps,
+      },
+      ...overrides,
+    });
+  }
+
+  it("runs every step in one workspace and completes exactly the declared Actions", async () => {
+    const sandbox = new StubSandbox();
+    const config = executionConfig();
+    const workspaces = new RunWorkspaceManager(config.workspace_directory);
+    const executor = new LocalCommandExecutor(config, sandbox, workspaces);
+    const first = randomUUID();
+    const second = randomUUID();
+    const task = planTask(
+      [first, second],
+      [
+        { action_id: first, argv: ["/bin/echo", "first"] },
+        { action_id: second, argv: ["/bin/echo", "second"], cwd: "." },
+      ],
+    );
+
+    const result = await executor.executeTask(AGENT_ID, task);
+
+    expect(sandbox.calls).toHaveLength(2);
+    expect(sandbox.calls[0]?.workspaceDirectory).toBe(sandbox.calls[1]?.workspaceDirectory);
+    expect(sandbox.calls.map((call) => call.argv)).toEqual([
+      ["/bin/echo", "first"],
+      ["/bin/echo", "second"],
+    ]);
+    expect(result.summary).toContain("2 of 2 steps");
+    expect(result.evidence).toContain("plan_step_count:2");
+    expect(result.evidence.some((line) => line.startsWith("plan_step_1:"))).toBe(true);
+    expect(result.evidence.some((line) => line.startsWith("plan_step_2:"))).toBe(true);
+    expect(result.evidence.join("\n")).not.toContain("ok\n");
+    expect(result.completed_actions).toEqual([
+      expect.objectContaining({ action_id: first, status: "completed", executed_by: AGENT_ID }),
+      expect.objectContaining({ action_id: second, status: "completed", executed_by: AGENT_ID }),
+    ]);
+  });
+
+  it("rejects a plan that does not exactly bind pending Actions owned by this Agent", async () => {
+    const sandbox = new StubSandbox();
+    const config = executionConfig();
+    const executor = new LocalCommandExecutor(
+      config,
+      sandbox,
+      new RunWorkspaceManager(config.workspace_directory),
+    );
+    const action = randomUUID();
+    const otherAction = randomUUID();
+
+    await expect(
+      executor.executeTask(
+        AGENT_ID,
+        planTask([action], [{ action_id: otherAction, argv: ["/bin/true"] }]),
+      ),
+    ).rejects.toThrow(/does not belong/);
+    await expect(
+      executor.executeTask(AGENT_ID, planTask([action], [{ argv: ["/bin/true"] }])),
+    ).rejects.toThrow(/must name its Action/);
+    await expect(
+      executor.executeTask(
+        AGENT_ID,
+        planTask([action], [{ action_id: action, argv: ["/bin/true"] }], {
+          actions: [
+            {
+              action_id: action,
+              status: "completed",
+              executed_by: AGENT_ID,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/only pending Actions/);
+    await expect(
+      executor.executeTask(
+        AGENT_ID,
+        planTask([action], [{ action_id: action, argv: ["/bin/true"] }], {
+          actions: [
+            {
+              action_id: action,
+              status: "pending",
+              executed_by: randomUUID(),
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(/different Agent/);
+    expect(sandbox.calls).toHaveLength(0);
+  });
+
+  it("stops at the first failed step instead of reporting partial Action completion", async () => {
+    const sandbox = new StubSandbox();
+    const originalRun = sandbox.run.bind(sandbox);
+    let invocation = 0;
+    sandbox.run = async (spec) => {
+      invocation += 1;
+      sandbox.result = invocation === 1 ? {} : { exitCode: 9 };
+      return originalRun(spec);
+    };
+    const config = executionConfig();
+    const executor = new LocalCommandExecutor(
+      config,
+      sandbox,
+      new RunWorkspaceManager(config.workspace_directory),
+    );
+    // Use a no-Action plan to exercise step failure independently of the
+    // Action-binding checks.
+    const noActionTask = executableTask({
+      execution: {
+        kind: "local_plan",
+        timeout_ms: 5_000,
+        steps: [{ argv: ["/bin/echo", "one"] }, { argv: ["/bin/echo", "two"] }],
+      },
+    });
+
+    await expect(executor.executeTask(AGENT_ID, noActionTask)).rejects.toThrow(/code 9/);
+    expect(sandbox.calls).toHaveLength(2);
+  });
+
+  it("stops before a step that would exceed the plan's total deadline", async () => {
+    const sandbox = new StubSandbox();
+    const originalRun = sandbox.run.bind(sandbox);
+    sandbox.run = async (spec) => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return originalRun(spec);
+    };
+    const config = executionConfig();
+    const executor = new LocalCommandExecutor(
+      config,
+      sandbox,
+      new RunWorkspaceManager(config.workspace_directory),
+    );
+    const task = executableTask({
+      execution: {
+        kind: "local_plan",
+        timeout_ms: 100,
+        steps: [{ argv: ["/bin/true"] }, { argv: ["/bin/true"] }],
+      },
+    });
+
+    await expect(executor.executeTask(AGENT_ID, task)).rejects.toThrow(/total time limit/);
+    expect(sandbox.calls).toHaveLength(1);
+  });
+
+  it("runs real steps and passes their files to an independently executed verifier", async () => {
+    const config = executionConfig();
+    const workspaces = new RunWorkspaceManager(config.workspace_directory);
+    const sandbox = new TestProcessSandbox();
+    const store = new DurableOperationalStore({
+      directory: mkdtempSync(join(tmpdir(), "aios-plan-execution-")),
+    });
+    const managed = new ManagedExecutionPort(
+      new LocalCommandExecutor(config, sandbox, workspaces),
+      store.executions,
+      1,
+    );
+    const verifier = new LocalCommandVerifier(config, sandbox, workspaces, {
+      current: store.executions,
+    });
+    const actionOne = randomUUID();
+    const actionTwo = randomUUID();
+    const task = planTask(
+      [actionOne, actionTwo],
+      [
+        {
+          action_id: actionOne,
+          argv: [
+            process.execPath,
+            "-e",
+            "require('node:fs').writeFileSync('artifact.txt', 'verified-work')",
+          ],
+        },
+        {
+          action_id: actionTwo,
+          argv: [
+            process.execPath,
+            "-e",
+            "const fs=require('node:fs'); if(fs.readFileSync('artifact.txt','utf8')!=='verified-work') process.exit(4); fs.writeFileSync('step-two.txt','done')",
+          ],
+        },
+      ],
+      {
+        verification: {
+          kind: "local_command",
+          argv: [
+            process.execPath,
+            "-e",
+            "const fs=require('node:fs'); if(fs.readFileSync('artifact.txt','utf8')!=='verified-work'||fs.readFileSync('step-two.txt','utf8')!=='done') process.exit(5)",
+          ],
+        },
+      },
+    );
+
+    const result = await managed.executeTask(AGENT_ID, task);
+    const decision = await verifier.verify({
+      task,
+      agent_ids: [AGENT_ID],
+      execution_result: result,
+    });
+
+    expect(result.completed_actions?.map((action) => action.status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(decision.accepted).toBe(true);
+    expect(decision.evidence).toContain(`verifier:${VERIFIER_ID}`);
+    expect(decision.evidence).toContain("execution_binding:attempt-v2");
+    expect(decision.evidence.some((line) => line.startsWith("execution_id:"))).toBe(true);
+    expect(store.executions.getForTask(task.entity_id)?.state).toBe("completed");
+  });
+});
+
 describe("platform provider fail-closed behavior", () => {
   it("refuses to advertise Seatbelt when macOS/sandbox-exec cannot establish it", async () => {
     const provider = createSandboxProvider({ provider: "seatbelt" });
