@@ -4,6 +4,18 @@ Status: **repository-maintenance closure complete; not production-ready.** This 
 internal audit of the default branch and its dependency/tooling state. It is not an
 independent third-party certification, a penetration test, or a production-readiness claim.
 
+**Audited closed-state commit:** `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc`, the merge of
+PR #11 on 2026-11-14T21:10:36Z.
+
+**Hosted evidence for that commit:** `CI` run
+[`43641406777`](https://github.com/lmentry29/AIOS/actions/runs/43641406777) and `Security`
+run [`43641406757`](https://github.com/lmentry29/AIOS/actions/runs/43641406757). Both jobs
+in the Security workflow passed: `Live sandbox boundary` and `Dependency and secret scan`.
+
+This file is the post-merge audit record. The documentation-only addendum that carries it
+does not change the audited code state; its own merge is not part of the audit scope. The
+`d0b3fb9` runs above are the authoritative hosted evidence.
+
 ## Closure decisions
 
 The repository owner chose the following scope for this closure:
@@ -21,8 +33,7 @@ The repository owner chose the following scope for this closure:
 
 ## Dependency and tooling state
 
-The dependency-maintenance work landed before this record on `main` at
-`941ce01b457f26cff3f8b58a89d860b434c9ce9e`:
+The maintenance queue landed through PR #10 and was closed by PR #11:
 
 - PR #3 was closed as obsolete. Its removal of
   `docs/architecture/local-authorization-storage.md` conflicted with the delivered
@@ -36,17 +47,21 @@ The dependency-maintenance work landed before this record on `main` at
 - PR #10 added pnpm 11 workspace overrides for patched `postcss`, `nanoid` and
   `source-map-js` releases. Before the overrides, the full audit reported five dev
   advisories (four high, one moderate); after them it reports zero at every severity.
+- PR #11 added the full-tree dependency audit to the Security workflow and merged the
+  closure record at `d0b3fb9`.
 
-The full audit covers **160 dependencies** (1 production, 159 development, 88 optional) and
-reports **0 info, 0 low, 0 moderate, 0 high and 0 critical** advisories. The production
-`audit-policy` gate reports **0 untriaged high or critical** advisories. The Security
-workflow now also runs `pnpm audit --audit-level=high` over the full tree, because the
-production-only policy gate intentionally excludes dev/build dependencies.
+The full audit covers **160 dependencies** (1 production, 159 development; 88 optional
+packages are included in that total) and reports **0 info, 0 low, 0 moderate, 0 high and 0
+critical** advisories. The production `audit-policy` gate reports **0 untriaged high or
+critical** advisories. The Security workflow also runs
+`pnpm audit --audit-level=high` over the full tree, because the production-only policy gate
+intentionally excludes dev/build dependencies.
 
-## Local verification
+## Local verification on merged `main`
 
-Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. The repository targets Node
-`>=22.13`; hosted CI and Security use `.nvmrc` (Node 22.23.4).
+Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. These commands were run locally on
+the merged `main` commit `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc`. The repository targets
+Node `>=22.13`; hosted CI and Security use `.nvmrc` (Node 22.23.4).
 
 | Check | Command | Observed result |
 |---|---|---|
@@ -63,37 +78,33 @@ Host: Linux cloud worktree, Node v26.13.0, pnpm 11.11.0. The repository targets 
 | Production audit policy | `node tools/security/audit-policy.mjs` | 0 untriaged high/critical |
 | Whitespace | `git diff --check` | exit 0 |
 
-The local host suite reports **318 passed / 17 skipped** because bubblewrap, Docker and
-gVisor live tests require the hosted Linux runner. The hosted Security `Live sandbox
-boundary` job executes those live suites and the bubblewrap, Docker and gVisor adversarial
-drills; it is the authoritative evidence for that platform. Local macOS Seatbelt and Apple
-Containerization evidence remains unavailable and is recorded as a blocker.
+The local host suite accounts for **318 passed / 17 skipped** within the gate. The 17 skips
+are the live bubblewrap, Docker and gVisor suites that require the hosted Linux runner; the
+hosted Security job executes them and is the authoritative evidence for that platform.
+Local macOS Seatbelt and Apple Containerization evidence remains unavailable and is recorded
+as a blocker.
 
-## Hosted verification
+## Hosted verification on merged `main`
 
-The closure pull request's path filters ran `CI` and `Security`; `Conformance` and
-`Schema Check` are filtered to package/schema changes, so they were run locally
-(**107/107** and **12 files / 46 schemas**, respectively). Security includes the
-dependency/secret scan plus the full live sandbox job described above. Verified code head
-`37c3f494ea8dd7ef5b89b1d7fc447a6c6251c8c2` passed `CI` in run
-[`43640791568`](https://github.com/lmentry29/AIOS/actions/runs/43640791568) and `Security` in
-run [`43640791561`](https://github.com/lmentry29/AIOS/actions/runs/43640791561); the live
-job completed in 2m13s. The post-merge `main` runs are reported in the closing summary and
-are visible in the repository's Actions history.
+On `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc`:
 
-The first two Security attempts on this closure found a real portability defect in the
-live drill, not in the sandbox: the current `ubuntu-latest` image no longer exposed
-`/usr/sbin/chroot`, and passing the host path into Docker then failed because the container
-exposes it at a different location. The drill now resolves `/usr/sbin/chroot` or
-`/usr/bin/chroot` inside the provider and fails closed if neither exists; `coreutils` is
-installed explicitly. Runs [`43640440411`](https://github.com/lmentry29/AIOS/actions/runs/43640440411)
-and [`43640626465`](https://github.com/lmentry29/AIOS/actions/runs/43640626465) failed before
-that fix, and the run above passed. This did not change any authorization or sandbox
-provider behavior.
+- `CI` run [`43641406777`](https://github.com/lmentry29/AIOS/actions/runs/43641406777)
+  succeeded.
+- `Security` run [`43641406757`](https://github.com/lmentry29/AIOS/actions/runs/43641406757)
+  succeeded. Both the `Live sandbox boundary` and `Dependency and secret scan` jobs are
+  recorded as successful. The live job exercises bubblewrap, Docker, gVisor, provenance and
+  session-operator steps; the dependency job includes the full-tree audit.
+- `Conformance` and `Schema Check` are path-filtered to package/schema changes. They did not
+  run for the docs/tooling closure. Their equivalent projects ran locally: conformance
+  **107/107**, schema generation **12 files / 46 schemas** with no drift. No hosted result
+  is claimed for those two workflows.
+- During closure, the live drill's chroot lookup was made provider-relative after the current
+  runner stopped exposing `/usr/sbin/chroot`; `coreutils` is installed explicitly. That
+  changed only the test harness, not authorization or sandbox-provider behavior, and the
+  merged-main live job passed.
 
-One earlier main Security run on `b87eb43` failed because the hosted Docker daemon was
-unreachable during the live drill. The same workflow passed on the final dependency
-maintenance head `941ce01`; no code or policy change was made to bypass the drill.
+No release, tag, npm publication, signed installer or deployment was created.
+The repository has only the historical checkpoint tags; there is no GitHub release.
 
 ## Residuals
 

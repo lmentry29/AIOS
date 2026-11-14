@@ -1,20 +1,21 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-14 on `main` at
-`941ce01b457f26cff3f8b58a89d860b434c9ce9e`. All open PRs are merged or closed, no issues
-are open, and no release/tag exists. The final audit is in
-[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md);
-dependency and delivery evidence is in the completion ledger and validation ledger.
-Historical heads below are retained as evidence; they are not the current branch state.
+Last verified: 2026-11-14 on merged `main` at
+`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11). All open PRs are merged or closed,
+no issues are open, and no release/tag/publication exists. The final audit is in
+[`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md); local
+evidence was observed on that commit, with hosted `CI` run `43641406777` and `Security` run
+`43641406757`. The post-merge documentation addendum does not change the audited code
+state. Historical heads below are retained as evidence; they are not current state.
 
 ## Repository and active change
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
 - Active implementation branch: `main`
-- Active pull request: none. PRs #1–#10 are merged except #3, which was closed as obsolete.
-- Dependency-maintenance code head: `941ce01b457f26cff3f8b58a89d860b434c9ce9e`; the
-  repository-closure record is a follow-up documentation change.
+- Active pull request: none. PRs #1–#11 are merged except #3, which was closed as obsolete.
+- Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
+  post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
   remains private under ADR-0020; the release workflow produces only an unsigned review
   archive.
@@ -335,7 +336,7 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   order and integrity, tamper and torn-tail handling are covered, and a failed append denies
   without recording a phantom decision.
 - Learning: **28 tests**, including 13 approval tests. `memory-approval.test.ts` proves
-  default denial, rejected/expired/pending approvals write nothing, human-only decisions,
+  default denial, rejected/expired approvals write nothing, human-only decisions,
   exact content/transition binding, one-time consumption, and unchanged draft promotions.
   `apps/host/tests/learning-store.test.ts` proves an approved promotion and its consumed
   approval survive close-and-reopen, and a rejected approval leaves no permanent entry.
@@ -381,8 +382,9 @@ Local checks at code head `4422229` (Node 26.13.0, pnpm 11.11.0):
   bare `rw` mount syntax respectively, then were repaired.
 - CI on the exact pushed head `15bc7f8`: `ci` (run `42933005083`), `conformance` (run
   `42933005064`), `schema-check` (run `42933005025`), `security` (run `42933005020`), and the
-  dispatched `release` build (run `42933109086`) all succeeded. PR #1 remained open, draft,
-  and unmerged; `main` stayed at `767f30e`.
+  dispatched `release` build (run `42933109086`) all succeeded. At that historical
+  checkpoint PR #1 was open/draft; it has since been merged as part of the integration
+  delivery.
 - GitHub Actions on `aa86a4e`: `ci` (run `42892775891`), `conformance` (run
   `42892776172`), and `schema-check` (run `42892775877`) all succeeded; PR #1 reported
   `mergeable: true`, `mergeable_state: unstable` while those runs were in flight. The
