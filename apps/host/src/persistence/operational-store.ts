@@ -18,7 +18,7 @@ import {
 } from "@aios/core";
 import { ObjectStore, type EntityPatch } from "@aios/objects";
 import type { TaskRepositoryPort } from "@aios/orchestration";
-import { ExecutionLedger } from "./execution-ledger.js";
+import { ExecutionLedger, type WorkspaceRecoveryEvidence } from "./execution-ledger.js";
 import { AppendOnlyJournal, JournalError } from "./journal.js";
 import { DurableDagScheduler, MAX_DAG_PARALLELISM } from "../scheduler/dag-scheduler.js";
 import { DurableSessionStore, type SessionSnapshot } from "./session-store.js";
@@ -346,21 +346,19 @@ export class DurableRunCoordinator {
 
     for (const run of this.runs.values()) {
       if (run.workflow_id !== request.workflow_id) continue;
-      if (run.idempotency_key === request.idempotency_key && run.state === "completed") {
-        return { run: structuredClone(run), replayed: true };
+      if (run.idempotency_key === request.idempotency_key) {
+        if (run.state === "completed") {
+          return { run: structuredClone(run), replayed: true };
+        }
+        // A key is permanently bound to its first run. Reusing it after an interruption,
+        // failure, cancellation, or while it is still running would create a second run
+        // for one request and hide the first outcome. A deliberate new dispatch uses a
+        // new key; a redrive uses the Task/Workflow resume/retry routes instead.
+        throw new DispatchConflictError(
+          `Idempotency-Key is already bound to a ${run.state} dispatch run; use a new key for a new dispatch.`,
+        );
       }
-      if (
-        run.state === "running" &&
-        run.lease_owner !== this.owner &&
-        Date.parse(run.lease_expires_at) > now.getTime()
-      ) {
-        throw new DispatchConflictError("This Workflow already has an active dispatch lease.");
-      }
-      if (
-        run.state === "running" &&
-        run.idempotency_key !== request.idempotency_key &&
-        Date.parse(run.lease_expires_at) > now.getTime()
-      ) {
+      if (run.state === "running" && Date.parse(run.lease_expires_at) > now.getTime()) {
         throw new DispatchConflictError(
           "This Workflow is already being dispatched under a different idempotency key.",
         );
@@ -545,8 +543,54 @@ export interface OperationalSnapshot {
   scheduler_graphs?: unknown[];
   runs: unknown[];
   executions: unknown[];
+  /** Added with ADR-0040; older snapshots simply have no step/process/recovery state. */
+  execution_steps?: unknown[];
+  execution_processes?: unknown[];
+  execution_recoveries?: unknown[];
+  recovery_summaries?: unknown[];
   /** Added after F-013; old snapshots remain readable and leave configured sessions intact. */
   session_state?: SessionSnapshot;
+}
+
+/** Durable record of one startup recovery pass, including orphaned workspace manifests. */
+export interface RecoverySummary {
+  recorded_at: string;
+  workflows: string[];
+  executions: string[];
+  workspaces: WorkspaceRecoveryEvidence[];
+}
+
+function validateRecoverySummary(value: unknown): RecoverySummary {
+  const isStringList = (candidate: unknown, max: number): candidate is string[] =>
+    Array.isArray(candidate) &&
+    candidate.length <= max &&
+    candidate.every((item) => typeof item === "string" && item.length > 0);
+  if (
+    !isRecord(value) ||
+    typeof value.recorded_at !== "string" ||
+    !Number.isFinite(Date.parse(value.recorded_at)) ||
+    !isStringList(value.workflows, 10_000) ||
+    !isStringList(value.executions, 10_000) ||
+    !Array.isArray(value.workspaces) ||
+    value.workspaces.length > 10_000 ||
+    value.workspaces.some(
+      (workspace) =>
+        !isRecord(workspace) ||
+        typeof workspace.task_id !== "string" ||
+        workspace.task_id.length === 0 ||
+        typeof workspace.workspace_sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(workspace.workspace_sha256) ||
+        !Number.isSafeInteger(workspace.entries) ||
+        (workspace.entries as number) < 0 ||
+        !Number.isSafeInteger(workspace.bytes) ||
+        (workspace.bytes as number) < 0 ||
+        typeof workspace.removed !== "boolean" ||
+        !(workspace.truncated === undefined || typeof workspace.truncated === "boolean"),
+    )
+  ) {
+    throw new JournalError("Operational journal contains an invalid recovery summary.");
+  }
+  return structuredClone(value as unknown as RecoverySummary);
 }
 
 /**
@@ -574,6 +618,7 @@ export class DurableOperationalStore {
   readonly executions: ExecutionLedger;
   /** Durable session generations, revocation, expiry, and scope authority. */
   readonly sessions: DurableSessionStore;
+  private readonly recoverySummaries: RecoverySummary[] = [];
 
   constructor(options: DurableStoreOptions) {
     if (
@@ -631,6 +676,14 @@ export class DurableOperationalStore {
         this.scheduler.restore(record.payload);
       } else if (record.kind === "execution") {
         this.executions.restore(record.payload);
+      } else if (record.kind === "execution_step") {
+        this.executions.restoreStep(record.payload);
+      } else if (record.kind === "execution_process") {
+        this.executions.restoreProcess(record.payload);
+      } else if (record.kind === "execution_recovery") {
+        this.executions.restoreRecovery(record.payload);
+      } else if (record.kind === "recovery_summary") {
+        this.recoverySummaries.push(validateRecoverySummary(record.payload));
       } else if (record.kind === "session_rotated") {
         this.sessions.restoreRotation(record.payload);
       } else if (record.kind === "session_revoked") {
@@ -662,6 +715,18 @@ export class DurableOperationalStore {
             "Operational journal contains a compaction snapshot with a malformed scheduler collection.",
           );
         }
+        for (const key of [
+          "execution_steps",
+          "execution_processes",
+          "execution_recoveries",
+          "recovery_summaries",
+        ] as const) {
+          if (snapshot[key] !== undefined && !Array.isArray(snapshot[key])) {
+            throw new JournalError(
+              "Operational journal contains a compaction snapshot with malformed recovery state.",
+            );
+          }
+        }
         for (const entity of snapshot.tasks as unknown[]) this.tasks.restore(entity);
         for (const entity of (snapshot.missions as unknown[] | undefined) ?? [])
           this.missions.restore(entity);
@@ -674,6 +739,14 @@ export class DurableOperationalStore {
         for (const run of snapshot.runs as unknown[]) this.runs.restore(run);
         for (const execution of snapshot.executions as unknown[])
           this.executions.restore(execution);
+        for (const step of (snapshot.execution_steps as unknown[] | undefined) ?? [])
+          this.executions.restoreStep(step);
+        for (const process of (snapshot.execution_processes as unknown[] | undefined) ?? [])
+          this.executions.restoreProcess(process);
+        for (const recovery of (snapshot.execution_recoveries as unknown[] | undefined) ?? [])
+          this.executions.restoreRecovery(recovery);
+        for (const summary of (snapshot.recovery_summaries as unknown[] | undefined) ?? [])
+          this.recoverySummaries.push(validateRecoverySummary(summary));
         if (snapshot.session_state !== undefined)
           this.sessions.restoreSnapshot(snapshot.session_state);
       } else {
@@ -701,9 +774,29 @@ export class DurableOperationalStore {
       artifacts: this.artifacts.list(),
       runs: this.runs.list(),
       executions: this.executions.list(),
+      execution_steps: this.executions.listSteps(),
+      execution_processes: this.executions.listProcesses(),
+      execution_recoveries: this.executions.listRecoveries(),
+      recovery_summaries: this.listRecoverySummaries(),
       session_state: this.sessions.state.snapshot(),
     };
     return this.journal.compactWithSnapshot("journal_snapshot", snapshot, archivePath);
+  }
+
+  /**
+   * Appends one bounded recovery summary. This is journal history, not a second ledger:
+   * it records the workspace manifests and attempt/workflow identifiers observed by the
+   * startup pass, and is never replayed into lifecycle authority.
+   */
+  recordRecoverySummary(summary: RecoverySummary): RecoverySummary {
+    const validated = validateRecoverySummary(summary);
+    this.journal.append("recovery_summary", validated);
+    this.recoverySummaries.push(validated);
+    return structuredClone(validated);
+  }
+
+  listRecoverySummaries(): RecoverySummary[] {
+    return this.recoverySummaries.map((summary) => structuredClone(summary));
   }
 
   close(): void {

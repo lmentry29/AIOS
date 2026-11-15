@@ -79,7 +79,9 @@ passing build.
     `LocalCommandExecutor` behind `AgentExecutionPort`; it executes only Task-declared
     commands through the sandbox. The Orchestration Kernel may mark a Task complete only
     after an independent verifier accepts the result and evidence. Never allow an executor
-    to self-attest.
+    to self-attest. A completed executor attempt that lost its terminal Task commit across a
+    restart is tombstoned and non-verifiable until an authorized retry creates a new linked
+    attempt (ADR-0040).
 12. **Founder Intelligence persists in the Obsidian vault.** ADR-0014 is Accepted: do not add a separate Founder Intelligence database. AIOS validates managed records against canonical schemas. Vault integration is read-and-propose by default; permanent Memory writes require explicit human review and authorization. Do not hydrate, migrate, rename, rewrite, or normalize existing notes without a reviewed proposal and a separate human-approved write action.
 13. **Know which stores are durable and which are not.** Task, Workflow, Artifact/evidence,
     and dispatch-run state are durable through the hash-chained operational journal
@@ -92,7 +94,10 @@ passing build.
     implementations.
     The operational journal supports offline checkpoint compaction (`compact-journal`) and
     verified restore (`restore-journal`) under ADR-0025; the learning and authorization-audit
-    journals are not compacted, and no journal has a migration framework. All journals remain
+    journals are not compacted, and no journal has a migration framework. Plan step progress,
+    process-group identity, workspace recovery manifests and completed-but-uncommitted
+    tombstones are records in that same operational journal (ADR-0040). Startup recovery is
+    idempotent and never re-executes or auto-completes work. All journals remain
     single-process. Production use still requires protected secrets,
     a completed sandbox/provider matrix, operational controls, and independent review.
     Keep these limitations explicit in code and documentation.

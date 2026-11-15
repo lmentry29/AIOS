@@ -2,9 +2,9 @@
 
 ## Status
 
-**Accepted** (2026-11-10). This ADR extends the execution lifecycle implemented under
-ADR-0015 and ADR-0019. It does not change ADR-0013 authorization semantics, ADR-0014
-Founder Intelligence persistence, or ADR-0016's host/UI boundary.
+**Accepted** (2026-11-10; recovery extended by ADR-0040). This ADR extends the execution
+lifecycle implemented under ADR-0015 and ADR-0019. It does not change ADR-0013 authorization
+semantics, ADR-0014 Founder Intelligence persistence, or ADR-0016's host/UI boundary.
 
 ## Context
 
@@ -159,7 +159,8 @@ execution-state change and uses the shared evaluator.
   64 MiB fail-closed limit.
 - A crash after executor success but before verification leaves an `interrupted` run,
   a `completed` execution, and a suspended Task/Workflow. The work is not re-run and is not
-  claimed as verified.
+  claimed as verified. ADR-0040 additionally tombstones every completed attempt whose Task
+  never reached a committed terminal state, so it cannot later be verified.
 
 ## Tests / evidence
 

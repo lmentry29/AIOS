@@ -14,9 +14,10 @@ Historical heads below are retained as evidence; they are not current state.
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `main`.
-- Active pull request: none. PR #14 (ADR-0039 bounded execution plans) is merged; PRs #1–#14
-  are merged except #3, which was closed as obsolete.
+- Active implementation branch: `feat/plan-crash-recovery`.
+- Active pull request: #16 (ADR-0040 plan crash recovery and dispatch-key binding). PR #14
+  (ADR-0039 bounded execution plans) is merged; PRs #1–#14 are merged except #3, which was
+  closed as obsolete.
 - Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
   post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
@@ -45,8 +46,11 @@ Historical heads below are retained as evidence; they are not current state.
   one bounded line per step with argv/cwd/stdout/stderr hashes plus filter, limit and
   boundary claims. Raw output is never copied. Verification still runs its own command in a
   fresh invocation and binds acceptance to the durable attempt/result digest.
-- Local evidence: 46/46 turbo tasks, 324 host tests passed (18 live-only skipped), 43/43
-  integration, 107/107 conformance, 358-file secret scan clean. Hosted Security ran the live
+- Local evidence at the ADR-0040 branch: 46/46 turbo tasks, 333 host tests passed (18
+  live-only skipped), 43/43 integration, 107/107 conformance, 359-file secret scan clean,
+  schema generation and format checks clean. The new recovery suite fails 6/6 against the
+  base `main` commit `999f573` (missing step/recovery APIs and no step/tombstone behavior)
+  and passes 6/6 on the branch. Hosted Security ran the live
   bubblewrap two-step plan test and the existing adversarial drills successfully. The live
   plan test skips locally when `AIOS_BWRAP_DIR` is absent rather than passing without a
   boundary.
@@ -54,6 +58,37 @@ Historical heads below are retained as evidence; they are not current state.
   coordination and aggregate cross-step resource accounting. `AgentRunner` remains a
   lifecycle/conformance harness; `LocalCommandExecutor` is the fixed-grant production
   adapter.
+
+## Plan crash recovery and idempotency (2026-11-14)
+
+- ADR-0040 extends the existing execution ledger with durable `execution_step` records for
+  each `local_plan` step. A step is `started` before the provider is invoked and becomes
+  `completed` only from a real zero-exit observation; recovery can only mark it
+  `interrupted`, never completed. Step records are digest-only and replay through the same
+  hash-chained operational journal and ADR-0025 snapshots.
+- Startup reaps process groups only when the recorded Linux `boot_id:starttime` identity
+  still matches, then inventories per-Task workspaces (bounded path/metadata/byte manifest),
+  journals the manifest in a `recovery_summary`, and removes only host-generated task
+  directories. Reconciliation is idempotent: a second pass over the same state writes
+  nothing. Running attempts become `interrupted`; completed attempts that never reached a
+  committed Task state get a non-verifiable `execution_recovery` tombstone with reason
+  `host_restarted_before_terminal_commit`. Affected Tasks/Workflows are suspended and are
+  never auto-resumed or auto-completed.
+- The verifier rejects a tombstoned attempt before running its command. Attempt history
+  exposes the recovery outcome and reason. Retry remains an explicit, authorized new linked
+  attempt; resume remains reserved for an interrupted attempt.
+- A dispatch idempotency key is permanently bound to its first run in a Workflow. Repeating
+  the key for a completed run replays the result; reusing it for a non-completed run is an
+  explicit conflict and never creates a second run, ledger entry or verified result.
+- Real crash evidence: `apps/host/tests/plan-recovery.test.ts` SIGKILLs a separate harness
+  process at four boundaries (after step 1 before step 2, mid-step with a live child, after
+  executor completion before verification, after verifier acceptance before terminal
+  commit), then reopens a fresh store/kernel composition from the same directory. It also
+  tamperers a committed step record and requires the hash chain to fail closed.
+- Still absent: automatic recovery/redrive, workspace-content resume after a crash,
+  container-specific reaping for a hard host crash, and cross-step aggregate resource
+  accounting. The crash harness uses a test-only provider; production isolation remains the
+  bubblewrap/Docker/gVisor path exercised by the existing drills.
 
 ## Security hardening (2026-11-10)
 
@@ -274,6 +309,10 @@ Policy bundles and decisions now carry local detached provenance (ADR-0034).
   plan without completed Actions; the existing ledger, cancellation, retry and independent
   verifier remain authoritative. No model planning, provider selection or general tool
   discovery is added, and `AgentRunner` remains a lifecycle harness.
+- ADR-0040 — **Accepted (2026-11-14)**: durable per-step progress in the existing execution
+  journal, process-group and workspace recovery on startup, non-verifiable tombstones for
+  completed-but-uncommitted attempts, idempotent reconciliation, and permanent dispatch
+  idempotency-key binding. No automatic resume/retry or second executor is added.
 - ADR-0019 — **Accepted (2026-11-10)**: fixed `local.exec`, fail-closed sandbox providers
   (Docker/bubblewrap/Seatbelt), bounded/hashed evidence, and an independently executed
   verifier command. Verification decisions name their verifier, the identity is persisted in

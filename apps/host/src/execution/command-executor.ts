@@ -16,6 +16,8 @@ import {
   WorkspaceQuotaExceededError,
 } from "../errors.js";
 import { SECCOMP_DENIED_EXIT_CODE } from "./seccomp.js";
+import { ExecutionLedger, type ExecutionLedgerRef } from "../persistence/execution-ledger.js";
+import { processStartToken } from "./process-reaper.js";
 import type { SandboxProvider, SandboxResult } from "./sandbox.js";
 import { WorkspaceQuotaGuard, type RunWorkspaceManager } from "./workspace.js";
 
@@ -161,7 +163,18 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     private readonly config: HostExecutionConfig,
     private readonly provider: SandboxProvider,
     private readonly workspaces: RunWorkspaceManager,
+    /**
+     * Optional late-bound durable ledger. Production composes it before the runtime exists
+     * and sets `current` before listening; direct adapter tests may omit it. When present,
+     * every plan step and sandbox process group is journaled before/after real work.
+     */
+    private readonly ledger?: ExecutionLedger | ExecutionLedgerRef,
   ) {}
+
+  private currentLedger(): ExecutionLedger | undefined {
+    if (this.ledger === undefined) return undefined;
+    return this.ledger instanceof ExecutionLedger ? this.ledger : this.ledger.current;
+  }
 
   async validateAgent(agentId: string): Promise<boolean> {
     if (agentId !== this.config.agent_id) return false;
@@ -354,8 +367,15 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     const stepEvidence: string[] = [];
     let first: CommandObservation | undefined;
     const startedAt = Date.now();
+    const ledger = this.currentLedger();
+    const execution = ledger?.getForTask(task.entity_id);
+    if (ledger !== undefined && (execution === undefined || execution.state !== "running")) {
+      throw new HostExecutionError(
+        "A local_plan requires a running durable execution attempt before any step starts.",
+      );
+    }
 
-    for (const step of intent.steps) {
+    for (const [index, step] of intent.steps.entries()) {
       const remainingMs = deadlineAt - Date.now();
       if (remainingMs < 100) {
         throw new HostExecutionError("The local_plan exceeded its total time limit.");
@@ -368,13 +388,59 @@ export class LocalCommandExecutor implements AgentExecutionPort {
       if (timeoutMs < 100 || maxOutputBytes < 1024 || maxOutputBytes > MAX_OUTPUT_BYTES) {
         throw new HostExecutionError("Plan step limits are outside the host policy.");
       }
-      const observation = await this.runCommand(task.entity_id, workspace, step, {
-        timeoutMs,
-        maxOutputBytes,
-        controller,
-      });
+      if (ledger !== undefined && execution !== undefined) {
+        ledger.beginStep(execution.execution_id, {
+          step_index: index,
+          step_count: intent.steps.length,
+          ...(step.action_id === undefined ? {} : { action_id: step.action_id }),
+          argv_sha256: digest(JSON.stringify(step.argv)),
+        });
+      }
+      let observation: CommandObservation;
+      try {
+        observation = await this.runCommand(task.entity_id, workspace, step, {
+          timeoutMs,
+          maxOutputBytes,
+          controller,
+          ...(ledger === undefined || execution === undefined
+            ? {}
+            : { stepIndex: index, executionId: execution.execution_id, ledger }),
+        });
+      } catch (error) {
+        if (ledger !== undefined && execution !== undefined) {
+          try {
+            ledger.failStep(
+              execution.execution_id,
+              index,
+              error instanceof TaskCancelledError
+                ? "task_cancelled"
+                : error instanceof Error && error.name.length > 0
+                  ? error.name.replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 120)
+                  : "execution_failed",
+            );
+          } catch {
+            // A cancellation or competing terminal transition already closed the step;
+            // the original execution error remains the authoritative failure.
+          }
+        }
+        throw error;
+      }
       first ??= observation;
-      stepEvidence.push(planStepEvidence(stepEvidence.length, observation));
+      const evidenceLine = planStepEvidence(stepEvidence.length, observation);
+      if (ledger !== undefined && execution !== undefined) {
+        ledger.completeStep(execution.execution_id, index, {
+          cwd_sha256: digest(observation.cwd),
+          provider: observation.result.provider,
+          assurance: observation.result.assurance,
+          exit_code: observation.result.exitCode,
+          duration_ms: observation.result.durationMs,
+          stdout_sha256: digest(observation.result.stdout),
+          stderr_sha256: digest(observation.result.stderr),
+          output_truncated: observation.result.truncated,
+          sandbox_evidence_sha256: digest(evidenceLine),
+        });
+      }
+      stepEvidence.push(evidenceLine);
     }
 
     if (first === undefined) {
@@ -418,12 +484,34 @@ export class LocalCommandExecutor implements AgentExecutionPort {
     taskId: string,
     workspace: string,
     command: CommandIntent,
-    options: { timeoutMs: number; maxOutputBytes: number; controller: AbortController },
+    options: {
+      timeoutMs: number;
+      maxOutputBytes: number;
+      controller: AbortController;
+      stepIndex?: number;
+      executionId?: string;
+      ledger?: ExecutionLedger;
+    },
   ): Promise<CommandObservation> {
     const cwd = this.workspaces.resolveCwd(workspace, command.cwd);
     const quota = new WorkspaceQuotaGuard(workspace, this.config.workspace_max_bytes, () =>
       options.controller.abort(),
     );
+    const onProcessGroup =
+      options.ledger === undefined ||
+      options.executionId === undefined ||
+      options.stepIndex === undefined
+        ? undefined
+        : (pid: number): void => {
+            const startToken = processStartToken(pid);
+            options.ledger?.recordProcessGroup(options.executionId as string, {
+              step_index: options.stepIndex as number,
+              pid,
+              process_group: pid,
+              provider: this.provider.id,
+              ...(startToken === undefined ? {} : { start_token: startToken }),
+            });
+          };
     let result: SandboxResult;
     try {
       quota.start();
@@ -435,6 +523,7 @@ export class LocalCommandExecutor implements AgentExecutionPort {
         maxOutputBytes: options.maxOutputBytes,
         env: filterEnvironment(command.env),
         signal: options.controller.signal,
+        ...(onProcessGroup === undefined ? {} : { onProcessGroup }),
       });
     } finally {
       quota.stop();

@@ -4,9 +4,18 @@ import { type AppendOnlyJournal, JournalError } from "./journal.js";
 const MAX_EVIDENCE_ITEMS = 8;
 const MAX_EVIDENCE_LENGTH = 300;
 const MAX_REASON_LENGTH = 120;
+const MAX_PLAN_STEPS = 8;
+const SHA256 = /^[a-f0-9]{64}$/;
 
 export type ExecutionState = "running" | "completed" | "failed" | "cancelled" | "interrupted";
 export type ExecutionAttemptKind = "initial" | "resume" | "retry";
+export type ExecutionStepState = "started" | "completed" | "failed" | "interrupted";
+export type ProcessReapOutcome =
+  | "killed"
+  | "already_gone"
+  | "identity_mismatch"
+  | "identity_unavailable"
+  | "kill_failed";
 
 export interface ExecutionRecord {
   execution_id: string;
@@ -25,6 +34,98 @@ export interface ExecutionRecord {
   reason_code?: string;
   evidence: string[];
   revision: number;
+}
+
+/**
+ * Durable progress for one `local_plan` step, recorded in the same execution journal.
+ * A step is `started` before the provider is invoked and becomes terminal only from the
+ * host's own observation of the actual command result. Recovery never upgrades a started
+ * step to completed.
+ */
+export interface ExecutionStepRecord {
+  execution_id: string;
+  task_id: string;
+  /** Zero-based, contiguous within one execution attempt. */
+  step_index: number;
+  /** Total steps in the immutable Task plan. */
+  step_count: number;
+  action_id?: string;
+  state: ExecutionStepState;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string;
+  reason_code?: string;
+  argv_sha256: string;
+  cwd_sha256?: string;
+  provider?: string;
+  assurance?: string;
+  exit_code?: number | null;
+  duration_ms?: number;
+  stdout_sha256?: string;
+  stderr_sha256?: string;
+  output_truncated?: boolean;
+  sandbox_evidence_sha256?: string;
+  revision: number;
+}
+
+/**
+ * A sandbox process group recorded immediately after spawn, so a later host boot can
+ * terminate a process tree that outlived a SIGKILLed host. PID identity includes the
+ * Linux boot/start-time token and is checked before signalling to avoid killing a reused
+ * PID. Providers that cannot expose a process group record the attempt as unsupported.
+ */
+export interface ExecutionProcessRecord {
+  execution_id: string;
+  task_id: string;
+  step_index: number;
+  pid: number;
+  process_group: number;
+  /** `boot_id:starttime` from `/proc`, when the host can prove PID identity. */
+  start_token?: string;
+  provider: string;
+  recorded_at: string;
+  reaped_at?: string;
+  reap_outcome?: ProcessReapOutcome;
+  revision: number;
+}
+
+/**
+ * Recovery tombstone for an attempt that reached executor completion but never reached a
+ * committed Task state. It does not rewrite the immutable completed record; it makes the
+ * attempt non-verifiable and forces a new, linked attempt for any further work.
+ */
+export interface ExecutionRecoveryRecord {
+  execution_id: string;
+  task_id: string;
+  outcome: "interrupted";
+  reason_code: string;
+  evidence: string[];
+  recorded_at: string;
+  revision: 1;
+}
+
+export interface WorkspaceRecoveryEvidence {
+  task_id: string;
+  workspace_sha256: string;
+  entries: number;
+  bytes: number;
+  removed: boolean;
+  /** True when the content hash cap was reached; metadata is still fully traversed. */
+  truncated?: boolean;
+}
+
+export interface ProcessReapSummary {
+  killed: number;
+  alreadyGone: number;
+  identityMismatch: number;
+  identityUnavailable: number;
+  failed: number;
+}
+
+export interface ExecutionReconciliation {
+  interrupted: ExecutionRecord[];
+  interruptedSteps: ExecutionStepRecord[];
+  uncommitted: ExecutionRecoveryRecord[];
 }
 
 export interface StartExecutionRequest {
@@ -50,6 +151,47 @@ export interface CancelledExecution {
   record: ExecutionRecord;
   /** False when the Task already had a terminal cancellation record. */
   changed: boolean;
+}
+
+export interface BeginExecutionStepRequest {
+  step_index: number;
+  step_count: number;
+  action_id?: string;
+  argv_sha256: string;
+}
+
+export interface CompleteExecutionStepRequest {
+  cwd_sha256: string;
+  provider: string;
+  assurance: string;
+  exit_code: number | null;
+  duration_ms: number;
+  stdout_sha256: string;
+  stderr_sha256: string;
+  output_truncated: boolean;
+  /** Digest of the provider's filter/limit/boundary proof, not the proof itself. */
+  sandbox_evidence_sha256: string;
+}
+
+export interface RecordExecutionProcessRequest {
+  step_index: number;
+  pid: number;
+  process_group: number;
+  start_token?: string;
+  provider: string;
+}
+
+export interface ExecutionReconcileOptions {
+  now?: Date;
+  /** Current canonical Task lifecycle, used to detect an uncommitted completion. */
+  taskLifecycle?: (taskId: string) => string | undefined;
+  /** Workspace manifests captured before orphan cleanup. */
+  workspaceEvidence?: ReadonlyMap<string, WorkspaceRecoveryEvidence>;
+}
+
+/** Late-bound reference used to compose an executor before the runtime ledger exists. */
+export interface ExecutionLedgerRef {
+  current?: ExecutionLedger;
 }
 
 export class ExecutionConflictError extends Error {
@@ -116,6 +258,181 @@ function normalizeReason(reason: string): string {
     throw new ExecutionConflictError("Execution reason code must be a bounded non-empty string.");
   }
   return reason;
+}
+
+function requireDigest(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA256.test(value)) {
+    throw new ExecutionConflictError(`${label} must be a SHA-256 hex digest.`);
+  }
+  return value;
+}
+
+function isStepState(value: unknown): value is ExecutionStepState {
+  return (
+    value === "started" || value === "completed" || value === "failed" || value === "interrupted"
+  );
+}
+
+function validateStep(value: unknown): ExecutionStepRecord {
+  if (
+    !isRecord(value) ||
+    typeof value.execution_id !== "string" ||
+    value.execution_id.length === 0 ||
+    typeof value.task_id !== "string" ||
+    value.task_id.length === 0 ||
+    !Number.isSafeInteger(value.step_index) ||
+    (value.step_index as number) < 0 ||
+    (value.step_index as number) >= MAX_PLAN_STEPS ||
+    !Number.isSafeInteger(value.step_count) ||
+    (value.step_count as number) < 1 ||
+    (value.step_count as number) > MAX_PLAN_STEPS ||
+    (value.step_index as number) >= (value.step_count as number) ||
+    !(
+      value.action_id === undefined ||
+      (typeof value.action_id === "string" &&
+        value.action_id.length > 0 &&
+        value.action_id.length <= 200)
+    ) ||
+    !isStepState(value.state) ||
+    !isIsoTimestamp(value.started_at) ||
+    !isIsoTimestamp(value.updated_at) ||
+    !(value.finished_at === undefined || isIsoTimestamp(value.finished_at)) ||
+    !(
+      value.reason_code === undefined ||
+      (typeof value.reason_code === "string" &&
+        value.reason_code.length > 0 &&
+        value.reason_code.length <= MAX_REASON_LENGTH)
+    ) ||
+    typeof value.argv_sha256 !== "string" ||
+    !SHA256.test(value.argv_sha256) ||
+    !(
+      value.cwd_sha256 === undefined ||
+      (typeof value.cwd_sha256 === "string" && SHA256.test(value.cwd_sha256))
+    ) ||
+    !(
+      value.provider === undefined ||
+      (typeof value.provider === "string" && value.provider.length <= 80)
+    ) ||
+    !(
+      value.assurance === undefined ||
+      (typeof value.assurance === "string" && value.assurance.length <= 80)
+    ) ||
+    !(
+      value.exit_code === undefined ||
+      value.exit_code === null ||
+      Number.isSafeInteger(value.exit_code)
+    ) ||
+    !(
+      value.duration_ms === undefined ||
+      (Number.isSafeInteger(value.duration_ms) && (value.duration_ms as number) >= 0)
+    ) ||
+    !(
+      value.stdout_sha256 === undefined ||
+      (typeof value.stdout_sha256 === "string" && SHA256.test(value.stdout_sha256))
+    ) ||
+    !(
+      value.stderr_sha256 === undefined ||
+      (typeof value.stderr_sha256 === "string" && SHA256.test(value.stderr_sha256))
+    ) ||
+    !(value.output_truncated === undefined || typeof value.output_truncated === "boolean") ||
+    !(
+      value.sandbox_evidence_sha256 === undefined ||
+      (typeof value.sandbox_evidence_sha256 === "string" &&
+        SHA256.test(value.sandbox_evidence_sha256))
+    ) ||
+    !Number.isSafeInteger(value.revision) ||
+    (value.revision as number) < 1
+  ) {
+    throw new JournalError("Operational journal contains an invalid execution step record.");
+  }
+  if (value.state === "started" && value.finished_at !== undefined) {
+    throw new JournalError("Operational journal contains a started step with a finish time.");
+  }
+  if (value.state !== "started" && value.finished_at === undefined) {
+    throw new JournalError("Operational journal contains a terminal step without a finish time.");
+  }
+  if (
+    value.state === "completed" &&
+    (value.cwd_sha256 === undefined ||
+      value.provider === undefined ||
+      value.assurance === undefined ||
+      value.exit_code !== 0 ||
+      value.duration_ms === undefined ||
+      value.stdout_sha256 === undefined ||
+      value.stderr_sha256 === undefined ||
+      typeof value.output_truncated !== "boolean" ||
+      value.sandbox_evidence_sha256 === undefined)
+  ) {
+    throw new JournalError("Operational journal contains an incomplete completed step record.");
+  }
+  return structuredClone(value as unknown as ExecutionStepRecord);
+}
+
+function isReapOutcome(value: unknown): value is ProcessReapOutcome {
+  return (
+    value === "killed" ||
+    value === "already_gone" ||
+    value === "identity_mismatch" ||
+    value === "identity_unavailable" ||
+    value === "kill_failed"
+  );
+}
+
+function validateProcess(value: unknown): ExecutionProcessRecord {
+  if (
+    !isRecord(value) ||
+    typeof value.execution_id !== "string" ||
+    value.execution_id.length === 0 ||
+    typeof value.task_id !== "string" ||
+    value.task_id.length === 0 ||
+    !Number.isSafeInteger(value.step_index) ||
+    (value.step_index as number) < 0 ||
+    (value.step_index as number) >= MAX_PLAN_STEPS ||
+    !Number.isSafeInteger(value.pid) ||
+    (value.pid as number) < 1 ||
+    value.process_group !== value.pid ||
+    !(
+      value.start_token === undefined ||
+      (typeof value.start_token === "string" &&
+        value.start_token.length > 0 &&
+        value.start_token.length <= 200)
+    ) ||
+    typeof value.provider !== "string" ||
+    value.provider.length === 0 ||
+    value.provider.length > 80 ||
+    !isIsoTimestamp(value.recorded_at) ||
+    !(value.reaped_at === undefined || isIsoTimestamp(value.reaped_at)) ||
+    !(value.reap_outcome === undefined || isReapOutcome(value.reap_outcome)) ||
+    !Number.isSafeInteger(value.revision) ||
+    (value.revision as number) < 1
+  ) {
+    throw new JournalError("Operational journal contains an invalid execution process record.");
+  }
+  return structuredClone(value as unknown as ExecutionProcessRecord);
+}
+
+function validateRecovery(value: unknown): ExecutionRecoveryRecord {
+  if (
+    !isRecord(value) ||
+    typeof value.execution_id !== "string" ||
+    value.execution_id.length === 0 ||
+    typeof value.task_id !== "string" ||
+    value.task_id.length === 0 ||
+    value.outcome !== "interrupted" ||
+    typeof value.reason_code !== "string" ||
+    value.reason_code.length === 0 ||
+    value.reason_code.length > MAX_REASON_LENGTH ||
+    !Array.isArray(value.evidence) ||
+    value.evidence.length > MAX_EVIDENCE_ITEMS ||
+    value.evidence.some(
+      (item) => typeof item !== "string" || item.length === 0 || item.length > MAX_EVIDENCE_LENGTH,
+    ) ||
+    !isIsoTimestamp(value.recorded_at) ||
+    value.revision !== 1
+  ) {
+    throw new JournalError("Operational journal contains an invalid execution recovery record.");
+  }
+  return structuredClone(value as unknown as ExecutionRecoveryRecord);
 }
 
 /**
@@ -234,6 +551,12 @@ export class ExecutionLedger {
   private readonly records = new Map<string, ExecutionRecord>();
   /** Ordered attempt IDs per Task. The last entry is the latest attempt. */
   private readonly byTask = new Map<string, string[]>();
+  /** Ordered step records per execution attempt. */
+  private readonly steps = new Map<string, ExecutionStepRecord[]>();
+  /** Recorded sandbox process groups per execution attempt. */
+  private readonly processes = new Map<string, ExecutionProcessRecord[]>();
+  /** At most one recovery tombstone per attempt. */
+  private readonly recoveries = new Map<string, ExecutionRecoveryRecord>();
 
   constructor(private readonly journal: AppendOnlyJournal) {}
 
@@ -383,21 +706,343 @@ export class ExecutionLedger {
   }
 
   /**
-   * Startup reconciliation: a `running` record from a previous process cannot still be
-   * executing. It becomes `interrupted`, never `completed`, exactly once. The caller uses
-   * the returned Task/Workflow references to suspend their canonical lifecycle state.
+   * Starts one plan step before any provider invocation. A step cannot be skipped,
+   * reordered, or started after a predecessor failed or was interrupted.
    */
-  reconcile(now: Date = new Date()): ExecutionRecord[] {
+  beginStep(
+    executionId: string,
+    request: BeginExecutionStepRequest,
+    now: Date = new Date(),
+  ): ExecutionStepRecord {
+    const execution = this.requireRunning(assertIdentifier(executionId, "Execution ID"));
+    if (
+      !Number.isSafeInteger(request.step_index) ||
+      request.step_index < 0 ||
+      !Number.isSafeInteger(request.step_count) ||
+      request.step_count < 1 ||
+      request.step_count > MAX_PLAN_STEPS ||
+      request.step_index >= request.step_count
+    ) {
+      throw new ExecutionConflictError("Execution step bounds are invalid.");
+    }
+    if (
+      request.action_id !== undefined &&
+      (typeof request.action_id !== "string" ||
+        request.action_id.length === 0 ||
+        request.action_id.length > 200)
+    ) {
+      throw new ExecutionConflictError("Execution step Action binding is invalid.");
+    }
+    const steps = this.steps.get(execution.execution_id) ?? [];
+    if (request.step_index !== steps.length) {
+      throw new ExecutionConflictError(
+        "Execution plan steps must start contiguously and in order.",
+      );
+    }
+    const previous = steps.at(-1);
+    if (previous !== undefined && previous.state !== "completed") {
+      throw new ExecutionConflictError("A plan step cannot start after an incomplete predecessor.");
+    }
+    if (previous !== undefined && previous.step_count !== request.step_count) {
+      throw new ExecutionConflictError("Execution plan step count cannot change.");
+    }
+    const timestamp = now.toISOString();
+    const record: ExecutionStepRecord = {
+      execution_id: execution.execution_id,
+      task_id: execution.task_id,
+      step_index: request.step_index,
+      step_count: request.step_count,
+      ...(request.action_id === undefined ? {} : { action_id: request.action_id }),
+      state: "started",
+      started_at: timestamp,
+      updated_at: timestamp,
+      argv_sha256: requireDigest(request.argv_sha256, "Step argv digest"),
+      revision: 1,
+    };
+    this.persistStep(record);
+    return structuredClone(record);
+  }
+
+  /** Records the host's actual observation of a successful step. */
+  completeStep(
+    executionId: string,
+    stepIndex: number,
+    request: CompleteExecutionStepRequest,
+    now: Date = new Date(),
+  ): ExecutionStepRecord {
+    const execution = this.requireRunning(assertIdentifier(executionId, "Execution ID"));
+    const record = this.requireStartedStep(execution.execution_id, stepIndex);
+    if (
+      request.exit_code !== 0 ||
+      typeof request.output_truncated !== "boolean" ||
+      !Number.isSafeInteger(request.duration_ms) ||
+      request.duration_ms < 0 ||
+      typeof request.provider !== "string" ||
+      request.provider.length === 0 ||
+      request.provider.length > 80 ||
+      typeof request.assurance !== "string" ||
+      request.assurance.length === 0 ||
+      request.assurance.length > 80
+    ) {
+      throw new ExecutionConflictError(
+        "Only a complete, zero-exit observation can complete a step.",
+      );
+    }
+    const updated: ExecutionStepRecord = {
+      ...record,
+      state: "completed",
+      updated_at: now.toISOString(),
+      finished_at: now.toISOString(),
+      cwd_sha256: requireDigest(request.cwd_sha256, "Step cwd digest"),
+      provider: request.provider,
+      assurance: request.assurance,
+      exit_code: 0,
+      duration_ms: request.duration_ms,
+      stdout_sha256: requireDigest(request.stdout_sha256, "Step stdout digest"),
+      stderr_sha256: requireDigest(request.stderr_sha256, "Step stderr digest"),
+      output_truncated: request.output_truncated,
+      sandbox_evidence_sha256: requireDigest(
+        request.sandbox_evidence_sha256,
+        "Step sandbox evidence digest",
+      ),
+      revision: record.revision + 1,
+    };
+    this.persistStep(updated);
+    return structuredClone(updated);
+  }
+
+  /** Records a failed step without copying an exception message or output. */
+  failStep(
+    executionId: string,
+    stepIndex: number,
+    reasonCode: string,
+    now: Date = new Date(),
+  ): ExecutionStepRecord {
+    const execution = this.requireRunning(assertIdentifier(executionId, "Execution ID"));
+    const record = this.requireStartedStep(execution.execution_id, stepIndex);
+    const updated: ExecutionStepRecord = {
+      ...record,
+      state: "failed",
+      updated_at: now.toISOString(),
+      finished_at: now.toISOString(),
+      reason_code: normalizeReason(reasonCode),
+      revision: record.revision + 1,
+    };
+    this.persistStep(updated);
+    return structuredClone(updated);
+  }
+
+  getStep(executionId: string, stepIndex: number): ExecutionStepRecord | undefined {
+    const record = (this.steps.get(executionId) ?? []).find(
+      (candidate) => candidate.step_index === stepIndex,
+    );
+    return record === undefined ? undefined : structuredClone(record);
+  }
+
+  stepsFor(executionId: string): ExecutionStepRecord[] {
+    return (this.steps.get(executionId) ?? []).map((record) => structuredClone(record));
+  }
+
+  listSteps(): ExecutionStepRecord[] {
+    return [...this.steps.values()].flat().map((record) => structuredClone(record));
+  }
+
+  /**
+   * Records the process group of a provider invocation immediately after spawn. The
+   * callback is best-effort: an identity that cannot be captured is still recorded as
+   * unavailable, and recovery will not signal a PID it cannot prove.
+   */
+  recordProcessGroup(
+    executionId: string,
+    request: RecordExecutionProcessRequest,
+    now: Date = new Date(),
+  ): ExecutionProcessRecord {
+    const execution = this.requireRunning(assertIdentifier(executionId, "Execution ID"));
+    if (
+      !Number.isSafeInteger(request.pid) ||
+      request.pid < 1 ||
+      request.process_group !== request.pid ||
+      typeof request.provider !== "string" ||
+      request.provider.length === 0 ||
+      request.provider.length > 80 ||
+      (request.start_token !== undefined &&
+        (typeof request.start_token !== "string" ||
+          request.start_token.length === 0 ||
+          request.start_token.length > 200))
+    ) {
+      throw new ExecutionConflictError("Execution process identity is invalid.");
+    }
+    const step = this.getStep(execution.execution_id, request.step_index);
+    if (step === undefined || step.state !== "started") {
+      throw new ExecutionConflictError(
+        "An execution process can be recorded only for a started plan step.",
+      );
+    }
+    const existing = (this.processes.get(execution.execution_id) ?? []).find(
+      (candidate) => candidate.step_index === request.step_index,
+    );
+    if (existing !== undefined) {
+      if (existing.pid === request.pid) return structuredClone(existing);
+      throw new ExecutionConflictError("A plan step already recorded a different process group.");
+    }
+    const record: ExecutionProcessRecord = {
+      execution_id: execution.execution_id,
+      task_id: execution.task_id,
+      step_index: request.step_index,
+      pid: request.pid,
+      process_group: request.process_group,
+      ...(request.start_token === undefined ? {} : { start_token: request.start_token }),
+      provider: request.provider,
+      recorded_at: now.toISOString(),
+      revision: 1,
+    };
+    this.persistProcess(record);
+    return structuredClone(record);
+  }
+
+  processesFor(executionId: string): ExecutionProcessRecord[] {
+    return (this.processes.get(executionId) ?? []).map((record) => structuredClone(record));
+  }
+
+  listProcesses(): ExecutionProcessRecord[] {
+    return [...this.processes.values()].flat().map((record) => structuredClone(record));
+  }
+
+  markProcessReaped(
+    executionId: string,
+    pid: number,
+    outcome: ProcessReapOutcome,
+    now: Date = new Date(),
+  ): ExecutionProcessRecord {
+    const record = (this.processes.get(executionId) ?? []).find(
+      (candidate) => candidate.pid === pid,
+    );
+    if (record === undefined) {
+      throw new ExecutionConflictError("Execution process record was not found.");
+    }
+    if (record.reaped_at !== undefined) return structuredClone(record);
+    const updated: ExecutionProcessRecord = {
+      ...record,
+      reaped_at: now.toISOString(),
+      reap_outcome: outcome,
+      revision: record.revision + 1,
+    };
+    this.persistProcess(updated);
+    return structuredClone(updated);
+  }
+
+  /**
+   * Recovery tombstone for a completed attempt whose Task never reached a committed
+   * terminal lifecycle. It never changes the immutable completed record; the verifier
+   * rejects any attempt carrying one and a new linked retry is required.
+   */
+  markUncommitted(
+    executionId: string,
+    taskLifecycle: string | undefined,
+    now: Date = new Date(),
+  ): ExecutionRecoveryRecord {
+    const execution = this.records.get(assertIdentifier(executionId, "Execution ID"));
+    if (execution === undefined) {
+      throw new ExecutionConflictError("Execution record was not found.");
+    }
+    if (execution.state !== "completed") {
+      throw new ExecutionConflictError(
+        "Only a completed executor attempt can be marked uncommitted.",
+      );
+    }
+    const existing = this.recoveries.get(execution.execution_id);
+    if (existing !== undefined) return structuredClone(existing);
+    const steps = this.steps.get(execution.execution_id) ?? [];
+    const completedSteps = steps.filter((step) => step.state === "completed").length;
+    const record: ExecutionRecoveryRecord = {
+      execution_id: execution.execution_id,
+      task_id: execution.task_id,
+      outcome: "interrupted",
+      reason_code: "host_restarted_before_terminal_commit",
+      evidence: normalizeEvidence([
+        `recovered_at:${now.toISOString()}`,
+        "recovery_reason:host_restarted_before_terminal_commit",
+        "execution_state:completed",
+        `task_lifecycle:${taskLifecycle ?? "missing"}`,
+        ...(steps.length === 0
+          ? []
+          : [
+              `plan_steps_completed:${completedSteps}`,
+              `plan_steps_total:${steps[0]?.step_count ?? steps.length}`,
+            ]),
+      ]),
+      recorded_at: now.toISOString(),
+      revision: 1,
+    };
+    this.persistRecovery(record);
+    return structuredClone(record);
+  }
+
+  recoveryFor(executionId: string): ExecutionRecoveryRecord | undefined {
+    const record = this.recoveries.get(executionId);
+    return record === undefined ? undefined : structuredClone(record);
+  }
+
+  listRecoveries(): ExecutionRecoveryRecord[] {
+    return [...this.recoveries.values()].map((record) => structuredClone(record));
+  }
+
+  /**
+   * Startup reconciliation: a `running` record from a previous process cannot still be
+   * executing. It becomes `interrupted`, never `completed`, exactly once. Plan steps that
+   * were started but not observed complete become `interrupted`; completed steps stay
+   * immutable. A latest `completed` executor attempt whose Task never reached a terminal
+   * committed state gets a recovery tombstone and is never accepted by the verifier.
+   */
+  reconcile(options: ExecutionReconcileOptions | Date = {}): ExecutionReconciliation {
+    const opts = options instanceof Date ? { now: options } : options;
+    const now = opts.now ?? new Date();
     const interrupted: ExecutionRecord[] = [];
-    for (const record of this.records.values()) {
+    const interruptedSteps: ExecutionStepRecord[] = [];
+    const uncommitted: ExecutionRecoveryRecord[] = [];
+    const latestIds = new Set(
+      [...this.byTask.values()]
+        .map((ids) => ids.at(-1))
+        .filter((id): id is string => id !== undefined),
+    );
+
+    for (const record of [...this.records.values()]) {
       if (record.state !== "running") continue;
+      const executionSteps = this.steps.get(record.execution_id) ?? [];
+      for (const step of executionSteps) {
+        if (step.state !== "started") continue;
+        interruptedSteps.push(this.interruptStep(step, now));
+      }
+      const completedSteps = executionSteps.filter((step) => step.state === "completed").length;
+      const workspace = opts.workspaceEvidence?.get(record.task_id);
       interrupted.push(
         this.transition(record, "interrupted", now, "host_restarted", [
           `recovered_at:${now.toISOString()}`,
+          "interruption_reason:host_restarted",
+          ...(executionSteps.length === 0
+            ? []
+            : [
+                `plan_steps_completed:${completedSteps}`,
+                `plan_steps_total:${executionSteps[0]?.step_count ?? executionSteps.length}`,
+              ]),
+          ...(workspace === undefined
+            ? []
+            : [`workspace_manifest_sha256:${workspace.workspace_sha256}`]),
         ]),
       );
     }
-    return interrupted;
+
+    if (opts.taskLifecycle !== undefined) {
+      for (const record of [...this.records.values()]) {
+        if (record.state !== "completed" || !latestIds.has(record.execution_id)) continue;
+        if (this.recoveries.has(record.execution_id)) continue;
+        const lifecycle = opts.taskLifecycle(record.task_id);
+        if (lifecycle === "completed" || lifecycle === "archived") continue;
+        uncommitted.push(this.markUncommitted(record.execution_id, lifecycle, now));
+      }
+    }
+
+    return { interrupted, interruptedSteps, uncommitted };
   }
 
   /**
@@ -471,6 +1116,100 @@ export class ExecutionLedger {
     this.byTask.set(record.task_id, [...attempts, record.execution_id]);
   }
 
+  /** Journal replay only. Step records must be contiguous and belong to a known attempt. */
+  restoreStep(value: unknown): void {
+    const record = validateStep(value);
+    const execution = this.records.get(record.execution_id);
+    if (execution === undefined || execution.task_id !== record.task_id) {
+      throw new JournalError("Operational journal contains a step without its execution attempt.");
+    }
+    const steps = this.steps.get(record.execution_id) ?? [];
+    const current = steps[record.step_index];
+    if (current === undefined) {
+      if (record.step_index !== steps.length) {
+        throw new JournalError("Operational journal contains non-contiguous execution steps.");
+      }
+      if (steps[0] !== undefined && steps[0].step_count !== record.step_count) {
+        throw new JournalError("Operational journal changed an execution plan step count.");
+      }
+      steps.push(record);
+      this.steps.set(record.execution_id, steps);
+      return;
+    }
+    if (record.revision <= current.revision) {
+      throw new JournalError("Operational journal contains a non-monotonic execution step record.");
+    }
+    if (
+      current.state !== "started" ||
+      current.step_count !== record.step_count ||
+      current.action_id !== record.action_id ||
+      current.argv_sha256 !== record.argv_sha256
+    ) {
+      throw new JournalError("Operational journal changed immutable execution step identity.");
+    }
+    if (record.state === "started") {
+      throw new JournalError("Operational journal contains a second started step revision.");
+    }
+    steps[record.step_index] = record;
+  }
+
+  /** Journal replay only. */
+  restoreProcess(value: unknown): void {
+    const record = validateProcess(value);
+    const execution = this.records.get(record.execution_id);
+    const step = this.getStep(record.execution_id, record.step_index);
+    if (execution === undefined || step === undefined || execution.task_id !== record.task_id) {
+      throw new JournalError(
+        "Operational journal contains a process record without its execution step.",
+      );
+    }
+    const processes = this.processes.get(record.execution_id) ?? [];
+    const index = processes.findIndex((candidate) => candidate.pid === record.pid);
+    if (index < 0) {
+      if (processes.some((candidate) => candidate.step_index === record.step_index)) {
+        throw new JournalError(
+          "Operational journal contains two process groups for one execution step.",
+        );
+      }
+      processes.push(record);
+      this.processes.set(record.execution_id, processes);
+      return;
+    }
+    const current = processes[index];
+    if (current === undefined || record.revision <= current.revision) {
+      throw new JournalError("Operational journal contains a non-monotonic process record.");
+    }
+    if (
+      current.process_group !== record.process_group ||
+      current.start_token !== record.start_token ||
+      current.provider !== record.provider ||
+      (current.reaped_at !== undefined &&
+        (record.reaped_at !== current.reaped_at || record.reap_outcome !== current.reap_outcome))
+    ) {
+      throw new JournalError("Operational journal changed an execution process identity.");
+    }
+    processes[index] = record;
+  }
+
+  /** Journal replay only. At most one recovery tombstone exists per attempt. */
+  restoreRecovery(value: unknown): void {
+    const record = validateRecovery(value);
+    const execution = this.records.get(record.execution_id);
+    if (
+      execution === undefined ||
+      execution.task_id !== record.task_id ||
+      execution.state !== "completed"
+    ) {
+      throw new JournalError(
+        "Operational journal contains a recovery record without a completed execution attempt.",
+      );
+    }
+    if (this.recoveries.has(record.execution_id)) {
+      throw new JournalError("Operational journal contains a duplicate execution recovery record.");
+    }
+    this.recoveries.set(record.execution_id, record);
+  }
+
   private append(
     request: StartExecutionRequest,
     attemptKind: ExecutionAttemptKind,
@@ -516,6 +1255,33 @@ export class ExecutionLedger {
     return record;
   }
 
+  private requireStartedStep(executionId: string, stepIndex: number): ExecutionStepRecord {
+    if (!Number.isSafeInteger(stepIndex) || stepIndex < 0) {
+      throw new ExecutionConflictError("Execution step index is invalid.");
+    }
+    const record = this.getStep(executionId, stepIndex);
+    if (record === undefined) {
+      throw new ExecutionConflictError("Execution step was not started.");
+    }
+    if (record.state !== "started") {
+      throw new ExecutionConflictError("Execution step is already terminal.");
+    }
+    return record;
+  }
+
+  private interruptStep(step: ExecutionStepRecord, now: Date): ExecutionStepRecord {
+    const updated: ExecutionStepRecord = {
+      ...step,
+      state: "interrupted",
+      updated_at: now.toISOString(),
+      finished_at: now.toISOString(),
+      reason_code: "host_restarted",
+      revision: step.revision + 1,
+    };
+    this.persistStep(updated);
+    return structuredClone(updated);
+  }
+
   private transition(
     record: ExecutionRecord,
     state: ExecutionState,
@@ -542,6 +1308,27 @@ export class ExecutionLedger {
     const attempts = this.byTask.get(record.task_id) ?? [];
     if (attempts.at(-1) !== record.execution_id) attempts.push(record.execution_id);
     this.byTask.set(record.task_id, attempts);
+  }
+
+  private persistStep(record: ExecutionStepRecord): void {
+    this.journal.append("execution_step", record);
+    const steps = this.steps.get(record.execution_id) ?? [];
+    steps[record.step_index] = record;
+    this.steps.set(record.execution_id, steps);
+  }
+
+  private persistProcess(record: ExecutionProcessRecord): void {
+    this.journal.append("execution_process", record);
+    const processes = this.processes.get(record.execution_id) ?? [];
+    const index = processes.findIndex((candidate) => candidate.pid === record.pid);
+    if (index < 0) processes.push(record);
+    else processes[index] = record;
+    this.processes.set(record.execution_id, processes);
+  }
+
+  private persistRecovery(record: ExecutionRecoveryRecord): void {
+    this.journal.append("execution_recovery", record);
+    this.recoveries.set(record.execution_id, record);
   }
 }
 

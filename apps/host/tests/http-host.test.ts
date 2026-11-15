@@ -182,7 +182,11 @@ async function startHost(
   let sandbox: StubSandbox | undefined;
   let ledgerRef: ExecutionLedgerRef | undefined;
   let localAdapters:
-    | { execution: LocalCommandExecutor; verification: LocalCommandVerifier }
+    | {
+        execution: LocalCommandExecutor;
+        verification: LocalCommandVerifier;
+        workspaces: RunWorkspaceManager;
+      }
     | undefined;
   if (localExecutionConfig) {
     sandbox = new StubSandbox();
@@ -190,7 +194,7 @@ async function startHost(
     const workspaces = new RunWorkspaceManager(executionConfig.workspace_directory);
     ledgerRef = {};
     localAdapters = {
-      execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces),
+      execution: new LocalCommandExecutor(executionConfig, sandbox, workspaces, ledgerRef),
       verification: new LocalCommandVerifier(
         executionConfig,
         sandbox,
@@ -198,6 +202,7 @@ async function startHost(
         ledgerRef,
         options.verifierSigner,
       ),
+      workspaces,
     };
   }
   const runtime = createHostRuntime({
@@ -1636,6 +1641,66 @@ describe("trusted host HTTP surface", () => {
     expect(third.runtime.recoveredExecutions).toEqual([]);
     expect(third.runtime.executions.getForTask(task.entity_id)?.state).toBe("interrupted");
     expect(third.runtime.executions.list()).toHaveLength(1);
+  });
+
+  it("tombstones a completed attempt that never committed its Task and exposes the reason", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "aios-host-uncommitted-"));
+    const task = makeTask({
+      execution: { kind: "local_command", argv: ["/bin/echo", "completed but uncommitted"] },
+      verification: { kind: "local_command", argv: ["/bin/true"] },
+      assigned_agent: AGENT_ID,
+    });
+    const workflow = makeWorkflow([task.entity_id]);
+    const ownedTask = { ...task, assigned_workflow: workflow.entity_id } as TaskEntity;
+
+    const first = await startHost({
+      policy: makePolicy(task.entity_id, workflow.entity_id),
+      withAdapters: true,
+      directory,
+    });
+    expect((await intake(first, "task", ownedTask)).status).toBe(201);
+    expect((await intake(first, "workflow", workflow)).status).toBe(201);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, "validated", FOUNDER);
+    first.runtime.taskStore.transitionTaskLifecycle(task.entity_id, "active", FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, "validated", FOUNDER);
+    first.runtime.workflowStore.transitionLifecycle(workflow.entity_id, "active", FOUNDER);
+    const execution = first.runtime.executions.start({
+      task_id: task.entity_id,
+      workflow_id: workflow.entity_id,
+      agent_id: AGENT_ID,
+    });
+    first.runtime.executions.complete(execution.execution_id, [
+      `bound_result_sha256:${"a".repeat(64)}`,
+    ]);
+
+    // Crash before the kernel could persist verification evidence or commit the Task.
+    await first.server.close();
+    first.runtime.close();
+
+    const second = await startHost({ directory });
+    expect(second.runtime.recoveredUncommitted).toEqual([execution.execution_id]);
+    expect(second.runtime.executions.get(execution.execution_id)?.state).toBe("completed");
+    expect(second.runtime.executions.recoveryFor(execution.execution_id)).toMatchObject({
+      outcome: "interrupted",
+      reason_code: "host_restarted_before_terminal_commit",
+    });
+    expect(second.runtime.taskStore.getTask(task.entity_id)?.lifecycle_state).toBe("suspended");
+    expect(second.runtime.workflowStore.get(workflow.entity_id)?.lifecycle_state).toBe("suspended");
+
+    const attempts = await taskAttemptsRequest(second, task.entity_id);
+    expect(attempts.status).toBe(200);
+    const history = attempts.body?.attempts as Array<Record<string, unknown>>;
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      execution_id: execution.execution_id,
+      state: "completed",
+      recovery: {
+        outcome: "interrupted",
+        reason_code: "host_restarted_before_terminal_commit",
+      },
+    });
+    const health = await call(second, "GET", "/health");
+    expect(health.body?.recovered_uncommitted_attempts).toBe(1);
   });
 
   it("resumes a crash-interrupted Workflow with a distinct attempt and no third attempt on repeat", async () => {

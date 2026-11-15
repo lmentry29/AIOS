@@ -9,6 +9,12 @@ export interface CapturedProcessOptions {
   signal?: AbortSignal;
   /** Additional inheritable file descriptors, starting at fd 3 in the child. */
   extraFds?: number[];
+  /**
+   * Receives the detached child's process-group leader immediately after spawn. Callers
+   * persist this identity so a later host boot can terminate a tree that outlived a hard
+   * crash. The callback must not throw into the spawn path.
+   */
+  onProcessGroup?: (pid: number) => void;
 }
 
 export interface CapturedProcessResult {
@@ -36,7 +42,7 @@ export function runCapturedProcess(
   args: string[],
   options: CapturedProcessOptions,
 ): Promise<CapturedProcessResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const started = Date.now();
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
@@ -76,6 +82,19 @@ export function runCapturedProcess(
         /* already exited */
       }
     };
+
+    if (child.pid !== undefined && options.onProcessGroup !== undefined) {
+      try {
+        options.onProcessGroup(child.pid);
+      } catch (error) {
+        // A process group that cannot be made durable cannot be recovered after a host
+        // crash. Fail closed: kill the fresh child and surface the tracking failure rather
+        // than run untracked work.
+        killProcessTree();
+        reject(error);
+        return;
+      }
+    }
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
