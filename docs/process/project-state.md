@@ -1,23 +1,24 @@
 # AIOS — Live Project State
 
-Last verified: 2026-11-14 on `main` at
-`de12349258b7a5157ead14cca5db81891020ade1` (PR #14). Post-merge `CI` run
-`43653953495`, `Security` run `43653953494` (both jobs), and the PR head's `conformance`
-(`43653556258`) and `schema-check` (`43653556244`) runs passed. The closed-state code audit
-remains `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); its final audit is in
+Last verified: 2026-11-15 on `main` at
+`a92ac24972acd502875e62305a9de8ad40f3734a` (PR #16). Post-merge `CI` run
+`43657695415`, `Security` run `43657695456` (both jobs, including the live bubblewrap
+boundary), and the PR head's `conformance` (`43657332363`) and secret-scan
+(`43657332393`) runs passed. The closed-state code audit remains
+`d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); its final audit is in
 [`docs/security/final-audit-2026-11-14.md`](../security/final-audit-2026-11-14.md), with
 hosted `CI` run `43641406777` and `Security` run `43641406757`. ADR-0039 adds bounded local
-execution plans on top of that audited base; the audit itself was not re-performed.
+execution plans and ADR-0040 adds their crash recovery on top of that audited base; the
+audit itself was not re-performed.
 Historical heads below are retained as evidence; they are not current state.
 
 ## Repository and active change
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `feat/plan-crash-recovery`.
-- Active pull request: #16 (ADR-0040 plan crash recovery and dispatch-key binding). PR #14
-  (ADR-0039 bounded execution plans) is merged; PRs #1–#14 are merged except #3, which was
-  closed as obsolete.
+- Active implementation branch: `main`.
+- Active pull request: none. PR #16 (ADR-0040 plan crash recovery and dispatch-key binding)
+  is merged; PRs #1–#16 are merged except #3, which was closed as obsolete.
 - Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
   post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
@@ -46,20 +47,15 @@ Historical heads below are retained as evidence; they are not current state.
   one bounded line per step with argv/cwd/stdout/stderr hashes plus filter, limit and
   boundary claims. Raw output is never copied. Verification still runs its own command in a
   fresh invocation and binds acceptance to the durable attempt/result digest.
-- Local evidence at the ADR-0040 branch: 46/46 turbo tasks, 333 host tests passed (18
-  live-only skipped), 43/43 integration, 107/107 conformance, 359-file secret scan clean,
-  schema generation and format checks clean. The new recovery suite fails 6/6 against the
-  base `main` commit `999f573` (missing step/recovery APIs and no step/tombstone behavior)
-  and passes 6/6 on the branch. Hosted Security ran the live
-  bubblewrap two-step plan test and the existing adversarial drills successfully. The live
-  plan test skips locally when `AIOS_BWRAP_DIR` is absent rather than passing without a
-  boundary.
+- Hosted Security ran the live bubblewrap two-step plan test and the existing adversarial
+  drills successfully. The live plan test skips locally when `AIOS_BWRAP_DIR` is absent
+  rather than passing without a boundary.
 - Still absent: model-driven planning, dynamic tool selection, provider selection, multi-Agent
   coordination and aggregate cross-step resource accounting. `AgentRunner` remains a
   lifecycle/conformance harness; `LocalCommandExecutor` is the fixed-grant production
   adapter.
 
-## Plan crash recovery and idempotency (2026-11-14)
+## Plan crash recovery and idempotency (2026-11-14, merged 2026-11-15)
 
 - ADR-0040 extends the existing execution ledger with durable `execution_step` records for
   each `local_plan` step. A step is `started` before the provider is invoked and becomes
@@ -84,7 +80,12 @@ Historical heads below are retained as evidence; they are not current state.
   process at four boundaries (after step 1 before step 2, mid-step with a live child, after
   executor completion before verification, after verifier acceptance before terminal
   commit), then reopens a fresh store/kernel composition from the same directory. It also
-  tamperers a committed step record and requires the hash chain to fail closed.
+  tampers with a committed step record and requires the hash chain to fail closed.
+- Local evidence on merged `main`: 46/46 turbo tasks, 333 host tests passed (18 live-only
+  skipped), 43/43 integration, 107/107 conformance, 363-file secret scan clean, schema
+  generation and format checks clean. The recovery suite fails 6/6 against base `main`
+  `999f573` (missing step/recovery APIs and no step/tombstone behavior) and passes 6/6 on
+  the merged head.
 - Still absent: automatic recovery/redrive, workspace-content resume after a crash,
   container-specific reaping for a hard host crash, and cross-step aggregate resource
   accounting. The crash harness uses a test-only provider; production isolation remains the
