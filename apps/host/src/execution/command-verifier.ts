@@ -122,7 +122,7 @@ export class LocalCommandVerifier implements TaskVerificationPort {
     }
     await this.ensureAvailable();
     const intent = request.task.verification;
-    if (!intent || intent.kind !== "local_command") {
+    if (intent?.kind !== "local_command") {
       throw new HostExecutionError("Task has no independent local_command verification intent.");
     }
 
@@ -142,6 +142,29 @@ export class LocalCommandVerifier implements TaskVerificationPort {
         return this.rejectWithoutRunning(
           "No completed durable execution attempt exists for this Task.",
         );
+      }
+      // Startup recovery tombstones a completed executor attempt that never reached a
+      // committed Task state. The immutable attempt remains readable, but it is no longer
+      // eligible for acceptance; only a new linked retry can produce a verified result.
+      const recovery =
+        typeof ledger.recoveryFor === "function"
+          ? ledger.recoveryFor(attempt.execution_id)
+          : undefined;
+      if (recovery !== undefined) {
+        return {
+          accepted: false,
+          reason:
+            "The durable execution attempt was recovered before terminal commit and is not eligible for verification.",
+          verifier_id: this.verifier_id,
+          evidence: [
+            `verifier:${this.verifier_id}`,
+            `task:${request.task.entity_id}`,
+            `execution_id:${attempt.execution_id}`,
+            `execution_attempt:${attempt.attempt}`,
+            `recovery_reason_code:${recovery.reason_code}`,
+            `recovery_evidence_sha256:${evidenceDigest(recovery.evidence)}`,
+          ],
+        };
       }
       // A quota- or filter-stopped run is a terminal durable failure, never a success.
       // Bind the rejection to that exact attempt and its evidence, so a caller cannot

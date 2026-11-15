@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -10,6 +12,12 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { HostConfigError, HostExecutionError } from "../errors.js";
+import type { WorkspaceRecoveryEvidence } from "../persistence/execution-ledger.js";
+
+const MAX_MANIFEST_ENTRIES = 20_000;
+const MAX_HASHED_CONTENT_BYTES = 64 * 1024 * 1024;
+const MAX_SINGLE_HASHED_FILE_BYTES = 4 * 1024 * 1024;
+const TASK_WORKSPACE = /^task-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-.+$/;
 
 /**
  * Owns per-task workspaces for an execution + verification pair.
@@ -21,6 +29,7 @@ import { HostConfigError, HostExecutionError } from "../errors.js";
  */
 export class RunWorkspaceManager {
   private readonly paths = new Map<string, string>();
+  private pendingOrphans: Array<{ path: string; evidence: WorkspaceRecoveryEvidence }> = [];
 
   constructor(
     private readonly root: string,
@@ -95,6 +104,122 @@ export class RunWorkspaceManager {
   clear(): void {
     for (const path of this.paths.values()) rmSync(path, { recursive: true, force: true });
     this.paths.clear();
+  }
+
+  /**
+   * Startup inventory of workspaces left by a previous host process. There is no live
+   * execution before the server listens, so every matching directory is orphaned. The
+   * manager hashes a bounded manifest of its entries and artifact bytes but does not delete
+   * anything yet: the caller must journal the manifest first, then call `removeOrphans`.
+   *
+   * Directory names are host-generated (`task-<uuid>-<mkdtemp suffix>`); unrelated entries
+   * in the workspace root are never touched. Symlinks are not followed.
+   */
+  inventoryOrphans(): WorkspaceRecoveryEvidence[] {
+    const recovered: WorkspaceRecoveryEvidence[] = [];
+    this.pendingOrphans = [];
+    for (const entry of readdirSync(this.root, { withFileTypes: true })) {
+      const match = TASK_WORKSPACE.exec(entry.name);
+      if (!entry.isDirectory() || match === null) continue;
+      const taskId = match[1];
+      if (taskId === undefined) continue;
+      const path = join(this.root, entry.name);
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
+      const manifest = this.hashWorkspace(path);
+      const evidence: WorkspaceRecoveryEvidence = {
+        task_id: taskId,
+        workspace_sha256: manifest.sha256,
+        entries: manifest.entries,
+        bytes: manifest.bytes,
+        removed: false,
+        ...(manifest.truncated ? { truncated: true } : {}),
+      };
+      recovered.push(evidence);
+      this.pendingOrphans.push({ path, evidence });
+    }
+    this.paths.clear();
+    return recovered;
+  }
+
+  /**
+   * Removes only the directories inventoried by the immediately preceding
+   * `inventoryOrphans` call. The returned evidence repeats the manifest digest and records
+   * whether removal actually happened; a removal failure is reported, never hidden.
+   */
+  removeOrphans(): WorkspaceRecoveryEvidence[] {
+    const removed: WorkspaceRecoveryEvidence[] = [];
+    for (const orphan of this.pendingOrphans) {
+      let deleted = false;
+      try {
+        rmSync(orphan.path, { recursive: true, force: true });
+        deleted = true;
+      } catch {
+        deleted = false;
+      }
+      removed.push({ ...orphan.evidence, removed: deleted });
+    }
+    this.pendingOrphans = [];
+    return removed;
+  }
+
+  private hashWorkspace(root: string): {
+    sha256: string;
+    entries: number;
+    bytes: number;
+    truncated: boolean;
+  } {
+    const hash = createHash("sha256");
+    let entries = 0;
+    let bytes = 0;
+    let hashedContentBytes = 0;
+    let truncated = false;
+    const stack = [root];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (current === undefined) break;
+      let currentStats: ReturnType<typeof lstatSync>;
+      try {
+        currentStats = lstatSync(current);
+      } catch {
+        throw new HostExecutionError(
+          "An orphaned execution workspace disappeared during recovery.",
+        );
+      }
+      entries += 1;
+      if (entries > MAX_MANIFEST_ENTRIES) {
+        throw new HostExecutionError(
+          "An orphaned execution workspace is too large to inventory safely; refusing to delete it unreviewed.",
+        );
+      }
+      const rel = relative(root, current) || ".";
+      hash.update(`${rel}\0${currentStats.mode}\0${currentStats.size}\0`);
+      if (currentStats.isSymbolicLink()) {
+        hash.update("symlink\0");
+        continue;
+      }
+      if (currentStats.isDirectory()) {
+        hash.update("directory\0");
+        for (const name of readdirSync(current)) stack.push(join(current, name));
+        continue;
+      }
+      if (!currentStats.isFile()) {
+        hash.update("special\0");
+        continue;
+      }
+      bytes += currentStats.size;
+      if (
+        currentStats.size <= MAX_SINGLE_HASHED_FILE_BYTES &&
+        hashedContentBytes + currentStats.size <= MAX_HASHED_CONTENT_BYTES
+      ) {
+        hash.update(readFileSync(current));
+        hashedContentBytes += currentStats.size;
+      } else {
+        truncated = true;
+        hash.update("content-not-hashed\0");
+      }
+    }
+    return { sha256: hash.digest("hex"), entries, bytes, truncated };
   }
 }
 

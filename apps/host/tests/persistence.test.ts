@@ -3,7 +3,6 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { TaskEntity } from "@aios/core";
 import { JournalError } from "../src/persistence/journal.js";
 import {
   DispatchConflictError,
@@ -13,11 +12,6 @@ import { AGENT_ID, FOUNDER, makeMission, makeTask, makeWorkflow } from "./fixtur
 
 function stateDirectory(): string {
   return mkdtempSync(join(tmpdir(), "aios-operational-"));
-}
-
-function activateTask(store: DurableOperationalStore, task: TaskEntity): void {
-  store.tasks.transitionTaskLifecycle(task.entity_id, "validated", FOUNDER);
-  store.tasks.transitionTaskLifecycle(task.entity_id, "active", FOUNDER);
 }
 
 describe("durable operational state", () => {
@@ -134,6 +128,25 @@ describe("durable operational state", () => {
     );
   });
 
+  it("rejects a complete but torn record instead of resuming from a guessed chain", () => {
+    const directory = stateDirectory();
+    const first = new DurableOperationalStore({ directory });
+    first.tasks.createTask(makeTask());
+    first.close();
+
+    const journalPath = join(directory, "operational.jsonl");
+    const lines = readFileSync(journalPath, "utf8").trimEnd().split("\n");
+    const last = lines.pop();
+    if (last === undefined) throw new Error("journal is empty");
+    // A newline-terminated partial record is indistinguishable from a committed record
+    // whose bytes were lost. It must fail closed; only an unterminated tail is uncommitted.
+    writeFileSync(
+      journalPath,
+      `${[...lines, last.slice(0, Math.floor(last.length / 2))].join("\n")}\n`,
+    );
+    expect(() => new DurableOperationalStore({ directory })).toThrow(JournalError);
+  });
+
   it("discards only an interrupted tail write and keeps every committed record", () => {
     const directory = stateDirectory();
     const task = makeTask();
@@ -209,6 +222,50 @@ describe("durable dispatch runs", () => {
     expect(replay.run.run_id).toBe(started.run.run_id);
     expect(store.runs.list()).toHaveLength(1);
     expect(store.runs.list()[0]?.state).toBe("completed");
+    store.close();
+  });
+
+  it("binds an idempotency key to its first run and rejects reuse after terminal failure", () => {
+    const directory = stateDirectory();
+    const workflow = makeWorkflow([makeTask().entity_id]);
+    const store = new DurableOperationalStore({ directory, leaseMs: 5_000 });
+    store.workflows.create(workflow);
+    const key = "permanent-key-0001";
+    const first = store.runs.start({
+      workflow_id: workflow.entity_id,
+      actor_id: FOUNDER,
+      idempotency_key: key,
+    });
+    expect(() =>
+      store.runs.start({
+        workflow_id: workflow.entity_id,
+        actor_id: FOUNDER,
+        idempotency_key: key,
+      }),
+    ).toThrow(/already bound to a running dispatch run/);
+    store.runs.complete(first.run.run_id);
+    expect(
+      store.runs.start({
+        workflow_id: workflow.entity_id,
+        actor_id: FOUNDER,
+        idempotency_key: key,
+      }),
+    ).toMatchObject({ replayed: true, run: { run_id: first.run.run_id } });
+
+    const second = store.runs.start({
+      workflow_id: workflow.entity_id,
+      actor_id: FOUNDER,
+      idempotency_key: "permanent-key-0002",
+    });
+    store.runs.fail(second.run.run_id, "test_failure");
+    expect(() =>
+      store.runs.start({
+        workflow_id: workflow.entity_id,
+        actor_id: FOUNDER,
+        idempotency_key: "permanent-key-0002",
+      }),
+    ).toThrow(/already bound to a failed dispatch run/);
+    expect(store.runs.list()).toHaveLength(2);
     store.close();
   });
 
@@ -433,7 +490,7 @@ describe("durable execution attempts", () => {
       attempt_kind: "resume",
       state: "running",
     });
-    expect(second.executions.reconcile().map((record) => record.execution_id)).toEqual([
+    expect(second.executions.reconcile().interrupted.map((record) => record.execution_id)).toEqual([
       resumed.execution_id,
     ]);
     expect(second.executions.listForTask(task.entity_id)).toHaveLength(2);
@@ -444,7 +501,7 @@ describe("durable execution attempts", () => {
 
     // A second reconciliation over the same durable state appends no journal bytes.
     const bytesAfterReconciliation = readFileSync(journalPath).byteLength;
-    expect(second.executions.reconcile()).toEqual([]);
+    expect(second.executions.reconcile().interrupted).toEqual([]);
     expect(readFileSync(journalPath).byteLength).toBe(bytesAfterReconciliation);
     second.close();
 
@@ -457,7 +514,7 @@ describe("durable execution attempts", () => {
       [1, "initial", "interrupted"],
       [2, "resume", "interrupted"],
     ]);
-    expect(third.executions.reconcile()).toEqual([]);
+    expect(third.executions.reconcile().interrupted).toEqual([]);
     third.close();
   });
 });

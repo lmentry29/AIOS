@@ -45,7 +45,7 @@ export async function createLocalExecutionAdapters(
   return {
     provider,
     workspaces,
-    execution: new LocalCommandExecutor(config, provider, workspaces),
+    execution: new LocalCommandExecutor(config, provider, workspaces, ledger),
     verification: new LocalCommandVerifier(config, provider, workspaces, ledger, signer),
   };
 }

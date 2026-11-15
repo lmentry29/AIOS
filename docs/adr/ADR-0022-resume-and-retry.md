@@ -2,8 +2,8 @@
 
 ## Status
 
-**Accepted** (2026-11-10). This ADR amends ADR-0021's consequence that a retry requires a
-new Task/Workflow. It does not change ADR-0013's default-deny evaluator, ADR-0015's
+**Accepted** (2026-11-10; recovery consequence amended by ADR-0040). This ADR amends
+ADR-0021's consequence that a retry requires a new Task/Workflow. It does not change ADR-0013's default-deny evaluator, ADR-0015's
 append-only journal, ADR-0019's fixed local execution/verifier contract, or ADR-0021's
 process termination and concurrency rules.
 
@@ -226,8 +226,10 @@ attempt and revision is unchanged.
 - The API does not infer resume from a lease expiry. A lease reclaim remains an interrupted
   run requiring the same explicit authority.
 - A crash after executor success but before verification leaves the execution `completed`
-  while the Task is `suspended`. Retry is permitted for that state because the result was
-  never verified; the old completed execution remains in history.
+  while the Task is `suspended`. ADR-0040 adds a recovery tombstone with reason
+  `host_restarted_before_terminal_commit`: the attempt stays in history, the verifier rejects
+  it, and retry remains the authorized path to new work. A tombstoned attempt is not a
+  resumable `interrupted` attempt.
 - There is still no automatic retry, backoff, scheduler, or queue.
 - A journal written before ADR-0022 replays its single execution record as attempt 1 /
   `initial`. A non-contiguous or ambiguous multi-record attempt chain fails closed on replay

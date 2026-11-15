@@ -113,6 +113,12 @@ export interface SandboxRunSpec {
   env: Record<string, string>;
   /** Aborts the sandboxed work. Providers must kill the actual boundary process. */
   signal?: AbortSignal;
+  /**
+   * Receives the detached provider process-group leader immediately after spawn. The host
+   * durably records it for restart cleanup. Providers that manage a container but cannot
+   * expose its process group leave this unset and retain their normal abort cleanup.
+   */
+  onProcessGroup?: (pid: number) => void;
 }
 
 export interface SandboxFilterEvidence {
@@ -222,6 +228,7 @@ interface ProviderRunOptions {
   cwd?: string;
   signal?: AbortSignal;
   extraFds?: number[];
+  onProcessGroup?: (pid: number) => void;
 }
 
 async function spawnProvider(
@@ -236,6 +243,7 @@ async function spawnProvider(
     maxOutputBytes: options.maxOutputBytes,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.extraFds === undefined ? {} : { extraFds: options.extraFds }),
+    ...(options.onProcessGroup === undefined ? {} : { onProcessGroup: options.onProcessGroup }),
   });
   return { ...result, provider: options.id, assurance: options.assurance };
 }
@@ -509,6 +517,7 @@ class DockerSandbox implements SandboxProvider {
         maxOutputBytes: spec.maxOutputBytes,
         env: {},
         ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+        ...(spec.onProcessGroup === undefined ? {} : { onProcessGroup: spec.onProcessGroup }),
       });
       let exitCode = started.exitCode;
       if (!started.timedOut && !started.cancelled && started.spawnError === undefined) {
@@ -729,6 +738,7 @@ class BubblewrapSandbox implements SandboxProvider {
     maxOutputBytes = 1024,
     env: Record<string, string> = {},
     signal?: AbortSignal,
+    onProcessGroup?: (pid: number) => void,
   ): Promise<SandboxResult> {
     const profile = this.seccompProfile();
     const cpuSeconds = bubblewrapCpuSeconds(timeoutMs);
@@ -811,6 +821,7 @@ class BubblewrapSandbox implements SandboxProvider {
         env: {},
         ...(signal === undefined ? {} : { signal }),
         extraFds: [filterFd, markerFd],
+        ...(onProcessGroup === undefined ? {} : { onProcessGroup }),
       });
       let marker = "";
       try {
@@ -868,6 +879,7 @@ class BubblewrapSandbox implements SandboxProvider {
       spec.maxOutputBytes,
       spec.env,
       spec.signal,
+      spec.onProcessGroup,
     );
   }
 }
@@ -1161,6 +1173,7 @@ class GvisorSandbox implements SandboxProvider {
           timeoutMs: spec.timeoutMs,
           maxOutputBytes: spec.maxOutputBytes,
           ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+          ...(spec.onProcessGroup === undefined ? {} : { onProcessGroup: spec.onProcessGroup }),
         },
       );
       const stderr = result.stderr.toString("utf8");
@@ -1424,6 +1437,7 @@ class SeatbeltSandbox implements SandboxProvider {
       env: { ...spec.env, HOME: "/tmp", TMPDIR: "/tmp" },
       cwd,
       ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+      ...(spec.onProcessGroup === undefined ? {} : { onProcessGroup: spec.onProcessGroup }),
     });
   }
 }

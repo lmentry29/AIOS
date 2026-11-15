@@ -2,8 +2,9 @@
 
 ## Status
 
-**Accepted** (2026-11-14). This ADR amends ADR-0019's execution contract by allowing a
-Task to declare a bounded sequence of fixed `local.exec` steps. It does not amend
+**Accepted** (2026-11-14; recovery extended by ADR-0040). This ADR amends ADR-0019's
+execution contract by allowing a Task to declare a bounded sequence of fixed `local.exec`
+steps. It does not amend
 ADR-0012, authorize model planning, provider selection, plugin discovery or general tool
 mediation. It preserves ADR-0013 authorization, ADR-0015 persistence, ADR-0021/0022
 execution lifecycle, ADR-0026 workspace quota, and ADR-0033 verifier binding.
@@ -93,8 +94,11 @@ evidence as proof of work; the verification command's actual result remains the 
 
 The plan is one attempt in the existing append-only execution ledger. Resume/retry append a
 new attempt; a cancelled plan is never reopened. Startup reconciliation marks an interrupted
-plan `interrupted` and suspends affected work exactly as for a single command. No new
-automatic success path, duplicate suppression or recovery mechanism is introduced.
+plan `interrupted` and suspends affected work exactly as for a single command. ADR-0040
+adds durable `execution_step` progress records inside that same journal, records process
+groups and workspace manifests for recovery, and tombstones a completed attempt that never
+reached terminal Task commit. No new automatic success path or second execution ledger is
+introduced.
 
 ### 7. Scope boundary
 

@@ -26,7 +26,9 @@ import {
   ManagedExecutionPort,
   type CancellableExecutionPort,
 } from "./execution/managed-execution.js";
-import type { ExecutionLedger } from "./persistence/execution-ledger.js";
+import type { ExecutionLedger, WorkspaceRecoveryEvidence } from "./persistence/execution-ledger.js";
+import { reapRecordedProcesses } from "./execution/process-reaper.js";
+import type { RunWorkspaceManager } from "./execution/workspace.js";
 import { DurableAuthorizationAuditStore } from "./persistence/authorization-audit-store.js";
 import { DurableLearningStore } from "./persistence/learning-store.js";
 import {
@@ -99,6 +101,8 @@ export interface HostRuntimeOptions {
   execution?: AgentExecutionPort;
   verification?: TaskVerificationPort;
   resolveAgent?: (task: TaskEntity) => Promise<string>;
+  /** The same workspace manager used by the composed local adapters, for orphan recovery. */
+  workspaces?: Pick<RunWorkspaceManager, "inventoryOrphans" | "removeOrphans">;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -137,6 +141,12 @@ export interface HostRuntime {
   recoveredExecutions: string[];
   /** Scheduler graphs whose running nodes were reconciled at startup. */
   recoveredSchedulerGraphs: string[];
+  /** Completed-but-uncommitted attempts tombstoned at startup. */
+  recoveredUncommitted: string[];
+  /** Orphaned per-Task workspaces hashed and removed at startup. */
+  recoveredWorkspaces: WorkspaceRecoveryEvidence[];
+  /** Process groups actually SIGKILLed during startup reconciliation. */
+  recoveredProcessGroups: number;
   /** Per-Task execution lifecycle journal. */
   executions: ExecutionLedger;
   /** Host-owned cancellation handle; it carries no authorization itself. */
@@ -157,20 +167,48 @@ export interface HostRuntime {
  * `suspended` can be resumed deliberately, which is exactly the operator decision this
  * creates. Reconciliation never re-executes and never appends a second terminal record.
  */
-function reconcileInterruptedWork(store: DurableOperationalStore): {
+export function reconcileInterruptedWork(
+  store: DurableOperationalStore,
+  workspaces?: Pick<RunWorkspaceManager, "inventoryOrphans" | "removeOrphans">,
+): {
   workflows: string[];
   executions: string[];
+  uncommitted: string[];
+  workspaces: WorkspaceRecoveryEvidence[];
+  processGroups: number;
   schedulerGraphs: string[];
 } {
   const affected = new Set(store.runs.recover());
-  const interruptedExecutions = store.executions.reconcile();
+  // Process groups and workspaces are recovered before attempts become terminal: a
+  // running attempt is the only authority that permits signalling its recorded group.
+  // Kill first, then inventory and remove the workspace, so a live child cannot keep
+  // writing while its artifacts are being hashed.
+  const reaped = reapRecordedProcesses(store.executions);
+  // Inventory only. The manifest is journaled before any directory is removed, so a crash
+  // or journal failure cannot destroy the durable record of what the workspace contained.
+  const workspaceInventory = workspaces?.inventoryOrphans() ?? [];
+  const workspaceByTask = new Map(workspaceInventory.map((item) => [item.task_id, item]));
+  const reconciliation = store.executions.reconcile({
+    taskLifecycle: (taskId) => store.tasks.getTask(taskId)?.lifecycle_state,
+    workspaceEvidence: workspaceByTask,
+  });
+  const interruptedExecutions = reconciliation.interrupted;
+  const uncommitted = reconciliation.uncommitted;
   // A running node whose process is gone cannot still be executing. Auto-resume is opt-in
   // inside the scheduler; every other graph stays interrupted for an explicit decision.
-  const recoveredSchedulerGraphs = store.scheduler.recover();
+  // The scheduler is deliberately one-shot per store; a second in-process reconciliation
+  // is a no-op rather than a second startup signal.
+  let recoveredSchedulerGraphs: string[] = [];
+  try {
+    recoveredSchedulerGraphs = store.scheduler.recover();
+  } catch (error) {
+    if (!(error instanceof Error) || !/startup-only/.test(error.message)) throw error;
+  }
   const directTasks = new Set<string>();
-  for (const execution of interruptedExecutions) {
-    if (execution.workflow_id) {
-      affected.add(execution.workflow_id);
+  for (const execution of [...interruptedExecutions, ...uncommitted]) {
+    const workflowId = "workflow_id" in execution ? execution.workflow_id : undefined;
+    if (workflowId) {
+      affected.add(workflowId);
       continue;
     }
     const task = store.tasks.getTask(execution.task_id);
@@ -198,9 +236,36 @@ function reconcileInterruptedWork(store: DurableOperationalStore): {
       store.tasks.transitionTaskLifecycle(taskId, "suspended", HOST_RECOVERY_ACTOR_ID);
     }
   }
+
+  const executions = [
+    ...interruptedExecutions.map((record) => record.execution_id),
+    ...uncommitted.map((record) => record.execution_id),
+  ];
+  if (executions.length > 0 || workspaceInventory.length > 0) {
+    store.recordRecoverySummary({
+      recorded_at: new Date().toISOString(),
+      workflows: [...affected],
+      executions,
+      workspaces: workspaceInventory,
+    });
+  }
+  // Only after the manifest is durable is it safe to remove the directories. A removal
+  // failure is reported in the second summary and in the returned runtime evidence.
+  const workspaceEvidence = workspaces?.removeOrphans() ?? [];
+  if (workspaceEvidence.length > 0) {
+    store.recordRecoverySummary({
+      recorded_at: new Date().toISOString(),
+      workflows: [...affected],
+      executions,
+      workspaces: workspaceEvidence,
+    });
+  }
   return {
     workflows: [...affected],
-    executions: interruptedExecutions.map((record) => record.execution_id),
+    executions,
+    uncommitted: uncommitted.map((record) => record.execution_id),
+    workspaces: workspaceEvidence,
+    processGroups: reaped.killed,
     schedulerGraphs: recoveredSchedulerGraphs,
   };
 }
@@ -304,9 +369,12 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     // the configuration's generation-1 digest.
     const identity = new TrustedIdentityService(operational.sessions);
     learningStore = new DurableLearningStore({ directory: config.operational_store.directory });
-    const recovered = reconcileInterruptedWork(operational);
+    const recovered = reconcileInterruptedWork(operational, options.workspaces);
     const recoveredWorkflows = recovered.workflows;
     const recoveredExecutions = recovered.executions;
+    const recoveredUncommitted = recovered.uncommitted;
+    const recoveredWorkspaces = recovered.workspaces;
+    const recoveredProcessGroups = recovered.processGroups;
     const recoveredSchedulerGraphs = recovered.schedulerGraphs;
     const taskStore = operational.tasks;
     const missionStore = operational.missions;
@@ -353,8 +421,29 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           isCancelled: async (taskId) => operational?.executions.isCancelled(taskId) ?? false,
         },
         executionState: {
-          latest: async (taskId) => operational?.executions.getForTask(taskId),
-          history: async (taskId) => operational?.executions.listForTask(taskId) ?? [],
+          latest: async (taskId) => {
+            const record = operational?.executions.getForTask(taskId);
+            if (record === undefined) return undefined;
+            const recovery = operational?.executions.recoveryFor(record.execution_id);
+            return recovery === undefined
+              ? record
+              : {
+                  ...record,
+                  recovery: { outcome: recovery.outcome, reason_code: recovery.reason_code },
+                };
+          },
+          history: async (taskId) => {
+            const records = operational?.executions.listForTask(taskId) ?? [];
+            return records.map((record) => {
+              const recovery = operational?.executions.recoveryFor(record.execution_id);
+              return recovery === undefined
+                ? record
+                : {
+                    ...record,
+                    recovery: { outcome: recovery.outcome, reason_code: recovery.reason_code },
+                  };
+            });
+          },
         },
       },
       workflowStore,
@@ -422,6 +511,9 @@ export function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       artifactStore,
       recoveredWorkflows,
       recoveredExecutions,
+      recoveredUncommitted,
+      recoveredWorkspaces,
+      recoveredProcessGroups,
       recoveredSchedulerGraphs,
       executions: operational.executions,
       executionControl: execution,

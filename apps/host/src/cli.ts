@@ -78,6 +78,7 @@ async function serve(configPath: string): Promise<void> {
       : {
           execution: adapters.execution,
           verification: adapters.verification,
+          workspaces: adapters.workspaces,
           resolveAgent: async () => config.execution?.agent_id ?? "",
         }),
   });

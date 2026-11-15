@@ -54,6 +54,11 @@ export interface TaskExecutionObservation {
   attempt: number;
   attempt_kind: ExecutionAttemptKind;
   previous_execution_id?: string;
+  /**
+   * Startup recovery tombstone. A restored completed attempt can remain `completed` as an
+   * executor observation while this marks that it never reached a committed Task state.
+   */
+  recovery?: { outcome: "interrupted"; reason_code: string };
 }
 
 export interface TaskExecutionStatePort {
@@ -68,6 +73,7 @@ export interface TaskAttemptSummary {
   attempt: number;
   attempt_kind: ExecutionAttemptKind;
   state: ObservedExecutionState;
+  recovery?: { outcome: "interrupted"; reason_code: string };
 }
 
 export interface WorkflowResumeResult {
@@ -120,6 +126,7 @@ function executionSummary(observation: TaskExecutionObservation): TaskAttemptSum
     attempt: observation.attempt,
     attempt_kind: observation.attempt_kind,
     state: observation.state,
+    ...(observation.recovery === undefined ? {} : { recovery: observation.recovery }),
   };
 }
 
@@ -964,6 +971,7 @@ export class OrchestrationKernel {
         attempt: observation.attempt,
         attempt_kind: observation.attempt_kind,
         state: observation.state,
+        ...(observation.recovery === undefined ? {} : { recovery: observation.recovery }),
         ...(observation.previous_execution_id === undefined
           ? {}
           : { previous_execution_id: observation.previous_execution_id }),
