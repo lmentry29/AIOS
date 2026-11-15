@@ -14,10 +14,10 @@ Historical heads below are retained as evidence; they are not current state.
 
 - Repository: https://github.com/lmentry29/AIOS
 - Visibility: public; default branch: `main`
-- Active implementation branch: `feat/plan-crash-recovery` (uncommitted at the time of this
-  edit; the feature PR is opened from it next).
-- Active pull request: none yet for ADR-0040. PR #14 (ADR-0039 bounded execution plans) is
-  merged; PRs #1–#14 are merged except #3, which was closed as obsolete.
+- Active implementation branch: `feat/plan-crash-recovery`.
+- Active pull request: #16 (ADR-0040 plan crash recovery and dispatch-key binding). PR #14
+  (ADR-0039 bounded execution plans) is merged; PRs #1–#14 are merged except #3, which was
+  closed as obsolete.
 - Closed-state code head: `d0b3fb9ab19b1d932b1c167a5a19b408e1bd85fc` (PR #11); the
   post-merge documentation addendum is a docs-only change.
 - Release status: no tag, GitHub release, npm publication or signed installer. `@aios/*`
